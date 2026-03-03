@@ -1,0 +1,739 @@
+"""
+Markdown output writer for ORCA parser results.
+
+Designed for AI-assisted paper writing: maximum information density,
+minimum structural noise, publication-ready table formatting.
+
+Single molecule  → to_markdown()
+Multi-molecule   → compare()
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Public entry points
+# ─────────────────────────────────────────────────────────────────────────────
+
+def write_markdown(data: Dict[str, Any], path: Path) -> Path:
+    """Write a single-molecule markdown report."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(_render_molecule(data), encoding="utf-8")
+    return path
+
+
+def write_comparison(datasets: List[Dict[str, Any]], path: Path) -> Path:
+    """Write a multi-molecule comparison markdown document."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(_render_comparison(datasets), encoding="utf-8")
+    return path
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Single-molecule renderer
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _render_molecule(data: Dict[str, Any], heading_level: int = 1) -> str:
+    """Full markdown report for one molecule."""
+    H = "#" * heading_level
+    H2 = "#" * (heading_level + 1)
+    H3 = "#" * (heading_level + 2)
+
+    blocks: List[str] = []
+
+    meta = data.get("metadata", {})
+    ctx  = data.get("context",  {})
+    scf  = data.get("scf",      {})
+    src  = Path(data.get("source_file", "unknown")).name
+
+    # ── Title ──────────────────────────────────────────────────────────────
+    job   = meta.get("job_name", src)
+    func  = meta.get("functional", "?")
+    basis = meta.get("basis_set",  "?")
+    hftyp = ctx.get("hf_type", "RHF")
+    charge = meta.get("charge", 0)
+    mult   = meta.get("multiplicity", 1)
+    sym    = f"  symmetry={_irrep_group(data)}" if ctx.get("has_symmetry") else ""
+    blocks.append(
+        f"{H} {job}\n"
+        f"`{hftyp} {func}/{basis}` | charge={charge} mult={mult}{sym}  \n"
+        f"source: `{src}`"
+    )
+
+    # ── SCF summary ────────────────────────────────────────────────────────
+    scf_lines = []
+    E = scf.get("final_single_point_energy_Eh")
+    if E is not None:
+        scf_lines.append(f"**Energy:** {E:.10f} Eh")
+    if "dispersion_correction_Eh" in scf:
+        scf_lines.append(f"**Dispersion (D):** {scf['dispersion_correction_Eh']:.8f} Eh")
+    if "s_squared" in scf:
+        s2     = scf["s_squared"]
+        s2_id  = scf.get("s_squared_ideal", "?")
+        contam = abs(s2 - float(s2_id)) if isinstance(s2_id, (int, float)) else None
+        warn   = "  ⚠️ *contamination > 0.01*" if contam and contam > 0.01 else ""
+        scf_lines.append(f"**⟨S²⟩:** {s2:.6f} (ideal {s2_id}){warn}")
+
+    dip = data.get("dipole", {})
+    if dip.get("magnitude_Debye") is not None:
+        vec = dip.get("total_debye", {})
+        xyz = ""
+        if vec:
+            xyz = f"  ({vec.get('x',0):.4f}, {vec.get('y',0):.4f}, {vec.get('z',0):.4f}) D"
+        scf_lines.append(f"**Dipole:** {dip['magnitude_Debye']:.4f} D{xyz}")
+
+    if scf_lines:
+        blocks.append("\n".join(scf_lines))
+
+    # ── Orbital energies ───────────────────────────────────────────────────
+    oe = data.get("orbital_energies")
+    if oe:
+        blocks.append(f"{H2} Frontier Orbital Energies")
+        if not ctx.get("is_uhf"):
+            homo  = oe.get("HOMO_energy_eV")
+            lumo  = oe.get("LUMO_energy_eV")
+            gap   = oe.get("HOMO_LUMO_gap_eV")
+            hirr  = oe.get("HOMO_irrep", "")
+            lirr  = oe.get("LUMO_irrep", "")
+            rows = [("", "eV", "irrep"),
+                    ("HOMO", f"{homo:.4f}" if homo else "—", hirr),
+                    ("LUMO", f"{lumo:.4f}" if lumo else "—", lirr),
+                    ("Gap",  f"{gap:.4f}"  if gap  else "—", "")]
+            if not hirr:  # drop irrep column if no symmetry
+                rows = [(r[0], r[1]) for r in rows]
+            blocks.append(_table(rows))
+        else:
+            ah = oe.get("alpha_HOMO_energy_eV")
+            al = oe.get("alpha_LUMO_energy_eV")
+            bh = oe.get("beta_HOMO_energy_eV")
+            bl = oe.get("beta_LUMO_energy_eV")
+            ag = oe.get("alpha_HOMO_LUMO_gap_eV")
+            bg = oe.get("beta_HOMO_LUMO_gap_eV")
+            ahi = oe.get("alpha_HOMO_irrep", "")
+            ali = oe.get("alpha_LUMO_irrep", "")
+            bhi = oe.get("beta_HOMO_irrep",  "")
+            bli = oe.get("beta_LUMO_irrep",  "")
+            has_irr = bool(ahi or ali)
+            if has_irr:
+                rows = [("", "α eV", "α irrep", "β eV", "β irrep"),
+                        ("HOMO", _f(ah), ahi, _f(bh), bhi),
+                        ("LUMO", _f(al), ali, _f(bl), bli),
+                        ("Gap",  _f(ag), "",  _f(bg), "")]
+            else:
+                rows = [("",     "α eV", "β eV"),
+                        ("HOMO", _f(ah), _f(bh)),
+                        ("LUMO", _f(al), _f(bl)),
+                        ("Gap",  _f(ag), _f(bg))]
+            blocks.append(_table(rows))
+
+        # Occupied per irrep
+        occ = oe.get("occupied_per_irrep") or oe.get("alpha_occupied_per_irrep")
+        if occ:
+            b_occ = oe.get("beta_occupied_per_irrep")
+            if b_occ:
+                irrs = sorted(set(list(occ) + list(b_occ)))
+                rows = [("Irrep",) + tuple(irrs),
+                        ("α occ",) + tuple(occ.get(i, 0) for i in irrs),
+                        ("β occ",) + tuple(b_occ.get(i, 0) for i in irrs)]
+            else:
+                irrs = sorted(occ)
+                rows = [("Irrep",) + tuple(irrs),
+                        ("occ",)   + tuple(occ.get(i, 0) for i in irrs)]
+            blocks.append(_table(rows))
+
+    # ── QRO ───────────────────────────────────────────────────────────────
+    qro = data.get("qro")
+    if qro:
+        blocks.append(f"{H2} Quasi-Restricted Orbitals")
+        blocks.append(
+            f"DOMO = {qro.get('n_domo')}  |  "
+            f"SOMO = {qro.get('n_somo')}  |  "
+            f"VMO = {qro.get('n_vmo')}"
+        )
+        somos = qro.get("somo_details", [])
+        if somos:
+            has_irr = any("irrep" in s for s in somos)
+            if has_irr:
+                header = ("MO", "irrep", "ε (Eh)", "ε (eV)", "α (eV)", "β (eV)")
+                rows   = [header] + [
+                    (str(s["index"]),
+                     s.get("irrep", ""),
+                     f"{s['energy_Eh']:.6f}",
+                     f"{s['energy_eV']:.4f}",
+                     f"{s['alpha_energy_eV']:.4f}",
+                     f"{s['beta_energy_eV']:.4f}")
+                    for s in somos
+                ]
+            else:
+                header = ("MO", "ε (Eh)", "ε (eV)", "α (eV)", "β (eV)")
+                rows   = [header] + [
+                    (str(s["index"]),
+                     f"{s['energy_Eh']:.6f}",
+                     f"{s['energy_eV']:.4f}",
+                     f"{s['alpha_energy_eV']:.4f}",
+                     f"{s['beta_energy_eV']:.4f}")
+                    for s in somos
+                ]
+            blocks.append(_table(rows))
+
+
+    # ── Atomic charges — all schemes, aligned by atom index ──────────────
+    charge_data = _collect_charges(data)
+    if charge_data:
+        blocks.append(f"{H2} Atomic Charges")
+        atom_syms = ctx.get("atom_symbols", [])  # 0-based list: atom_syms[0] = first atom
+        schemes   = list(charge_data.keys())
+        # Collect all unique atom indices across all schemes, sorted
+        all_indices = sorted(set(idx for d in charge_data.values() for idx in d))
+        rows = [("Atom",) + tuple(schemes)]
+        for idx in all_indices:
+            # atom_syms is 0-based; ORCA atom indices may be 0- or 1-based depending on section
+            # Use modular mapping: if index > len(atom_syms)-1, cap at last
+            sym_i = min(idx, len(atom_syms) - 1) if atom_syms else idx
+            sym   = atom_syms[sym_i] if atom_syms else "?"
+            lbl   = f"{sym}{idx + 1}" if idx < len(atom_syms) else f"?{idx}"
+            # Special case: ORCA Mulliken/Loewdin use 1-based index so idx=1 → atom_syms[0]
+            # The label should match: sym at position (idx-1) for 1-based, idx for 0-based
+            # Resolve by checking what symbol each scheme says this index is
+            # Use the first scheme that has this index to determine symbol
+            for s in schemes:
+                if idx in charge_data[s]:
+                    break
+            # For label: use ORCA index to position in atom_syms list
+            # 0-based schemes (hirshfeld/mbis): idx 0 = atom_syms[0]
+            # 1-based schemes (mulliken/loewdin): idx 1 = atom_syms[0]
+            # Determine offset by checking if index 0 exists in any scheme
+            rows.append((lbl,) + tuple(
+                f"{charge_data[s][idx]:.4f}" if idx in charge_data[s] else "—"
+                for s in schemes
+            ))
+        blocks.append(_table(rows))
+
+    # ── Spin populations — all schemes, aligned by atom index ─────────────
+    if ctx.get("is_uhf"):
+        spin_data = _collect_spin(data)
+        if spin_data:
+            blocks.append(f"{H2} Atomic Spin Populations")
+            atom_syms = ctx.get("atom_symbols", [])
+            schemes   = list(spin_data.keys())
+            all_indices = sorted(set(idx for d in spin_data.values() for idx in d))
+            rows = [("Atom",) + tuple(schemes)]
+            for idx in all_indices:
+                sym_i = min(idx, len(atom_syms) - 1) if atom_syms else idx
+                sym   = atom_syms[sym_i] if atom_syms else "?"
+                lbl   = f"{sym}{idx + 1}" if idx < len(atom_syms) else f"?{idx}"
+                rows.append((lbl,) + tuple(
+                    f"{spin_data[s][idx]:.4f}" if idx in spin_data[s] else "—"
+                    for s in schemes
+                ))
+            blocks.append(_table(rows))
+            # Spin totals
+            totals = {s: sum(spin_data[s].values()) for s in schemes}
+            blocks.append("**Spin totals:** " +
+                          "  ".join(f"{s} = {totals[s]:.4f}" for s in schemes))
+
+    # ── Mayer bond orders — full list ─────────────────────────────────────
+    mayer   = data.get("mayer", {})
+    bo_list = mayer.get("bond_orders", [])
+    if bo_list:
+        blocks.append(f"{H2} Mayer Bond Orders ({len(bo_list)} bonds)")
+        rows = [("Bond", "Order")]
+        for b in bo_list:
+            si = b.get("symbol_i", "?") + str(b.get("atom_i", 0) + 1)
+            sj = b.get("symbol_j", "?") + str(b.get("atom_j", 0) + 1)
+            rows.append((f"{si}\u2013{sj}", f"{b.get('bond_order', 0):.4f}"))
+        blocks.append(_table(rows))
+
+    # ── NBO ── full population analysis ───────────────────────────────────
+    nbo    = data.get("nbo")
+    is_uhf = ctx.get("is_uhf", False)
+    if nbo:
+        blocks.append(f"{H2} NBO Analysis")
+
+        # ── NPA summary (overall for UHF, main for RHF) ──────────────────
+        # UHF: overall_npa_summary has both charge and spin_density
+        # RHF: npa_summary
+        npa = nbo.get("overall_npa_summary") if is_uhf else nbo.get("npa_summary", [])
+        if npa:
+            has_spin = any("spin_density" in a for a in npa)
+            if has_spin:
+                rows = [("Atom", "NPA charge", "Core", "Valence", "Rydberg", "Total", "Spin ρ")]
+            else:
+                rows = [("Atom", "NPA charge", "Core", "Valence", "Rydberg", "Total")]
+            for a in npa:
+                lbl = f"{a.get('symbol','?')}{a.get('index','')}"
+                row = [lbl,
+                       f"{a.get('natural_charge', 0):.5f}",
+                       f"{a.get('core_pop', 0):.5f}",
+                       f"{a.get('valence_pop', 0):.5f}",
+                       f"{a.get('rydberg_pop', 0):.5f}",
+                       f"{a.get('total_pop', 0):.5f}"]
+                if has_spin:
+                    row.append(f"{a.get('spin_density', 0):.5f}")
+                rows.append(tuple(row))
+            blocks.append(f"{H3} NPA Charges\n" + _table(rows))
+
+        # ── Alpha and Beta NPA (UHF) ─────────────────────────────────────
+        if is_uhf:
+            for spin_key, label in [("alpha_spin", "α"), ("beta_spin", "β")]:
+                spin_sec = nbo.get(spin_key, {})
+                snpa = spin_sec.get("npa_summary", [])
+                if snpa:
+                    rows = [("Atom", "NPA charge", "Core", "Valence", "Rydberg", "Total")]
+                    for a in snpa:
+                        lbl = f"{a.get('symbol','?')}{a.get('index','')}"
+                        rows.append((lbl,
+                                     f"{a.get('natural_charge',0):.5f}",
+                                     f"{a.get('core_pop',0):.5f}",
+                                     f"{a.get('valence_pop',0):.5f}",
+                                     f"{a.get('rydberg_pop',0):.5f}",
+                                     f"{a.get('total_pop',0):.5f}"))
+                    blocks.append(f"{H3} NPA — {label} spin\n" + _table(rows))
+
+        # ── Wiberg bond indices ───────────────────────────────────────────
+        wbi_key = "overall_wiberg_bond_indices" if is_uhf else "wiberg_bond_indices"
+        wbi     = nbo.get(wbi_key, {})
+        matrix  = wbi.get("matrix", []) if isinstance(wbi, dict) else []
+        if matrix and isinstance(matrix, list) and isinstance(matrix[0], list):
+            atom_syms = ctx.get("atom_symbols", [])
+            n = len(matrix)
+            bonds_wbi = [
+                (f"{atom_syms[i]}{i+1}" if i < len(atom_syms) else str(i+1),
+                 f"{atom_syms[j]}{j+1}" if j < len(atom_syms) else str(j+1),
+                 matrix[i][j])
+                for i in range(n) for j in range(i+1, n)
+                if isinstance(matrix[i][j], (int, float)) and matrix[i][j] > 0.05
+            ]
+            if bonds_wbi:
+                rows = [("Bond", "WBI")]
+                for si, sj, val in bonds_wbi:
+                    rows.append((f"{si}\u2013{sj}", f"{val:.4f}"))
+                blocks.append(f"{H3} Wiberg Bond Indices ({len(bonds_wbi)} bonds)\n" + _table(rows))
+
+        # ── Alpha/Beta Wiberg (UHF) ───────────────────────────────────────
+        if is_uhf:
+            for spin_key, label in [("alpha_spin", "α"), ("beta_spin", "β")]:
+                spin_sec = nbo.get(spin_key, {})
+                swbi = spin_sec.get("wiberg_bond_indices", {})
+                smat = swbi.get("matrix", []) if isinstance(swbi, dict) else []
+                if smat and isinstance(smat, list) and isinstance(smat[0], list):
+                    atom_syms = ctx.get("atom_symbols", [])
+                    n = len(smat)
+                    sbonds = [
+                        (f"{atom_syms[i]}{i+1}" if i < len(atom_syms) else str(i+1),
+                         f"{atom_syms[j]}{j+1}" if j < len(atom_syms) else str(j+1),
+                         smat[i][j])
+                        for i in range(n) for j in range(i+1, n)
+                        if isinstance(smat[i][j], (int, float)) and smat[i][j] > 0.05
+                    ]
+                    if sbonds:
+                        rows = [("Bond", "WBI")]
+                        for si, sj, val in sbonds:
+                            rows.append((f"{si}\u2013{sj}", f"{val:.4f}"))
+                        blocks.append(f"{H3} Wiberg — {label} spin ({len(sbonds)} bonds)\n" + _table(rows))
+
+        # ── E(2) perturbation ─────────────────────────────────────────────
+        if is_uhf:
+            for spin_key, label in [("alpha_spin", "α"), ("beta_spin", "β")]:
+                e2 = nbo.get(spin_key, {}).get("e2_perturbation", [])
+                if e2:
+                    blocks.append(
+                        f"{H3} E(2) Perturbation — {label} spin ({len(e2)} entries)\n"
+                        + _render_e2_table(e2)
+                    )
+        else:
+            e2 = nbo.get("e2_perturbation", [])
+            if e2:
+                blocks.append(f"{H3} Second-Order Perturbation E(2)\n" + _render_e2_table(e2))
+
+    # ── Geometry ──────────────────────────────────────────────────────────
+    geom = data.get("geometry", {})
+    atoms = geom.get("atoms", [])
+    if atoms:
+        blocks.append(f"{H2} Geometry (Å)")
+        rows = [("Atom", "x", "y", "z")]
+        for a in atoms:
+            rows.append((
+                f"{a['symbol']}{a['index']+1}" if 'index' in a else a.get('symbol','?'),
+                f"{a['x']:.6f}", f"{a['y']:.6f}", f"{a['z']:.6f}",
+            ))
+        blocks.append(_table(rows))
+
+    return "\n\n".join(blocks) + "\n"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Multi-molecule comparison renderer
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _render_comparison(datasets: List[Dict[str, Any]]) -> str:
+    """Comparison document: overview table + individual molecule sections."""
+    if not datasets:
+        return "# ORCA Comparison\n\n*No data provided.*\n"
+
+    blocks: List[str] = ["# ORCA Calculation Comparison"]
+
+    labels = [_mol_label(d) for d in datasets]
+
+    # ── Method table ───────────────────────────────────────────────────────
+    rows = [("", "method", "basis", "charge", "mult", "symmetry")]
+    for lbl, d in zip(labels, datasets):
+        meta = d.get("metadata", {})
+        ctx  = d.get("context",  {})
+        rows.append((
+            lbl,
+            f"{ctx.get('hf_type','?')} {meta.get('functional','?')}",
+            meta.get("basis_set", "?"),
+            str(meta.get("charge", "?")),
+            str(meta.get("multiplicity", "?")),
+            _irrep_group(d) if ctx.get("has_symmetry") else "C1",
+        ))
+    blocks.append("## Methods\n" + _table(rows))
+
+    # ── Energy table ───────────────────────────────────────────────────────
+    rows = [("", "E (Eh)", "⟨S²⟩", "ideal", "dipole (D)")]
+    has_s2 = any(d.get("scf", {}).get("s_squared") is not None for d in datasets)
+    if not has_s2:
+        rows = [("", "E (Eh)", "dipole (D)")]
+    for lbl, d in zip(labels, datasets):
+        scf = d.get("scf", {})
+        dip = d.get("dipole", {})
+        E   = scf.get("final_single_point_energy_Eh")
+        s2  = scf.get("s_squared")
+        s2i = scf.get("s_squared_ideal", "")
+        mu  = dip.get("magnitude_Debye")
+        if has_s2:
+            rows.append((lbl,
+                         f"{E:.10f}" if E else "—",
+                         f"{s2:.6f}"  if s2 is not None else "—",
+                         str(s2i),
+                         f"{mu:.4f}" if mu else "—"))
+        else:
+            rows.append((lbl,
+                         f"{E:.10f}" if E else "—",
+                         f"{mu:.4f}" if mu else "—"))
+    blocks.append("## Energies\n" + _table(rows))
+
+    # ── Frontier orbitals comparison ───────────────────────────────────────
+    is_uhf_any = any(d.get("context", {}).get("is_uhf") for d in datasets)
+    oe_blocks = []
+    for lbl, d in zip(labels, datasets):
+        oe  = d.get("orbital_energies", {})
+        ctx = d.get("context", {})
+        if not oe:
+            continue
+        if not ctx.get("is_uhf"):
+            gap = oe.get("HOMO_LUMO_gap_eV")
+            oe_blocks.append(f"{lbl}: HOMO {_f(oe.get('HOMO_energy_eV'))} / "
+                             f"LUMO {_f(oe.get('LUMO_energy_eV'))} / "
+                             f"gap {_f(gap)} eV")
+        else:
+            oe_blocks.append(f"{lbl}: α-HOMO {_f(oe.get('alpha_HOMO_energy_eV'))} / "
+                             f"β-HOMO {_f(oe.get('beta_HOMO_energy_eV'))} eV")
+        qro = d.get("qro")
+        if qro:
+            oe_blocks.append(f"  QRO: DOMO={qro.get('n_domo')} "
+                             f"SOMO={qro.get('n_somo')} VMO={qro.get('n_vmo')}")
+            for s in qro.get("somo_details", []):
+                irr = f" ({s['irrep']})" if "irrep" in s else ""
+                oe_blocks.append(f"  SOMO {s['index']}{irr}: "
+                                 f"α={s['alpha_energy_eV']:.4f} "
+                                 f"β={s['beta_energy_eV']:.4f} eV")
+    if oe_blocks:
+        blocks.append("## Frontier Orbitals\n" + "\n".join(oe_blocks))
+
+    # ── Charge comparison ──────────────────────────────────────────────────
+    # Only show schemes present in ALL molecules
+    all_schemes: List[set] = []
+    for d in datasets:
+        schemes = set()
+        for s in ("mulliken","loewdin","hirshfeld","mbis","chelpg"):
+            if _get_charges(d, s):
+                schemes.add(s)
+        all_schemes.append(schemes)
+    common_schemes = sorted(set.intersection(*all_schemes)) if all_schemes else []
+
+    if common_schemes:
+        # one table per scheme, rows = molecules, cols = atoms
+        for scheme in common_schemes:
+            atom_syms = datasets[0].get("context", {}).get("atom_symbols", [])
+            n_atoms   = len(_get_charges(datasets[0], scheme) or [])
+            header    = ("",) + tuple(
+                f"{atom_syms[i]}{i+1}" if i < len(atom_syms) else str(i+1)
+                for i in range(n_atoms)
+            )
+            rows = [header]
+            for lbl, d in zip(labels, datasets):
+                charges = _get_charges(d, scheme) or []
+                rows.append((lbl,) + tuple(f"{c:.4f}" for c in charges))
+            blocks.append(f"## {scheme.capitalize()} Charges\n" + _table(rows))
+
+    # ── Per-molecule full reports ──────────────────────────────────────────
+    blocks.append("---\n# Individual Reports")
+    for lbl, d in zip(labels, datasets):
+        blocks.append(_render_molecule(d, heading_level=2))
+
+    return "\n\n".join(blocks) + "\n"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _table(rows) -> str:
+    """Build a GitHub-flavoured markdown table from a list of tuples."""
+    if not rows:
+        return ""
+    rows = [tuple(str(c) for c in r) for r in rows]
+    widths = [max(len(r[i]) for r in rows) for i in range(len(rows[0]))]
+    sep    = "| " + " | ".join("-" * w for w in widths) + " |"
+    lines  = []
+    for idx, row in enumerate(rows):
+        line = "| " + " | ".join(c.ljust(widths[i]) for i, c in enumerate(row)) + " |"
+        lines.append(line)
+        if idx == 0:
+            lines.append(sep)
+    return "\n".join(lines)
+
+
+def _f(val, fmt=".4f") -> str:
+    """Format a float or return '—'."""
+    if val is None:
+        return "—"
+    try:
+        return format(float(val), fmt)
+    except (TypeError, ValueError):
+        return str(val)
+
+
+def _mol_label(data: Dict[str, Any]) -> str:
+    """Short identifier for a molecule/calculation."""
+    meta = data.get("metadata", {})
+    name = meta.get("job_name") or Path(data.get("source_file", "mol")).stem
+    return name
+
+
+def _irrep_group(data: Dict[str, Any]) -> str:
+    """Try to extract the point group label from the metadata or orbital data."""
+    meta = data.get("metadata", {})
+    pg   = meta.get("point_group", "")
+    if pg:
+        return pg
+    # Fall back: look at irrep labels in orbital_energies
+    oe = data.get("orbital_energies", {})
+    orbs = oe.get("orbitals") or oe.get("alpha_orbitals") or []
+    for o in orbs:
+        irr = o.get("irrep", "")
+        if irr:
+            # irrep looks like "1-A1" → point group C2v etc.; just return the label
+            label = irr.split("-", 1)[-1].strip() if "-" in irr else irr
+            return label  # rough: just the first irrep label
+    return "?"
+
+
+def _get_atom_list(sec: dict) -> list:
+    """Return per-atom list from a population section regardless of internal key name.
+
+    Mulliken, Loewdin, CHELPG  → 'atomic_charges'
+    Hirshfeld, MBIS             → 'atomic_data'
+    fallback                    → 'atoms'
+    """
+    return sec.get("atoms") or sec.get("atomic_charges") or sec.get("atomic_data") or []
+
+
+def _collect_charges(data, schemes=("mulliken", "loewdin", "hirshfeld", "mbis", "chelpg")):
+    """Return dict of scheme → {atom_index: charge} for all present schemes."""
+    result = {}
+    for s in schemes:
+        sec = data.get(s, {})
+        if not sec:
+            continue
+        atoms = _get_atom_list(sec)
+        d = {a["index"]: a["charge"] for a in atoms if "index" in a and "charge" in a}
+        if d:
+            result[s.capitalize()] = d
+    return result
+
+
+def _get_charges(data, scheme: str) -> Optional[List[float]]:
+    """Return flat list of charges (positional) — used only for multi-mol comparison."""
+    sec = data.get(scheme, {})
+    if not sec:
+        return None
+    atoms   = _get_atom_list(sec)
+    charges = [a.get("charge") for a in atoms if "charge" in a]
+    return charges if charges else None
+
+
+def _collect_spin(data, schemes=("mulliken", "loewdin", "hirshfeld", "mbis")):
+    """Return dict of scheme → {atom_index: spin_population} for UHF calculations."""
+    result = {}
+    for s in schemes:
+        sec = data.get(s, {})
+        if not sec:
+            continue
+        atoms = _get_atom_list(sec)
+        d = {a["index"]: a["spin_population"]
+             for a in atoms if "index" in a and "spin_population" in a}
+        if d:
+            result[s.capitalize()] = d
+    return result
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Large-system summarization helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _group_by_symbol(atom_syms, values):
+    """Group per-atom values by element symbol. Returns {symbol: [values]}."""
+    groups = {}
+    for i, sym in enumerate(atom_syms):
+        if i < len(values) and values[i] is not None:
+            groups.setdefault(sym, []).append(values[i])
+    return groups
+
+
+def _stats(vals):
+    """Return (min, max, mean) for a list of floats."""
+    if not vals:
+        return None, None, None
+    return min(vals), max(vals), sum(vals) / len(vals)
+
+
+def _summarize_charges(charge_data, atom_syms, n_atoms, schemes) -> str:
+    """Compact charge summary for large systems: per-element stats."""
+    lines = [f"*{n_atoms} atoms — summarized by element*\n"]
+    for scheme in schemes:
+        vals = charge_data[scheme]
+        groups = _group_by_symbol(atom_syms, vals)
+        rows = [("Element", "n", "min", "max", "mean")]
+        for sym in sorted(groups):
+            g = groups[sym]
+            mn, mx, av = _stats(g)
+            rows.append((sym, str(len(g)), f"{mn:.4f}", f"{mx:.4f}", f"{av:.4f}"))
+        lines.append(f"**{scheme}:**\n" + _table(rows))
+    return "\n\n".join(lines)
+
+
+def _summarize_spin(spin_data, atom_syms, n_atoms, schemes) -> str:
+    """Compact spin population summary for large systems."""
+    lines = [f"*{n_atoms} atoms — summarized by element*\n"]
+    for scheme in schemes:
+        vals = spin_data[scheme]
+        groups = _group_by_symbol(atom_syms, vals)
+        total  = sum(sum(g) for g in groups.values())
+        rows   = [("Element", "n", "min", "max", "mean", "total")]
+        for sym in sorted(groups):
+            g = groups[sym]
+            mn, mx, av = _stats(g)
+            rows.append((sym, str(len(g)), f"{mn:.4f}", f"{mx:.4f}", f"{av:.4f}", f"{sum(g):.4f}"))
+        rows.append(("**Total**", "", "", "", "", f"**{total:.4f}**"))
+        lines.append(f"**{scheme}:**\n" + _table(rows))
+    return "\n\n".join(lines)
+
+
+def _summarize_bond_orders(bo_list) -> str:
+    """Compact bond order summary: distribution by bond type."""
+    import math
+    # Bin bonds by type pair and rounded order
+    type_bins = {}
+    for b in bo_list:
+        si, sj = b.get("symbol_i", "?"), b.get("symbol_j", "?")
+        key = f"{min(si,sj)}–{max(si,sj)}"
+        type_bins.setdefault(key, []).append(b.get("bond_order", 0.0))
+
+    lines = [f"*{len(bo_list)} bonds total — distribution by bond type*\n"]
+    rows  = [("Type", "n", "min", "max", "mean")]
+    for btype in sorted(type_bins):
+        vals = type_bins[btype]
+        mn, mx, av = _stats(vals)
+        rows.append((btype, str(len(vals)), f"{mn:.4f}", f"{mx:.4f}", f"{av:.4f}"))
+    lines.append(_table(rows))
+
+    # Also show distinct bond-order clusters (rounded to 3 dp)
+    order_counts = {}
+    for b in bo_list:
+        key = round(b.get("bond_order", 0.0), 3)
+        order_counts[key] = order_counts.get(key, 0) + 1
+    if len(order_counts) <= 10:
+        lines.append("\n*Bond-order clusters:*  " +
+                     "  ".join(f"{k:.3f}×{v}" for k, v in sorted(order_counts.items())))
+    return "\n".join(lines)
+
+
+def _summarize_npa(npa, has_spin) -> str:
+    """Compact NPA summary for large systems."""
+    groups_q  = {}
+    groups_sp = {}
+    for a in npa:
+        sym = a.get("symbol", "?")
+        q   = a.get("natural_charge")
+        sp  = a.get("spin_density")
+        if q is not None:
+            groups_q.setdefault(sym, []).append(q)
+        if sp is not None:
+            groups_sp.setdefault(sym, []).append(sp)
+
+    n_total = len(npa)
+    lines   = [f"*{n_total} atoms — summarized by element*\n"]
+
+    if has_spin:
+        rows = [("Element", "n", "q min", "q max", "q mean", "spin total")]
+        for sym in sorted(groups_q):
+            qg  = groups_q.get(sym, [])
+            spg = groups_sp.get(sym, [])
+            mn, mx, av = _stats(qg)
+            rows.append((sym, str(len(qg)), f"{mn:.4f}", f"{mx:.4f}", f"{av:.4f}",
+                         f"{sum(spg):.4f}" if spg else "—"))
+    else:
+        rows = [("Element", "n", "q min", "q max", "q mean")]
+        for sym in sorted(groups_q):
+            qg = groups_q.get(sym, [])
+            mn, mx, av = _stats(qg)
+            rows.append((sym, str(len(qg)), f"{mn:.4f}", f"{mx:.4f}", f"{av:.4f}"))
+
+    lines.append(_table(rows))
+    return "\n".join(lines)
+
+
+def _summarize_wbi(bonds_wbi) -> str:
+    """Compact WBI summary for large systems."""
+    type_bins = {}
+    for si, sj, val in bonds_wbi:
+        sym_i = ''.join(c for c in si if c.isalpha())
+        sym_j = ''.join(c for c in sj if c.isalpha())
+        key   = f"{min(sym_i,sym_j)}–{max(sym_i,sym_j)}"
+        type_bins.setdefault(key, []).append(val)
+
+    lines = [f"*{len(bonds_wbi)} bonds (WBI > 0.05) — distribution by type*\n"]
+    rows  = [("Type", "n", "min", "max", "mean")]
+    for btype in sorted(type_bins):
+        vals = type_bins[btype]
+        mn, mx, av = _stats(vals)
+        rows.append((btype, str(len(vals)), f"{mn:.4f}", f"{mx:.4f}", f"{av:.4f}"))
+    lines.append(_table(rows))
+    return "\n".join(lines)
+
+
+def _render_e2_table(e2) -> str:
+    """Render E(2) table: top 20 by energy, then summary of rest."""
+    top   = sorted(e2, key=lambda x: -x.get("E2_kcal_mol", 0))
+    shown = top[:20]
+    rows  = [("Donor", "Acceptor", "E(2) kcal/mol", "ΔE a.u.", "F a.u.")]
+    for entry in shown:
+        rows.append((
+            entry.get("donor",    ""),
+            entry.get("acceptor", ""),
+            f"{entry.get('E2_kcal_mol', 0):.2f}",
+            f"{entry.get('E_gap_au',    0):.4f}",
+            f"{entry.get('Fock_au',     0):.4f}",
+        ))
+    result = _table(rows)
+    if len(e2) > 20:
+        total = sum(e.get("E2_kcal_mol", 0) for e in e2)
+        result += f"\n\n*Showing top 20 of {len(e2)} interactions. Total E(2) = {total:.2f} kcal/mol.*"
+    return result
