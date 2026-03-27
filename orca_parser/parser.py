@@ -32,6 +32,7 @@ from .modules import (
     CHELPGModule,
     DipoleMomentModule,
     NBOModule,
+    EPRModule,
 )
 
 # ─────────────────────────────────────────────────────────────────
@@ -53,6 +54,7 @@ MODULE_REGISTRY: List[tuple] = [
     ("chelpg",           CHELPGModule),
     ("dipole",           DipoleMomentModule),
     ("nbo",              NBOModule),
+    ("epr",              EPRModule),
 ]
 
 # Sections always included regardless of the `sections` argument.
@@ -68,6 +70,7 @@ SECTION_ALIASES: Dict[str, List[str]] = {
     "nbo":        ["nbo"],
     "dipole":     ["dipole"],
     "geometry":   ["geometry", "basis_set"],
+    "epr":        ["epr"],
 }
 
 

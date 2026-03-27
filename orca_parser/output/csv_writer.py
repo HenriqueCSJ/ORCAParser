@@ -524,6 +524,79 @@ def _write_nbo_nlmo_steric(data, directory, stem) -> List[Path]:
     return files
 
 
+def _write_epr(data, directory, stem) -> List[Path]:
+    epr = data.get("epr")
+    if not epr:
+        return []
+    files = []
+
+    # ── g-tensor atom contributions ─────────────────────────────────
+    g = epr.get("g_tensor", {})
+    atoms = g.get("atom_analysis", {}).get("atom_contributions", [])
+    if atoms:
+        rows = [{
+            "element": a.get("element"),
+            "atom_index": a.get("atom_index"),
+            "g_1": a.get("values", [None, None, None])[0],
+            "g_2": a.get("values", [None, None, None])[1],
+            "g_3": a.get("values", [None, None, None])[2],
+            "iso": a.get("iso"),
+        } for a in atoms]
+        files.append(_write_csv(
+            directory, f"{stem}_epr_g_atoms.csv", rows,
+            ["element", "atom_index", "g_1", "g_2", "g_3", "iso"],
+        ))
+
+    # ── Hyperfine: per-nucleus principal components ─────────────────
+    hf = epr.get("hyperfine", {})
+    nuclei = hf.get("nuclei", [])
+    if nuclei:
+        rows = []
+        for nuc in nuclei:
+            base = {
+                "nucleus_index": nuc.get("nucleus_index"),
+                "element": nuc.get("element"),
+                "isotope": nuc.get("isotope"),
+            }
+            for key, pc in nuc.get("principal_components", {}).items():
+                vals = pc.get("values_MHz", [None, None, None])
+                rows.append({
+                    **base,
+                    "component": key,
+                    "A_1_MHz": vals[0],
+                    "A_2_MHz": vals[1],
+                    "A_3_MHz": vals[2],
+                    "A_iso_MHz": pc.get("A_iso_MHz"),
+                    "A_PC_MHz": pc.get("A_PC_MHz"),
+                })
+        if rows:
+            files.append(_write_csv(
+                directory, f"{stem}_epr_hyperfine.csv", rows,
+                ["nucleus_index", "element", "isotope", "component",
+                 "A_1_MHz", "A_2_MHz", "A_3_MHz", "A_iso_MHz", "A_PC_MHz"],
+            ))
+
+    # ── Quadrupole coupling ─────────────────────────────────────────
+    quad_rows = []
+    for nuc in nuclei:
+        qc = nuc.get("quadrupole_coupling")
+        if qc:
+            quad_rows.append({
+                "nucleus_index": nuc.get("nucleus_index"),
+                "element": nuc.get("element"),
+                "isotope": nuc.get("isotope"),
+                "e2qQ_MHz": qc.get("e2qQ_MHz"),
+                "eta": qc.get("eta"),
+            })
+    if quad_rows:
+        files.append(_write_csv(
+            directory, f"{stem}_epr_quadrupole.csv", quad_rows,
+            ["nucleus_index", "element", "isotope", "e2qQ_MHz", "eta"],
+        ))
+
+    return files
+
+
 def _write_dipole(data, directory, stem) -> List[Path]:
     dip = data.get("dipole")
     if not dip:
@@ -588,6 +661,7 @@ def write_csvs(data: Dict[str, Any], directory: Path) -> List[Path]:
         _write_nbo_nlmo_hyb,
         _write_nbo_nlmo_bo,
         _write_nbo_nlmo_steric,
+        _write_epr,
     ]
 
     for writer in writers:
