@@ -49,6 +49,12 @@ Examples
   # Multiple files with multi-molecule comparison document
   orca_parser *.out --compare --outdir results/
 
+  # Compare all *.out and *.log files found recursively in a directory
+  orca_parser calculations/ --compare --outdir results/
+
+  # Mix files and directories
+  orca_parser extra.out calculations/ --compare
+
   # Quiet mode (no progress messages), all output to a custom directory
   orca_parser water.out --outdir /tmp/parsed --quiet
 
@@ -62,6 +68,7 @@ Examples
 import argparse
 import sys
 from pathlib import Path
+from typing import List
 
 
 def parse_args():
@@ -72,7 +79,9 @@ def parse_args():
         epilog=__doc__,
     )
     p.add_argument("files", nargs="+", metavar="FILE",
-                   help="ORCA output file(s) to parse")
+                   help="ORCA output file(s) or directory(ies) to parse. "
+                        "Directories are searched recursively for *.out and "
+                        "*.log files.")
 
     # ── Section selection ────────────────────────────────────────────
     p.add_argument("--sections", nargs="+", metavar="SEC", default=None,
@@ -92,7 +101,8 @@ def parse_args():
     p.add_argument("--no-markdown", dest="write_markdown", action="store_false")
     p.add_argument("--compare",  dest="write_compare",  action="store_true",  default=False,
                    help="Write multi-molecule comparison document (comparison.md). "
-                        "Implies --markdown. Useful when parsing multiple files.")
+                        "Implies --markdown. Accepts directories — searches "
+                        "recursively for *.out and *.log files.")
 
     # ── JSON options ─────────────────────────────────────────────────
     p.add_argument("--indent", type=int, default=2, metavar="N",
@@ -119,6 +129,27 @@ def parse_args():
                    help="Suppress progress messages")
 
     return p.parse_args()
+
+
+_ORCA_EXTENSIONS = {".out", ".log"}
+
+
+def _resolve_files(paths: List[str]) -> List[Path]:
+    """Expand directories recursively into *.out and *.log files.
+
+    Regular files are passed through as-is. Directories are searched
+    recursively for files matching ORCA output extensions.
+    Results are sorted by path for deterministic ordering.
+    """
+    resolved: List[Path] = []
+    for p in paths:
+        fp = Path(p)
+        if fp.is_dir():
+            for ext in sorted(_ORCA_EXTENSIONS):
+                resolved.extend(sorted(fp.rglob(f"*{ext}")))
+        else:
+            resolved.append(fp)
+    return resolved
 
 
 def _print_summary(data: dict, path: Path) -> None:
@@ -183,9 +214,13 @@ def main():
         args.write_markdown = True
 
     all_parsers = []
+    resolved_files = _resolve_files(args.files)
 
-    for filepath in args.files:
-        fp = Path(filepath)
+    if not resolved_files:
+        print("[ERROR] No ORCA output files found.", file=sys.stderr)
+        sys.exit(1)
+
+    for fp in resolved_files:
         if not fp.exists():
             print(f"[ERROR] File not found: {fp}", file=sys.stderr)
             continue
@@ -249,7 +284,7 @@ def main():
 
     # ── Comparison document (all files) ─────────────────────────────
     if args.write_compare and len(all_parsers) > 1:
-        comp_outdir = Path(args.outdir) if args.outdir else Path(args.files[0]).parent
+        comp_outdir = Path(args.outdir) if args.outdir else resolved_files[0].parent
         comp_path   = comp_outdir / "comparison.md"
         written     = ORCAParser.compare(all_parsers, comp_path)
         if not args.quiet:
