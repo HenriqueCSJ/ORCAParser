@@ -79,9 +79,9 @@ def _write_geometry(data, directory, stem) -> List[Path]:
         rows.append({
             "index": atom.get("index"),
             "symbol": atom.get("symbol"),
-            "x_ang": atom.get("x"),
-            "y_ang": atom.get("y"),
-            "z_ang": atom.get("z"),
+            "x_ang": atom.get("x_ang"),
+            "y_ang": atom.get("y_ang"),
+            "z_ang": atom.get("z_ang"),
         })
     fn = _write_csv(directory, f"{stem}_geometry.csv", rows,
                     ["index", "symbol", "x_ang", "y_ang", "z_ang"])
@@ -98,13 +98,13 @@ def _write_orbital_energies(data, directory, stem) -> List[Path]:
         for orb in oe["orbitals"]:
             rows.append({
                 "index": orb.get("index"),
-                "occupancy": orb.get("occupancy"),
+                "occupation": orb.get("occupation"),
                 "energy_Eh": orb.get("energy_Eh"),
                 "energy_eV": orb.get("energy_eV"),
                 "irrep": orb.get("irrep", ""),
             })
         files.append(_write_csv(directory, f"{stem}_orbital_energies.csv", rows,
-                                ["index", "occupancy", "energy_Eh", "energy_eV", "irrep"]))
+                                ["index", "occupation", "energy_Eh", "energy_eV", "irrep"]))
 
     # UHF: alpha and beta
     for spin in ("alpha", "beta"):
@@ -114,14 +114,14 @@ def _write_orbital_energies(data, directory, stem) -> List[Path]:
             for orb in oe[key]:
                 rows.append({
                     "index": orb.get("index"),
-                    "occupancy": orb.get("occupancy"),
+                    "occupation": orb.get("occupation"),
                     "energy_Eh": orb.get("energy_Eh"),
                     "energy_eV": orb.get("energy_eV"),
                     "irrep": orb.get("irrep", ""),
                 })
             files.append(_write_csv(
                 directory, f"{stem}_orbital_energies_{spin}.csv", rows,
-                ["index", "occupancy", "energy_Eh", "energy_eV", "irrep"]
+                ["index", "occupation", "energy_Eh", "energy_eV", "irrep"]
             ))
     return files
 
@@ -134,7 +134,7 @@ def _write_qro(data, directory, stem) -> List[Path]:
     for orb in qro.get("orbitals", []):
         rows.append({
             "index": orb.get("index"),
-            "occupancy": orb.get("occupancy"),
+            "occupation": orb.get("occupation"),
             "type": orb.get("type", ""),
             "energy_Eh": orb.get("energy_Eh"),
             "energy_eV": orb.get("energy_eV"),
@@ -142,7 +142,7 @@ def _write_qro(data, directory, stem) -> List[Path]:
             "beta_energy_eV": orb.get("beta_energy_eV", ""),
         })
     fn = _write_csv(directory, f"{stem}_qro.csv", rows,
-                    ["index", "occupancy", "type", "energy_Eh", "energy_eV",
+                    ["index", "occupation", "type", "energy_Eh", "energy_eV",
                      "alpha_energy_eV", "beta_energy_eV"])
     return [fn]
 

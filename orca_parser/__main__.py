@@ -3,7 +3,8 @@
 orca_parser CLI
 ===============
 
-Parse one or more ORCA output files and write results to JSON, HDF5, and/or CSV.
+Parse one or more ORCA output files and write results to JSON, HDF5, CSV,
+and/or Markdown.
 
 Section aliases
 ---------------
@@ -21,17 +22,41 @@ Section aliases
 
 Examples
 --------
-  # Default: JSON + CSV, all sections
-  python -m orca_parser water.out
+  # Parse a single file (default: JSON + CSV, all sections)
+  orca_parser water.out
 
-  # Only charges and MOs, compact gzipped JSON, no CSV
-  python -m orca_parser water.out --sections charges mos --compact --gzip --no-csv
+  # Extract only charge data and molecular orbitals
+  orca_parser water.out --sections charges mos
 
-  # HDF5 only
-  python -m orca_parser water.out --hdf5 --no-json --no-csv
+  # Compact gzipped JSON, skip CSV output
+  orca_parser water.out --compact --gzip --no-csv
 
-  # Multiple files, custom output dir, human summary
-  python -m orca_parser *.out --outdir results/ --summary
+  # Export to HDF5 format only (no JSON, no CSV)
+  orca_parser water.out --hdf5 --no-json --no-csv
+
+  # HDF5 with LZF compression instead of default gzip
+  orca_parser water.out --hdf5 --h5-compression lzf --no-json --no-csv
+
+  # Generate an AI-readable markdown report alongside JSON
+  orca_parser water.out --markdown
+
+  # Parse NBO analysis only
+  orca_parser water.out --sections nbo
+
+  # Multiple files with a human-readable summary printed to stdout
+  orca_parser water.out ethanol.out benzene.out --summary
+
+  # Multiple files with multi-molecule comparison document
+  orca_parser *.out --compare --outdir results/
+
+  # Quiet mode (no progress messages), all output to a custom directory
+  orca_parser water.out --outdir /tmp/parsed --quiet
+
+  # Strip null values from JSON for cleaner output
+  orca_parser water.out --strip-none
+
+  # Only dipole and population data, with 4-space JSON indentation
+  orca_parser water.out --sections dipole population --indent 4
 """
 
 import argparse
@@ -130,7 +155,8 @@ def _print_summary(data: dict, path: Path) -> None:
 
     dip = data.get("dipole", {})
     if dip:
-        print(f"  Dipole (D)   : {dip.get('magnitude_Debye', 'N/A'):.4f}")
+        mag = dip.get('magnitude_Debye')
+        print(f"  Dipole (D)   : {mag:.4f}" if mag is not None else "  Dipole (D)   : N/A")
 
     qro = data.get("qro", {})
     if qro:
