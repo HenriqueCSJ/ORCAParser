@@ -119,6 +119,100 @@ class MetadataModule(BaseModule):
                 data["relativistic_method"] = m.group(1)
                 break
 
+        # ── Input keywords (from echoed input "! ..." lines) ─────────
+        input_keywords = []
+        for ln in lines:
+            m = re.match(r"^\|\s*\d+>\s*!\s*(.+)", ln)
+            if m:
+                input_keywords.extend(m.group(1).split())
+            if "****END OF INPUT****" in ln:
+                break
+        if input_keywords:
+            data["input_keywords"] = input_keywords
+
+        # ── DeltaSCF detection and metadata ──────────────────────────
+        is_deltascf = any(
+            kw.upper() == "DELTASCF" for kw in input_keywords
+        )
+        if is_deltascf:
+            data["calculation_type"] = "DeltaSCF"
+            deltascf: Dict[str, Any] = {}
+
+            # MOREAD source file from %moinp
+            for ln in lines:
+                m = re.match(r'^\|\s*\d+>\s*%moinp\s+"([^"]+)"', ln)
+                if m:
+                    deltascf["moinp"] = m.group(1)
+                    break
+
+            # Alpha/Beta configuration from %SCF block
+            in_scf_block = False
+            for ln in lines:
+                if re.match(r"^\|\s*\d+>\s*%SCF", ln, re.I):
+                    in_scf_block = True
+                    continue
+                if in_scf_block:
+                    if re.match(r"^\|\s*\d+>\s*END", ln, re.I):
+                        break
+                    m = re.match(
+                        r"^\|\s*\d+>\s*(ALPHACONF|BETACONF)\s+(.+)",
+                        ln, re.I,
+                    )
+                    if m:
+                        key = m.group(1).lower()
+                        # Parse comma-separated integers: "0,1" → [0, 1]
+                        vals = [
+                            int(v.strip())
+                            for v in m.group(2).split(",")
+                            if v.strip().lstrip("-").isdigit()
+                        ]
+                        deltascf[key] = vals
+
+            # Parse the DELTA-SCF INITIAL CONFIGURATION block
+            idx_ds = self.find_line(
+                lines, "DELTA-SCF INITIAL CONFIGURATION"
+            )
+            if idx_ds != -1:
+                for j in range(idx_ds + 1, min(idx_ds + 20, len(lines))):
+                    ln = lines[j]
+                    # Alpha/Beta occupation vectors
+                    m = re.match(
+                        r"^\s*(Alpha|Beta)\s*:\s*([\d.\s]+)", ln
+                    )
+                    if m:
+                        occ = [
+                            float(v)
+                            for v in m.group(2).split()
+                        ]
+                        deltascf[f"{m.group(1).lower()}_occupation"] = occ
+
+                    m = re.match(
+                        r"^\s*Aufbau metric\s+\.+\s+(\S+)", ln
+                    )
+                    if m:
+                        deltascf["aufbau_metric"] = m.group(1)
+
+                    m = re.match(
+                        r"^\s*Keep initial reference\s+\.+\s+(\S+)", ln
+                    )
+                    if m:
+                        deltascf["keep_initial_reference"] = (
+                            m.group(1).lower() == "true"
+                        )
+
+                    m = re.match(
+                        r"^\s*Hessian update\s+\.+\s+(\S+)", ln
+                    )
+                    if m:
+                        deltascf["hessian_update"] = m.group(1)
+
+                    # Stop at the SCF iterations header
+                    if "---D-I-I-S---" in ln or "---S-O-S-C-F---" in ln:
+                        break
+
+            if deltascf:
+                data["deltascf"] = deltascf
+
         # Set context flags based on parsed data
         hf_type = data.get("hf_type", "RHF")
         self.context["is_uhf"] = hf_type == "UHF"
