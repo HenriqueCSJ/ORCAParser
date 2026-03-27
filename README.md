@@ -114,6 +114,7 @@ ORCAParser.compare([p1, p2], "comparison.md")
 | **chelpg** | CHELPG electrostatic potential charges |
 | **dipole** | Dipole moment (electronic, nuclear, total), rotational constants |
 | **nbo** | NAO, NPA, Wiberg indices, Lewis structure, E(2) perturbation, NLMO |
+| **epr** | Zero-Field Splitting, g-tensor (with atom analysis), hyperfine coupling, EFG, quadrupole |
 
 ### Section Aliases
 
@@ -121,7 +122,7 @@ Use aliases on the CLI to select groups of related sections:
 
 | Alias | Expands to |
 |-------|------------|
-| `all` | All 14 modules (default) |
+| `all` | All 15 modules (default) |
 | `charges` | mulliken, loewdin, hirshfeld, mbis, chelpg |
 | `population` | mulliken, loewdin, mayer |
 | `mos` | orbital_energies, qro |
@@ -129,6 +130,7 @@ Use aliases on the CLI to select groups of related sections:
 | `nbo` | nbo |
 | `dipole` | dipole |
 | `geometry` | geometry, basis_set |
+| `epr` | epr (ZFS, g-tensor, hyperfine/EFG) |
 
 ## Output Formats
 
