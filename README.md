@@ -53,6 +53,9 @@ orca_parser water.out --markdown
 # Compare multiple molecules
 orca_parser water.out ethanol.out benzene.out --compare --outdir results/
 
+# Recursively find all *.out and *.log files in a directory and compare
+orca_parser calculations/ --compare --outdir results/
+
 # Human-readable summary to stdout
 orca_parser water.out --summary
 ```
