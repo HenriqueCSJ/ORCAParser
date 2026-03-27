@@ -7,6 +7,7 @@ from .population import (
 )
 from .dipole import DipoleMomentModule
 from .nbo import NBOModule
+from .epr import EPRModule
 
 __all__ = [
     "MetadataModule", "GeometryModule", "BasisSetModule",
@@ -16,4 +17,5 @@ __all__ = [
     "HirshfeldModule", "MBISModule", "CHELPGModule",
     "DipoleMomentModule",
     "NBOModule",
+    "EPRModule",
 ]

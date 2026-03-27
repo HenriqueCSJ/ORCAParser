@@ -16,6 +16,7 @@ Section aliases
   nbo        nbo
   dipole     dipole
   geometry   geometry, basis_set
+  epr        epr (ZFS, g-tensor, hyperfine/EFG)
 
   Plus any individual section name: scf, mulliken, mayer, chelpg, ...
   Core sections (metadata, geometry, basis_set, scf) are always included.
@@ -63,6 +64,9 @@ Examples
 
   # Only dipole and population data, with 4-space JSON indentation
   orca_parser water.out --sections dipole population --indent 4
+
+  # Extract EPR data (ZFS, g-tensor, hyperfine coupling)
+  orca_parser radical.out --sections epr
 """
 
 import argparse
