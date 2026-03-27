@@ -182,7 +182,6 @@ def _write_array(grp, name: str, lst: list, cmp: dict) -> None:
 
     # Detect type
     if all(isinstance(v, bool) for v in clean):
-        arr = np.array(lst, dtype=object)  # booleans: store as vlen string
         arr = np.array([str(v) for v in lst], dtype=h5py_string_dtype())
         grp.create_dataset(name, data=arr)
         return

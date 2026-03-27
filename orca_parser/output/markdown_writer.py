@@ -353,14 +353,14 @@ def _render_molecule(data: Dict[str, Any], heading_level: int = 1) -> str:
 
     # ── Geometry ──────────────────────────────────────────────────────────
     geom = data.get("geometry", {})
-    atoms = geom.get("atoms", [])
+    atoms = geom.get("cartesian_angstrom", [])
     if atoms:
         blocks.append(f"{H2} Geometry (Å)")
         rows = [("Atom", "x", "y", "z")]
-        for a in atoms:
+        for i, a in enumerate(atoms):
             rows.append((
-                f"{a['symbol']}{a['index']+1}" if 'index' in a else a.get('symbol','?'),
-                f"{a['x']:.6f}", f"{a['y']:.6f}", f"{a['z']:.6f}",
+                f"{a.get('symbol','?')}{i+1}",
+                f"{a['x_ang']:.6f}", f"{a['y_ang']:.6f}", f"{a['z_ang']:.6f}",
             ))
         blocks.append(_table(rows))
 
