@@ -33,6 +33,7 @@ from .modules import (
     DipoleMomentModule,
     NBOModule,
     EPRModule,
+    GeomOptModule,
 )
 
 # ─────────────────────────────────────────────────────────────────
@@ -55,6 +56,7 @@ MODULE_REGISTRY: List[tuple] = [
     ("dipole",           DipoleMomentModule),
     ("nbo",              NBOModule),
     ("epr",              EPRModule),
+    ("geom_opt",         GeomOptModule),
 ]
 
 # Sections always included regardless of the `sections` argument.
@@ -71,6 +73,7 @@ SECTION_ALIASES: Dict[str, List[str]] = {
     "dipole":     ["dipole"],
     "geometry":   ["geometry", "basis_set"],
     "epr":        ["epr"],
+    "opt":        ["geom_opt"],
 }
 
 
