@@ -4,7 +4,7 @@ A modular Python parser for [ORCA](https://orcaforum.kofo.mpg.de/) quantum chemi
 
 ## Features
 
-- **16 parser modules** covering SCF energies, orbital data, 6 population analysis schemes (Mulliken, Loewdin, Mayer, Hirshfeld, MBIS, CHELPG), dipole moments, NBO analysis, EPR properties, and geometry optimizations
+- **18 parser modules** covering SCF energies, orbital data, implicit-solvation settings (CPCM/SMD/ALPB/COSMO-RS), TDDFT/CIS excited states and spectra, 6 population analysis schemes (Mulliken, Loewdin, Mayer, Hirshfeld, MBIS, CHELPG), dipole moments, NBO analysis, EPR properties, and geometry optimizations
 - **4 output formats**: JSON (with optional gzip), CSV (one table per section), HDF5, and AI-readable Markdown
 - Handles both **RHF/RKS** and **UHF/UKS** calculations with spin-resolved data
 - **Geometry optimization** tracking: per-cycle energies, convergence criteria, trust radii, Kabsch-aligned RMSD (initial/final, step-to-step, mass-weighted)
@@ -123,6 +123,8 @@ ORCAParser.compare([p1, p2], "comparison.md")
 |--------|------|
 | **orbital_energies** | HOMO/LUMO, orbital energies (RHF/UHF), irrep labels |
 | **qro** | Quasi-Restricted Orbitals — DOMO/SOMO/VMO classification (UHF only) |
+| **solvation** | Implicit-solvation detection, model/solvent summary, `%cpcm`/`%cosmors` inputs, CPCM/SMD, ALPB, and COSMO-RS output blocks |
+| **tddft** | TDDFT/CIS input settings, excited-state configurations, NTOs, absorption/CD spectra, CIS/TDDFT total-energy summary |
 | **mulliken** | Mulliken charges, spin populations, reduced orbital charges |
 | **loewdin** | Loewdin charges, spin populations, reduced orbital charges |
 | **mayer** | Mayer bond orders, atomic valence data (NA, ZA, QA, VA, BVA, FA) |
@@ -140,13 +142,15 @@ Use aliases on the CLI to select groups of related sections:
 
 | Alias | Expands to |
 |-------|------------|
-| `all` | All 16 modules (default) |
+| `all` | All 18 modules (default) |
 | `charges` | mulliken, loewdin, hirshfeld, mbis, chelpg |
 | `population` | mulliken, loewdin, mayer |
 | `mos` | orbital_energies, qro |
 | `bonds` | mayer, loewdin |
 | `nbo` | nbo |
 | `dipole` | dipole |
+| `solvation` | solvation |
+| `tddft` | tddft |
 | `geometry` | geometry, basis_set |
 | `epr` | epr (ZFS, g-tensor, hyperfine/EFG) |
 | `opt` | geom_opt (optimization cycles, convergence, RMSD) |

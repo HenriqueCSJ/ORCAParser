@@ -31,6 +31,8 @@ from .modules import (
     MBISModule,
     CHELPGModule,
     DipoleMomentModule,
+    SolvationModule,
+    TDDFTModule,
     NBOModule,
     EPRModule,
     GeomOptModule,
@@ -54,6 +56,8 @@ MODULE_REGISTRY: List[tuple] = [
     ("mbis",             MBISModule),
     ("chelpg",           CHELPGModule),
     ("dipole",           DipoleMomentModule),
+    ("solvation",        SolvationModule),
+    ("tddft",            TDDFTModule),
     ("nbo",              NBOModule),
     ("epr",              EPRModule),
     ("geom_opt",         GeomOptModule),
@@ -71,6 +75,8 @@ SECTION_ALIASES: Dict[str, List[str]] = {
     "bonds":      ["mayer", "loewdin"],
     "nbo":        ["nbo"],
     "dipole":     ["dipole"],
+    "solvation":  ["solvation"],
+    "tddft":      ["tddft"],
     "geometry":   ["geometry", "basis_set"],
     "epr":        ["epr"],
     "opt":        ["geom_opt"],
@@ -146,6 +152,8 @@ class ORCAParser:
             * ``"bonds"``      — mayer, loewdin
             * ``"nbo"``        — nbo
             * ``"dipole"``     — dipole
+            * ``"solvation"``  — solvation
+            * ``"tddft"``      — tddft
             * ``"geometry"``   — geometry, basis_set
 
             Core sections (metadata, geometry, basis_set, scf) are always

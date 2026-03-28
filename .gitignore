@@ -6,3 +6,4 @@ dist/
 build/
 *.h5
 *.json.gz
+sample_outs/

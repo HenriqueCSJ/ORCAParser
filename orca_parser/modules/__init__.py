@@ -6,6 +6,8 @@ from .population import (
     HirshfeldModule, MBISModule, CHELPGModule,
 )
 from .dipole import DipoleMomentModule
+from .solvation import SolvationModule
+from .tddft import TDDFTModule
 from .nbo import NBOModule
 from .epr import EPRModule
 from .geom_opt import GeomOptModule
@@ -17,6 +19,8 @@ __all__ = [
     "MullikenModule", "LoewdinModule", "MayerModule",
     "HirshfeldModule", "MBISModule", "CHELPGModule",
     "DipoleMomentModule",
+    "SolvationModule",
+    "TDDFTModule",
     "NBOModule",
     "EPRModule",
     "GeomOptModule",
