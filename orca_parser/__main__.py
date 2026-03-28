@@ -6,6 +6,17 @@ orca_parser CLI
 Parse one or more ORCA output files and write results to JSON, HDF5, CSV,
 and/or Markdown.
 
+Notes
+-----
+  * Directories are searched recursively for ``*.out`` and ``*.log`` files.
+  * Auxiliary ORCA helper/ECP files such as ``*_atom83.out`` are skipped
+    during recursive discovery and rejected if passed directly.
+  * Markdown and CSV exports explicitly distinguish DeltaSCF excited-state
+    jobs from ordinary ground-state single-points.
+  * For UseSym jobs, symmetry metadata includes the detected point group,
+    reduced/orbital irrep group, irrep occupations, and symmetry-perfected
+    geometry when ORCA prints it.
+
 Section aliases
 ---------------
   all        Everything (default)
@@ -71,6 +82,9 @@ Examples
 
   # Parse geometry optimization data (per-cycle energies, convergence, RMSD)
   orca_parser geom_opt.out --sections opt --summary
+
+  # DeltaSCF excited-state jobs are called out explicitly in markdown/CSV
+  orca_parser excited_state.out --markdown --csv
 """
 
 import argparse
@@ -84,35 +98,49 @@ from orca_parser.parser import is_auxiliary_orca_file
 def parse_args():
     p = argparse.ArgumentParser(
         prog="orca_parser",
-        description="Parse ORCA quantum chemistry output files.",
+        description=(
+            "Parse ORCA quantum chemistry output files into JSON, CSV, "
+            "HDF5, and Markdown. Handles ground-state, DeltaSCF excited-state, "
+            "UseSym/symmetry-aware, EPR, TDDFT, and geometry-optimization jobs."
+        ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
     p.add_argument("files", nargs="+", metavar="FILE",
                    help="ORCA output file(s) or directory(ies) to parse. "
                         "Directories are searched recursively for *.out and "
-                        "*.log files.")
+                        "*.log files; helper/ECP files such as *_atom83.out "
+                        "are skipped.")
 
     # ── Section selection ────────────────────────────────────────────
     p.add_argument("--sections", nargs="+", metavar="SEC", default=None,
                    help="Sections / aliases to parse (default: all). "
-                        "E.g. --sections charges mos dipole")
+                        "Examples: --sections charges mos dipole, "
+                        "--sections epr, --sections opt")
 
     # ── Output format flags ─────────────────────────────────────────
-    p.add_argument("--json",    dest="write_json", action="store_true",  default=True)
-    p.add_argument("--no-json", dest="write_json", action="store_false")
-    p.add_argument("--csv",     dest="write_csv",  action="store_true",  default=True)
-    p.add_argument("--no-csv",  dest="write_csv",  action="store_false")
+    p.add_argument("--json",    dest="write_json", action="store_true",  default=True,
+                   help="Write JSON output (.json or .json.gz). Default: on")
+    p.add_argument("--no-json", dest="write_json", action="store_false",
+                   help="Disable JSON output")
+    p.add_argument("--csv",     dest="write_csv",  action="store_true",  default=True,
+                   help="Write CSV tables. Default: on")
+    p.add_argument("--no-csv",  dest="write_csv",  action="store_false",
+                   help="Disable CSV output")
     p.add_argument("--hdf5",    dest="write_hdf5",     action="store_true",  default=False,
                    help="Write HDF5 output (.h5)")
-    p.add_argument("--no-hdf5", dest="write_hdf5",     action="store_false")
+    p.add_argument("--no-hdf5", dest="write_hdf5",     action="store_false",
+                   help="Disable HDF5 output")
     p.add_argument("--markdown", dest="write_markdown", action="store_true",  default=False,
-                   help="Write compact AI-readable markdown report (.md)")
-    p.add_argument("--no-markdown", dest="write_markdown", action="store_false")
+                   help="Write compact AI-readable markdown report (.md) "
+                        "with symmetry and DeltaSCF state labeling")
+    p.add_argument("--no-markdown", dest="write_markdown", action="store_false",
+                   help="Disable markdown output")
     p.add_argument("--compare",  dest="write_compare",  action="store_true",  default=False,
                    help="Write multi-molecule comparison document (comparison.md). "
                         "Implies --markdown. Accepts directories — searches "
-                        "recursively for *.out and *.log files.")
+                        "recursively for *.out and *.log files, skipping "
+                        "auxiliary *_atomNN helper outputs.")
 
     # ── JSON options ─────────────────────────────────────────────────
     p.add_argument("--indent", type=int, default=2, metavar="N",
@@ -132,9 +160,11 @@ def parse_args():
 
     # ── Misc ─────────────────────────────────────────────────────────
     p.add_argument("--outdir", default=None, metavar="DIR",
-                   help="Output directory (default: same dir as input)")
+                   help="Output directory (default: same dir as input file; "
+                        "for directory/compare mode, the chosen output root)")
     p.add_argument("--summary", action="store_true",
-                   help="Print a human-readable summary to stdout")
+                   help="Print a human-readable summary to stdout, including "
+                        "calculation type and basic symmetry/spin diagnostics")
     p.add_argument("--quiet", action="store_true",
                    help="Suppress progress messages")
 

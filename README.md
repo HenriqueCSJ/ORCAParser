@@ -8,13 +8,13 @@ A modular Python parser for [ORCA](https://orcaforum.kofo.mpg.de/) quantum chemi
 - **4 output formats**: JSON (with optional gzip), CSV (one table per section), HDF5, and AI-readable Markdown
 - Handles both **RHF/RKS** and **UHF/UKS** calculations with spin-resolved data
 - **Geometry optimization** tracking: per-cycle energies, convergence criteria, trust radii, Kabsch-aligned RMSD (initial/final, step-to-step, mass-weighted)
-- **DeltaSCF** metadata extraction: ALPHACONF/BETACONF, IONIZEALPHA/IONIZEBETA, occupation vectors, MOM/IMOM settings
+- **DeltaSCF** metadata extraction: ALPHACONF/BETACONF, IONIZEALPHA/IONIZEBETA, occupation vectors, MOM/IMOM settings, with explicit excited-state labeling in Markdown and CSV outputs
 - **EPR/EPR properties**: Zero-Field Splitting, g-tensor (with atomic breakdown), hyperfine coupling, EFG, quadrupole
-- **Point group symmetry** support (irrep labels on orbitals)
+- **UseSym / point-group symmetry** support: detected point group, reduced/orbital irrep group, irrep occupations, and symmetry-perfected geometries when ORCA prints them
 - **Case-insensitive** keyword and section matching (ORCA is case-insensitive, so is this parser)
 - Selective section extraction via aliases (`charges`, `mos`, `bonds`, `opt`, `epr`, etc.)
 - Batch processing of multiple files with **multi-molecule comparison** reports
-- **Recursive directory search** for `*.out` and `*.log` files
+- **Recursive directory search** for `*.out` and `*.log` files, excluding auxiliary ORCA helper/ECP files such as `*_atom83.out`
 - **ORCA output validation** — rejects non-ORCA files (requires program banner + normal termination)
 - **Quasi-Restricted Orbital (QRO)** parsing for UHF calculations
 - Comprehensive **Natural Bond Orbital (NBO)** analysis extraction
@@ -56,6 +56,9 @@ orca_parser water.out --hdf5 --no-json --no-csv
 
 # Markdown report for AI-assisted paper writing
 orca_parser water.out --markdown
+
+# DeltaSCF excited-state job: markdown/CSV call this out explicitly
+orca_parser excited_state.out --markdown --csv
 
 # Compare multiple molecules
 orca_parser water.out ethanol.out benzene.out --compare --outdir results/
@@ -112,8 +115,8 @@ ORCAParser.compare([p1, p2], "comparison.md")
 
 | Module | Data |
 |--------|------|
-| **metadata** | ORCA version, job name, functional, basis set, charge, multiplicity, DeltaSCF detection (ALPHACONF/BETACONF, IONIZEALPHA/IONIZEBETA, occupation vectors, MOM/IMOM) |
-| **geometry** | Cartesian coordinates (Å and a.u.), internal coordinates, symmetry |
+| **metadata** | ORCA version, job name, functional, basis set, charge, multiplicity, calculation type, DeltaSCF detection (ALPHACONF/BETACONF, IONIZEALPHA/IONIZEBETA, occupation vectors, MOM/IMOM), symmetry metadata |
+| **geometry** | Cartesian coordinates (Å and a.u.), internal coordinates, symmetry-perfected geometry when printed by ORCA |
 | **basis_set** | Basis set groups, atom mappings, shell count |
 | **scf** | Total energy, energy components, DFT data, convergence, spin expectation |
 
@@ -121,7 +124,7 @@ ORCAParser.compare([p1, p2], "comparison.md")
 
 | Module | Data |
 |--------|------|
-| **orbital_energies** | HOMO/LUMO, orbital energies (RHF/UHF), irrep labels |
+| **orbital_energies** | HOMO/LUMO, orbital energies (RHF/UHF), irrep labels, occupied orbitals per irrep |
 | **qro** | Quasi-Restricted Orbitals — DOMO/SOMO/VMO classification (UHF only) |
 | **solvation** | Implicit-solvation detection, model/solvent summary, `%cpcm`/`%cosmors` inputs, CPCM/SMD, ALPB, and COSMO-RS output blocks |
 | **tddft** | TDDFT/CIS input settings, excited-state configurations, NTOs, absorption/CD spectra, CIS/TDDFT total-energy summary |
@@ -172,6 +175,15 @@ orca_parser water.out --indent 4 --strip-none  # Custom indent, no nulls
 
 One CSV file per data section, written to a `{name}_csv/` directory. Enabled by default.
 
+New metadata-oriented CSV tables include:
+
+- `*_metadata.csv`
+- `*_symmetry.csv`
+- `*_symmetry_irreps.csv`
+- `*_geometry_symmetry.csv` when a symmetry-perfected geometry is available
+- `*_deltascf.csv`
+- `*_deltascf_occupations.csv`
+
 ```bash
 orca_parser water.out             # Creates water_csv/ with tables
 orca_parser water.out --no-csv    # Disable CSV output
@@ -189,7 +201,7 @@ orca_parser water.out --hdf5 --h5-level 9          # Max gzip compression
 
 ### Markdown
 
-AI-readable reports optimized for LLM-assisted paper writing. Includes publication-ready tables, spin diagnostics, and frontier orbital analysis.
+AI-readable reports optimized for LLM-assisted paper writing. Includes publication-ready tables, spin diagnostics, frontier orbital analysis, explicit DeltaSCF excited-state labeling, and dedicated symmetry sections for UseSym jobs.
 
 ```bash
 orca_parser water.out --markdown                   # Per-file report
@@ -202,7 +214,10 @@ orca_parser *.out --compare --outdir results/      # Multi-molecule comparison
 orca_parser [options] FILE [FILE ...]
 
 Positional:
-  FILE                    One or more ORCA output files
+  FILE                    One or more ORCA output files or directories.
+                          Directories are searched recursively for *.out and
+                          *.log files. Auxiliary helper/ECP files such as
+                          *_atom83.out are skipped.
 
 Section Selection:
   --sections SEC [SEC ...]  Sections/aliases to parse (default: all)
@@ -213,6 +228,7 @@ Output Formats:
   --hdf5 / --no-hdf5      HDF5 output (default: off)
   --markdown / --no-markdown  Markdown report (default: off)
   --compare               Multi-molecule comparison (implies --markdown)
+                          and supports directory inputs
 
 JSON Options:
   --indent N              Indentation level (default: 2; 0 = compact)
@@ -229,6 +245,14 @@ Misc:
   --summary               Print human-readable summary to stdout
   --quiet                 Suppress progress messages
 ```
+
+## Important ORCA-specific behavior
+
+- Files such as `BiC_atom83.out` or `SbC_atom51.out` are treated as auxiliary ORCA atom/ECP helper outputs, not real calculation outputs.
+- Recursive directory parsing skips those helper files automatically.
+- Passing one directly to the parser raises a validation error instead of silently treating it as a calculation.
+- DeltaSCF jobs are reported as excited-state SCF calculations, not ordinary single-point calculations.
+- UseSym jobs report the detected point group and the reduced/orbital irrep group separately when ORCA prints both.
 
 ## License
 

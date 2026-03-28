@@ -3,7 +3,7 @@ Modules for calculation metadata, geometry, and basis set information.
 """
 
 import re
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from .base import BaseModule
 
@@ -101,16 +101,28 @@ class MetadataModule(BaseModule):
                 data["nuclear_repulsion_Eh"] = float(m.group(1))
                 break
 
-        # Symmetry
-        for ln in lines:
-            m = re.search(r"Symmetry-adapted orbitals\s+\.\.\.\.\s+(\w+)", ln)
-            if m:
-                data["point_group"] = m.group(1)
-                self.context["has_symmetry"] = True
-                break
-        else:
-            if "has_symmetry" not in self.context:
-                self.context["has_symmetry"] = False
+        symmetry = self._parse_symmetry(lines)
+        if symmetry:
+            data["symmetry"] = symmetry
+            if symmetry.get("point_group"):
+                data["point_group"] = symmetry["point_group"]
+            elif symmetry.get("auto_detected_point_group"):
+                data["point_group"] = symmetry["auto_detected_point_group"]
+            elif symmetry.get("reduced_point_group"):
+                data["point_group"] = symmetry["reduced_point_group"]
+
+            if symmetry.get("reduced_point_group"):
+                data["reduced_point_group"] = symmetry["reduced_point_group"]
+            if symmetry.get("orbital_irrep_group"):
+                data["orbital_irrep_group"] = symmetry["orbital_irrep_group"]
+
+            self.context["has_symmetry"] = True
+            if symmetry.get("point_group"):
+                self.context["point_group"] = symmetry["point_group"]
+            if symmetry.get("orbital_irrep_group"):
+                self.context["orbital_irrep_group"] = symmetry["orbital_irrep_group"]
+        elif "has_symmetry" not in self.context:
+            self.context["has_symmetry"] = False
 
         # Relativistic method
         for ln in lines:
@@ -229,6 +241,94 @@ class MetadataModule(BaseModule):
 
         return data if data else None
 
+    def _parse_symmetry(self, lines: List[str]) -> Dict[str, Any]:
+        """Extract ORCA symmetry metadata, keeping geometry and MO irreps distinct."""
+        sym: Dict[str, Any] = {}
+
+        for i, ln in enumerate(lines):
+            m = re.search(r"Auto-detected point group\s+\.+\s+(\S+)", ln)
+            if m:
+                sym["auto_detected_point_group"] = m.group(1)
+                continue
+
+            m = re.search(r"Reduced point group\s+\.+\s+(\S+)", ln)
+            if m:
+                sym["reduced_point_group"] = m.group(1)
+                continue
+
+            m = re.search(r"Root mean square distance\s+\.+\s+([-\d.Ee+]+)\s+au", ln)
+            if m:
+                sym["setup_rms_distance_au"] = float(m.group(1))
+                continue
+
+            m = re.search(r"Maximum distance\s+\.+\s+([-\d.Ee+]+)\s+au", ln)
+            if m:
+                sym["setup_max_distance_au"] = float(m.group(1))
+                continue
+
+            m = re.search(r"Threshold in use\s+\.+\s+([-\d.Ee+]+)\s+au", ln)
+            if m:
+                sym["setup_threshold_au"] = float(m.group(1))
+                continue
+
+            m = re.search(r"Time for symmetry setup\s+\.+\s+([-\d.Ee+]+)\s+s", ln)
+            if m:
+                sym["setup_time_s"] = float(m.group(1))
+                continue
+
+            m = re.search(r"Symmetry handling\s+UseSym\s+\.+\s+(\w+)", ln)
+            if m:
+                value = m.group(1).upper()
+                sym["use_sym"] = value == "ON"
+                sym["use_sym_label"] = value
+                continue
+
+            m = re.match(r"^\s*Point group\s+\.+\s+(\S+)", ln)
+            if m:
+                sym["point_group"] = m.group(1)
+                continue
+
+            m = re.search(r"Symmetry-adapted orbitals\s+\.+\s+(\S+)", ln)
+            if m:
+                sym["orbital_irrep_group"] = m.group(1)
+                continue
+
+            m = re.search(r"Petite-list algorithm\s+\.+\s+(\S+)", ln)
+            if m:
+                value = m.group(1).upper()
+                sym["petite_list_algorithm"] = value == "ON"
+                sym["petite_list_algorithm_label"] = value
+                continue
+
+            m = re.search(r"Number of irreps\s+\.+\s+(\d+)", ln)
+            if m:
+                sym["n_irreps"] = int(m.group(1))
+                irreps: List[Dict[str, Any]] = []
+                for sub_ln in lines[i + 1:]:
+                    m_ir = re.match(
+                        r"^\s*Irrep\s+(\S+)\s+has\s+(\d+)\s+symmetry adapted basis functions"
+                        r"\s+\(ofs=\s*(\d+)\)",
+                        sub_ln,
+                    )
+                    if not m_ir:
+                        if irreps:
+                            break
+                        continue
+                    irreps.append({
+                        "label": m_ir.group(1),
+                        "n_basis_functions": int(m_ir.group(2)),
+                        "offset": int(m_ir.group(3)),
+                    })
+                if irreps:
+                    sym["irreps"] = irreps
+                continue
+
+            m = re.search(r"The symmetry of the initial guess is\s+(\S+)", ln)
+            if m:
+                sym["initial_guess_irrep"] = m.group(1)
+
+        return sym
+
 
 class GeometryModule(BaseModule):
     """Extracts Cartesian coordinates (Å and a.u.) and internal coordinates."""
@@ -311,8 +411,11 @@ class GeometryModule(BaseModule):
             m = re.search(r"point group\s+(\w+)", lines[idx])
             if m:
                 data["symmetry_point_group"] = m.group(1)
+                data["symmetry_perfected_point_group"] = m.group(1)
                 sym_atoms = []
-                for ln in lines[idx + 5:]:
+                for ln in lines[idx + 1:]:
+                    if "Symmetry-perfected Cartesians" in ln and "; Ang" in ln:
+                        break
                     m2 = re.match(r"\s+(\d+)\s+(\w+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)", ln)
                     if m2:
                         sym_atoms.append({
@@ -326,6 +429,28 @@ class GeometryModule(BaseModule):
                         break
                 if sym_atoms:
                     data["symmetry_cartesian_au"] = sym_atoms
+
+                sym_atoms_ang = []
+                ang_header_seen = False
+                for ln in lines[idx + 1:]:
+                    if "Symmetry-perfected Cartesians" in ln and "; Ang" in ln:
+                        ang_header_seen = True
+                        continue
+                    if not ang_header_seen:
+                        continue
+                    m3 = re.match(r"\s+(\d+)\s+(\w+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)", ln)
+                    if m3:
+                        sym_atoms_ang.append({
+                            "index": int(m3.group(1)),
+                            "symbol": m3.group(2),
+                            "x_ang": float(m3.group(3)),
+                            "y_ang": float(m3.group(4)),
+                            "z_ang": float(m3.group(5)),
+                        })
+                    elif ln.strip() == "" and sym_atoms_ang:
+                        break
+                if sym_atoms_ang:
+                    data["symmetry_cartesian_angstrom"] = sym_atoms_ang
 
         return data if data else None
 

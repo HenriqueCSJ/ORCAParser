@@ -65,10 +65,13 @@ def _render_molecule(
     hftyp = ctx.get("hf_type", "RHF")
     charge = meta.get("charge", 0)
     mult   = meta.get("multiplicity", 1)
-    sym    = f"  symmetry={_irrep_group(data)}" if ctx.get("has_symmetry") else ""
+    state_label = _electronic_state_label(data)
+    sym_label = _symmetry_inline_label(data)
+    state  = f"  state={state_label}" if state_label else ""
+    sym    = f"  symmetry={sym_label}" if sym_label else ""
     blocks.append(
         f"{H} {job}\n"
-        f"`{hftyp} {func}/{basis}` | charge={charge} mult={mult}{sym}  \n"
+        f"`{hftyp} {func}/{basis}` | charge={charge} mult={mult}{state}{sym}  \n"
         f"source: `{src}`"
     )
 
@@ -103,6 +106,14 @@ def _render_molecule(
         basis_section = _render_basis_set_section(basis_set)
         if basis_section:
             blocks.append(f"{H2} Basis Set\n{basis_section}")
+
+    symmetry_section = _render_symmetry_section(data)
+    if symmetry_section:
+        blocks.append(f"{H2} Symmetry\n{symmetry_section}")
+
+    deltascf_section = _render_deltascf_section(data)
+    if deltascf_section:
+        blocks.append(f"{H2} DeltaSCF / Excited-State Target\n{deltascf_section}")
 
     # -- Geometry optimization summary -----------------------------------
     geom_opt = data.get("geom_opt")
@@ -394,9 +405,10 @@ def _render_molecule(
 
     # ── Geometry ──────────────────────────────────────────────────────────
     geom = data.get("geometry", {})
-    atoms = geom.get("cartesian_angstrom", [])
+    atoms = geom.get("symmetry_cartesian_angstrom") or geom.get("cartesian_angstrom", [])
     if atoms:
-        blocks.append(f"{H2} Geometry (Å)")
+        heading = "Geometry (symmetry-perfected, Å)" if geom.get("symmetry_cartesian_angstrom") else "Geometry (Å)"
+        blocks.append(f"{H2} {heading}")
         rows = [("Atom", "x", "y", "z")]
         for i, a in enumerate(atoms):
             rows.append((
@@ -422,7 +434,7 @@ def _render_comparison(datasets: List[Dict[str, Any]]) -> str:
     labels = _comparison_labels(datasets)
 
     # ── Method table ───────────────────────────────────────────────────────
-    rows = [("", "method", "basis", "charge", "mult", "symmetry")]
+    rows = [("", "method", "basis", "charge", "mult", "electronic state", "symmetry")]
     for lbl, d in zip(labels, datasets):
         meta = d.get("metadata", {})
         ctx  = d.get("context",  {})
@@ -432,9 +444,38 @@ def _render_comparison(datasets: List[Dict[str, Any]]) -> str:
             meta.get("basis_set", "?"),
             str(meta.get("charge", "?")),
             str(meta.get("multiplicity", "?")),
-            _irrep_group(d) if ctx.get("has_symmetry") else "C1",
+            _electronic_state_label(d) or "ground-state",
+            _symmetry_inline_label(d) or "C1",
         ))
     blocks.append("## Methods\n" + _table(rows))
+
+    if any(_is_deltascf(d) for d in datasets):
+        rows = [("", "electronic state", "target", "metric", "keep ref")]
+        for lbl, d in zip(labels, datasets):
+            deltascf = _get_deltascf_data(d)
+            rows.append((
+                lbl,
+                _electronic_state_label(d) or "ground-state",
+                _deltascf_target_summary(deltascf) or "—",
+                deltascf.get("aufbau_metric") or "—",
+                _yes_no_unknown(deltascf.get("keep_initial_reference")),
+            ))
+        blocks.append("## DeltaSCF\n" + _table(rows))
+
+    if any(_has_symmetry(d) for d in datasets):
+        rows = [("", "UseSym", "point group", "reduced", "orbital irreps", "n_irreps", "initial guess")]
+        for lbl, d in zip(labels, datasets):
+            sym = _get_symmetry_data(d)
+            rows.append((
+                lbl,
+                _symmetry_on_off(sym),
+                sym.get("point_group") or sym.get("auto_detected_point_group") or "?",
+                sym.get("reduced_point_group") or "?",
+                sym.get("orbital_irrep_group") or "?",
+                str(sym.get("n_irreps", "?")),
+                sym.get("initial_guess_irrep") or "?",
+            ))
+        blocks.append("## Symmetry\n" + _table(rows))
 
     # ── Energy table ───────────────────────────────────────────────────────
     rows = [("", "E (Eh)", "⟨S²⟩", "ideal", "dipole (D)")]
@@ -1049,12 +1090,137 @@ def _comparison_labels(datasets: List[Dict[str, Any]]) -> List[str]:
     return labels
 
 
+def _get_deltascf_data(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Return DeltaSCF metadata if this is an excited-state DeltaSCF job."""
+    meta = data.get("metadata", {})
+    if str(meta.get("calculation_type", "")).lower() != "deltascf":
+        return {}
+    return dict(meta.get("deltascf") or {})
+
+
+def _is_deltascf(data: Dict[str, Any]) -> bool:
+    """Whether the parsed job is a DeltaSCF excited-state SCF calculation."""
+    return bool(_get_deltascf_data(data) or str(data.get("metadata", {}).get("calculation_type", "")).lower() == "deltascf")
+
+
+def _electronic_state_label(data: Dict[str, Any]) -> str:
+    """Short label describing whether this is a ground-state or DeltaSCF job."""
+    if _is_deltascf(data):
+        return "DeltaSCF excited-state"
+    return ""
+
+
+def _yes_no_unknown(value: Any) -> str:
+    """Render boolean-like values as yes/no/?."""
+    if value is True:
+        return "yes"
+    if value is False:
+        return "no"
+    return "?"
+
+
+def _format_deltascf_vector(values: Any) -> str:
+    """Compact formatter for occupation / configuration vectors."""
+    if not isinstance(values, list) or not values:
+        return ""
+    parts: List[str] = []
+    for value in values:
+        if isinstance(value, int) and not isinstance(value, bool):
+            parts.append(str(value))
+            continue
+        if isinstance(value, float) and value.is_integer():
+            parts.append(str(int(value)))
+        else:
+            parts.append(_f(value))
+    return " ".join(parts)
+
+
+def _deltascf_target_summary(deltascf: Dict[str, Any]) -> str:
+    """One-line DeltaSCF target summary for comparison tables."""
+    if not deltascf:
+        return ""
+
+    parts: List[str] = []
+    for key in ("alphaconf", "betaconf"):
+        values = deltascf.get(key)
+        if isinstance(values, list) and values:
+            parts.append(f"{key.upper()} {_format_deltascf_vector(values).replace(' ', ',')}")
+    for key in ("ionizealpha", "ionizebeta"):
+        value = deltascf.get(key)
+        if value is not None:
+            parts.append(f"{key.upper()} {value}")
+    return "; ".join(parts)
+
+
+def _get_symmetry_data(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Return a normalized symmetry payload assembled from metadata/geometry."""
+    meta = data.get("metadata", {})
+    geom = data.get("geometry", {})
+    sym = dict(meta.get("symmetry") or {})
+
+    if meta.get("point_group") and "point_group" not in sym:
+        sym["point_group"] = meta["point_group"]
+    if meta.get("reduced_point_group") and "reduced_point_group" not in sym:
+        sym["reduced_point_group"] = meta["reduced_point_group"]
+    if meta.get("orbital_irrep_group") and "orbital_irrep_group" not in sym:
+        sym["orbital_irrep_group"] = meta["orbital_irrep_group"]
+    if geom.get("symmetry_perfected_point_group") and "geometry_point_group" not in sym:
+        sym["geometry_point_group"] = geom["symmetry_perfected_point_group"]
+    if "point_group" not in sym and sym.get("geometry_point_group"):
+        sym["point_group"] = sym["geometry_point_group"]
+
+    return sym
+
+
+def _has_symmetry(data: Dict[str, Any]) -> bool:
+    """Whether a parsed dataset carries symmetry information."""
+    if data.get("context", {}).get("has_symmetry"):
+        return True
+    sym = _get_symmetry_data(data)
+    return bool(
+        sym.get("use_sym") is True
+        or sym.get("point_group")
+        or sym.get("auto_detected_point_group")
+        or sym.get("reduced_point_group")
+        or sym.get("orbital_irrep_group")
+        or data.get("geometry", {}).get("symmetry_cartesian_au")
+    )
+
+
+def _symmetry_on_off(sym: Dict[str, Any]) -> str:
+    """Format UseSym as ON/OFF/? for tables."""
+    if sym.get("use_sym_label"):
+        return str(sym["use_sym_label"])
+    if sym.get("use_sym") is True:
+        return "ON"
+    if sym.get("use_sym") is False:
+        return "OFF"
+    return "?"
+
+
+def _symmetry_inline_label(data: Dict[str, Any]) -> str:
+    """Compact symmetry label, keeping full and reduced/orbital groups distinct."""
+    if not _has_symmetry(data):
+        return ""
+
+    sym = _get_symmetry_data(data)
+    point_group = (
+        sym.get("point_group")
+        or sym.get("auto_detected_point_group")
+        or sym.get("geometry_point_group")
+    )
+    orbital_group = sym.get("orbital_irrep_group") or sym.get("reduced_point_group")
+
+    if point_group and orbital_group and orbital_group != point_group:
+        return f"{point_group} -> {orbital_group}"
+    return orbital_group or point_group or "symmetry"
+
+
 def _irrep_group(data: Dict[str, Any]) -> str:
     """Try to extract the point group label from the metadata or orbital data."""
-    meta = data.get("metadata", {})
-    pg   = meta.get("point_group", "")
-    if pg:
-        return pg
+    sym_label = _symmetry_inline_label(data)
+    if sym_label:
+        return sym_label
     # Fall back: look at irrep labels in orbital_energies
     oe = data.get("orbital_energies", {})
     orbs = oe.get("orbitals") or oe.get("alpha_orbitals") or []
@@ -1065,6 +1231,128 @@ def _irrep_group(data: Dict[str, Any]) -> str:
             label = irr.split("-", 1)[-1].strip() if "-" in irr else irr
             return label  # rough: just the first irrep label
     return "?"
+
+
+def _render_symmetry_section(data: Dict[str, Any]) -> str:
+    """Render a dedicated symmetry summary for UseSym / irrep-aware jobs."""
+    if not _has_symmetry(data):
+        return ""
+
+    sym = _get_symmetry_data(data)
+    geom = data.get("geometry", {})
+    oe = data.get("orbital_energies", {})
+
+    lines: List[str] = []
+
+    summary_rows = [("field", "value")]
+    if "use_sym" in sym or sym.get("use_sym_label"):
+        summary_rows.append(("UseSym", _symmetry_on_off(sym)))
+    if sym.get("auto_detected_point_group"):
+        summary_rows.append(("Auto-detected point group", str(sym["auto_detected_point_group"])))
+    if sym.get("point_group"):
+        summary_rows.append(("Point group", str(sym["point_group"])))
+    if sym.get("reduced_point_group"):
+        summary_rows.append(("Reduced point group", str(sym["reduced_point_group"])))
+    if sym.get("orbital_irrep_group"):
+        summary_rows.append(("Orbital irrep group", str(sym["orbital_irrep_group"])))
+    if sym.get("petite_list_algorithm_label"):
+        summary_rows.append(("Petite-list algorithm", str(sym["petite_list_algorithm_label"])))
+    if sym.get("n_irreps") is not None:
+        summary_rows.append(("Number of irreps", str(sym["n_irreps"])))
+    if sym.get("initial_guess_irrep"):
+        summary_rows.append(("Initial guess irrep", str(sym["initial_guess_irrep"])))
+    if geom.get("symmetry_perfected_point_group"):
+        summary_rows.append((
+            "Symmetry-perfected geometry",
+            f"{geom['symmetry_perfected_point_group']} ({len(geom.get('symmetry_cartesian_au', []))} atoms)",
+        ))
+    if len(summary_rows) > 1:
+        lines.append(_table(summary_rows))
+
+    setup_bits = []
+    if sym.get("setup_rms_distance_au") is not None:
+        setup_bits.append(f"RMS correction={_f(sym.get('setup_rms_distance_au'), '.6g')} au")
+    if sym.get("setup_max_distance_au") is not None:
+        setup_bits.append(f"max correction={_f(sym.get('setup_max_distance_au'), '.6g')} au")
+    if sym.get("setup_threshold_au") is not None:
+        setup_bits.append(f"threshold={_f(sym.get('setup_threshold_au'), '.6g')} au")
+    if sym.get("setup_time_s") is not None:
+        setup_bits.append(f"setup time={_f(sym.get('setup_time_s'), '.3f')} s")
+    if setup_bits:
+        lines.append(" | ".join(setup_bits))
+
+    irreps = sym.get("irreps", [])
+    alpha_occ = oe.get("alpha_occupied_per_irrep") or {}
+    beta_occ = oe.get("beta_occupied_per_irrep") or {}
+    occ = oe.get("occupied_per_irrep") or {}
+
+    irrep_order: List[str] = [entry.get("label", "") for entry in irreps if entry.get("label")]
+    for mapping in (alpha_occ, beta_occ, occ):
+        for label in mapping:
+            if label not in irrep_order:
+                irrep_order.append(label)
+
+    if irrep_order:
+        irreps_by_label = {entry.get("label"): entry for entry in irreps}
+        header: List[str] = ["Irrep"]
+        include_basis = bool(irreps)
+        if include_basis:
+            header.extend(["SA basis fns", "Offset"])
+        if alpha_occ and beta_occ:
+            header.extend(["α occ", "β occ"])
+        elif occ:
+            header.append("occ")
+
+        rows = [tuple(header)]
+        for label in irrep_order:
+            row: List[str] = [label]
+            if include_basis:
+                entry = irreps_by_label.get(label, {})
+                row.extend([
+                    str(entry.get("n_basis_functions", "?")),
+                    str(entry.get("offset", "?")),
+                ])
+            if alpha_occ and beta_occ:
+                row.extend([
+                    str(alpha_occ.get(label, "?")),
+                    str(beta_occ.get(label, "?")),
+                ])
+            elif occ:
+                row.append(str(occ.get(label, "?")))
+            rows.append(tuple(row))
+        lines.append("**Irreps**\n" + _table(rows))
+
+    return "\n\n".join(lines)
+
+
+def _render_deltascf_section(data: Dict[str, Any]) -> str:
+    """Render a dedicated DeltaSCF section for excited-state SCF jobs."""
+    deltascf = _get_deltascf_data(data)
+    if not deltascf:
+        return ""
+
+    lines = [
+        "**This is a DeltaSCF excited-state SCF calculation, not a ground-state single-point.**",
+    ]
+
+    rows = [("field", "value"), ("Electronic state", "DeltaSCF excited-state")]
+    target = _deltascf_target_summary(deltascf)
+    if target:
+        rows.append(("Target configuration", target))
+    if deltascf.get("aufbau_metric"):
+        rows.append(("Aufbau metric", str(deltascf["aufbau_metric"])))
+    if "keep_initial_reference" in deltascf:
+        rows.append(("Keep initial reference", _yes_no_unknown(deltascf.get("keep_initial_reference"))))
+    lines.append(_table(rows))
+
+    alpha_occ = _format_deltascf_vector(deltascf.get("alpha_occupation"))
+    beta_occ = _format_deltascf_vector(deltascf.get("beta_occupation"))
+    if alpha_occ:
+        lines.append(f"`Alpha target occupation:` {alpha_occ}")
+    if beta_occ:
+        lines.append(f"`Beta target occupation:` {beta_occ}")
+
+    return "\n\n".join(lines)
 
 
 def _get_atom_list(sec: dict) -> list:

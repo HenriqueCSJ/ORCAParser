@@ -65,27 +65,253 @@ def _flatten_vector(d: Optional[Dict]) -> Dict[str, float]:
     return {k: v for k, v in d.items() if k in ("x", "y", "z")}
 
 
+def _get_symmetry_data(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Return normalized symmetry metadata assembled from metadata/geometry."""
+    meta = data.get("metadata", {})
+    geom = data.get("geometry", {})
+    sym = dict(meta.get("symmetry") or {})
+
+    if meta.get("point_group") and "point_group" not in sym:
+        sym["point_group"] = meta["point_group"]
+    if meta.get("reduced_point_group") and "reduced_point_group" not in sym:
+        sym["reduced_point_group"] = meta["reduced_point_group"]
+    if meta.get("orbital_irrep_group") and "orbital_irrep_group" not in sym:
+        sym["orbital_irrep_group"] = meta["orbital_irrep_group"]
+    if geom.get("symmetry_perfected_point_group") and "geometry_point_group" not in sym:
+        sym["geometry_point_group"] = geom["symmetry_perfected_point_group"]
+
+    return sym
+
+
+def _is_deltascf(data: Dict[str, Any]) -> bool:
+    """Whether this parsed job is a DeltaSCF excited-state calculation."""
+    return str(data.get("metadata", {}).get("calculation_type", "")).lower() == "deltascf"
+
+
+def _electronic_state_label(data: Dict[str, Any]) -> str:
+    """Short electronic-state label for metadata exports."""
+    return "DeltaSCF excited-state" if _is_deltascf(data) else "Ground-state"
+
+
+def _bool_to_label(value: Any) -> str:
+    """Render bool-like values consistently for CSV exports."""
+    if value is True:
+        return "yes"
+    if value is False:
+        return "no"
+    return ""
+
+
+def _format_simple_vector(values: Optional[List[Any]]) -> str:
+    """Compact comma-separated rendering for vectors used in metadata tables."""
+    if not values:
+        return ""
+    rendered = []
+    for value in values:
+        if isinstance(value, float) and value.is_integer():
+            rendered.append(str(int(value)))
+        else:
+            rendered.append(str(value))
+    return ",".join(rendered)
+
+
+def _format_deltascf_target(deltascf: Dict[str, Any]) -> str:
+    """Build a compact target summary such as 'ALPHACONF 0,1'."""
+    parts: List[str] = []
+    for key in ("alphaconf", "betaconf"):
+        values = deltascf.get(key)
+        if values:
+            parts.append(f"{key.upper()} {_format_simple_vector(values)}")
+    for key in ("ionizealpha", "ionizebeta"):
+        value = deltascf.get(key)
+        if value is not None:
+            parts.append(f"{key.upper()} {value}")
+    return " | ".join(parts)
+
+
 # ─────────────────────────────────────────────────────────────────
 # Section writers
 # ─────────────────────────────────────────────────────────────────
 
 def _write_geometry(data, directory, stem) -> List[Path]:
     geo = data.get("geometry", {})
+    files = []
+
     cart = geo.get("cartesian_angstrom")
-    if not cart:
+    if cart:
+        rows = []
+        for atom in cart:
+            rows.append({
+                "index": atom.get("index"),
+                "symbol": atom.get("symbol"),
+                "x_ang": atom.get("x_ang"),
+                "y_ang": atom.get("y_ang"),
+                "z_ang": atom.get("z_ang"),
+            })
+        files.append(_write_csv(
+            directory, f"{stem}_geometry.csv", rows,
+            ["index", "symbol", "x_ang", "y_ang", "z_ang"],
+        ))
+
+    sym_cart = geo.get("symmetry_cartesian_angstrom")
+    if sym_cart:
+        point_group = geo.get("symmetry_perfected_point_group", "")
+        sym_rows = []
+        for atom in sym_cart:
+            sym_rows.append({
+                "point_group": point_group,
+                "index": atom.get("index"),
+                "symbol": atom.get("symbol"),
+                "x_ang": atom.get("x_ang"),
+                "y_ang": atom.get("y_ang"),
+                "z_ang": atom.get("z_ang"),
+            })
+        files.append(_write_csv(
+            directory, f"{stem}_geometry_symmetry.csv", sym_rows,
+            ["point_group", "index", "symbol", "x_ang", "y_ang", "z_ang"],
+        ))
+
+    return files
+
+
+def _write_metadata(data: Dict[str, Any], directory: Path, stem: str) -> List[Path]:
+    """Write a one-row metadata summary for downstream filtering/grouping."""
+    meta = data.get("metadata", {})
+    if not meta:
         return []
-    rows = []
-    for atom in cart:
-        rows.append({
-            "index": atom.get("index"),
-            "symbol": atom.get("symbol"),
-            "x_ang": atom.get("x_ang"),
-            "y_ang": atom.get("y_ang"),
-            "z_ang": atom.get("z_ang"),
-        })
-    fn = _write_csv(directory, f"{stem}_geometry.csv", rows,
-                    ["index", "symbol", "x_ang", "y_ang", "z_ang"])
+
+    sym = _get_symmetry_data(data)
+    deltascf = meta.get("deltascf") or {}
+    geom = data.get("geometry", {})
+    row = {
+        "job_name": meta.get("job_name", ""),
+        "source_file": data.get("source_file", ""),
+        "program_version": meta.get("program_version", ""),
+        "run_date": meta.get("run_date", ""),
+        "host": meta.get("host", ""),
+        "calculation_type": meta.get("calculation_type", ""),
+        "electronic_state": _electronic_state_label(data),
+        "hf_type": meta.get("hf_type", ""),
+        "functional": meta.get("functional", ""),
+        "basis_set": meta.get("basis_set", ""),
+        "charge": meta.get("charge", ""),
+        "multiplicity": meta.get("multiplicity", ""),
+        "point_group": sym.get("point_group", ""),
+        "reduced_point_group": sym.get("reduced_point_group", ""),
+        "orbital_irrep_group": sym.get("orbital_irrep_group", ""),
+        "use_sym": _bool_to_label(sym.get("use_sym")),
+        "n_irreps": sym.get("n_irreps", ""),
+        "initial_guess_irrep": sym.get("initial_guess_irrep", ""),
+        "symmetry_perfected_point_group": geom.get("symmetry_perfected_point_group", ""),
+        "symmetry_perfected_atoms": len(geom.get("symmetry_cartesian_angstrom") or []),
+        "deltascf_target": _format_deltascf_target(deltascf),
+        "deltascf_metric": deltascf.get("aufbau_metric", ""),
+        "keep_initial_reference": _bool_to_label(deltascf.get("keep_initial_reference")),
+        "input_keywords": " ".join(meta.get("input_keywords") or []),
+    }
+    fn = _write_csv(directory, f"{stem}_metadata.csv", [row], list(row.keys()))
     return [fn]
+
+
+def _write_symmetry(data: Dict[str, Any], directory: Path, stem: str) -> List[Path]:
+    """Write symmetry summary plus irrep-resolved details when available."""
+    sym = _get_symmetry_data(data)
+    if not sym:
+        return []
+
+    files = []
+    geom = data.get("geometry", {})
+    oe = data.get("orbital_energies", {})
+
+    summary_row = {
+        "use_sym": _bool_to_label(sym.get("use_sym")),
+        "auto_detected_point_group": sym.get("auto_detected_point_group", ""),
+        "point_group": sym.get("point_group", ""),
+        "reduced_point_group": sym.get("reduced_point_group", ""),
+        "orbital_irrep_group": sym.get("orbital_irrep_group", ""),
+        "petite_list_algorithm": _bool_to_label(sym.get("petite_list_algorithm")),
+        "n_irreps": sym.get("n_irreps", ""),
+        "initial_guess_irrep": sym.get("initial_guess_irrep", ""),
+        "setup_rms_distance_au": sym.get("setup_rms_distance_au", ""),
+        "setup_max_distance_au": sym.get("setup_max_distance_au", ""),
+        "setup_threshold_au": sym.get("setup_threshold_au", ""),
+        "setup_time_s": sym.get("setup_time_s", ""),
+        "symmetry_perfected_point_group": geom.get("symmetry_perfected_point_group", ""),
+        "symmetry_perfected_atoms": len(geom.get("symmetry_cartesian_angstrom") or []),
+    }
+    files.append(_write_csv(
+        directory, f"{stem}_symmetry.csv", [summary_row], list(summary_row.keys())
+    ))
+
+    irreps = sym.get("irreps") or []
+    alpha_occ = oe.get("alpha_occupied_per_irrep") or {}
+    beta_occ = oe.get("beta_occupied_per_irrep") or {}
+    total_occ = oe.get("occupied_per_irrep") or {}
+    irrep_order = [entry.get("label", "") for entry in irreps if entry.get("label")]
+    for mapping in (alpha_occ, beta_occ, total_occ):
+        for label in mapping:
+            if label not in irrep_order:
+                irrep_order.append(label)
+
+    if irrep_order:
+        irreps_by_label = {entry.get("label"): entry for entry in irreps}
+        rows = []
+        for label in irrep_order:
+            entry = irreps_by_label.get(label, {})
+            rows.append({
+                "irrep": label,
+                "n_basis_functions": entry.get("n_basis_functions", ""),
+                "offset": entry.get("offset", ""),
+                "occupied_alpha": alpha_occ.get(label, ""),
+                "occupied_beta": beta_occ.get(label, ""),
+                "occupied_total": total_occ.get(label, ""),
+            })
+        files.append(_write_csv(
+            directory, f"{stem}_symmetry_irreps.csv", rows,
+            ["irrep", "n_basis_functions", "offset", "occupied_alpha", "occupied_beta", "occupied_total"],
+        ))
+
+    return files
+
+
+def _write_deltascf(data: Dict[str, Any], directory: Path, stem: str) -> List[Path]:
+    """Write DeltaSCF excited-state target metadata when present."""
+    meta = data.get("metadata", {})
+    deltascf = meta.get("deltascf") or {}
+    if not _is_deltascf(data):
+        return []
+
+    files = []
+    summary_row = {
+        "electronic_state": _electronic_state_label(data),
+        "target_configuration": _format_deltascf_target(deltascf),
+        "alphaconf": _format_simple_vector(deltascf.get("alphaconf")),
+        "betaconf": _format_simple_vector(deltascf.get("betaconf")),
+        "ionizealpha": deltascf.get("ionizealpha", ""),
+        "ionizebeta": deltascf.get("ionizebeta", ""),
+        "aufbau_metric": deltascf.get("aufbau_metric", ""),
+        "keep_initial_reference": _bool_to_label(deltascf.get("keep_initial_reference")),
+    }
+    files.append(_write_csv(
+        directory, f"{stem}_deltascf.csv", [summary_row], list(summary_row.keys())
+    ))
+
+    target_rows = []
+    for spin_key, label in (("alpha_occupation", "alpha"), ("beta_occupation", "beta")):
+        values = deltascf.get(spin_key) or []
+        for idx, occupation in enumerate(values, start=1):
+            target_rows.append({
+                "spin": label,
+                "slot": idx,
+                "occupation": occupation,
+            })
+    if target_rows:
+        files.append(_write_csv(
+            directory, f"{stem}_deltascf_occupations.csv", target_rows,
+            ["spin", "slot", "occupation"],
+        ))
+
+    return files
 
 
 def _write_orbital_energies(data, directory, stem) -> List[Path]:
@@ -957,7 +1183,10 @@ def write_csvs(data: Dict[str, Any], directory: Path) -> List[Path]:
     written: List[Path] = []
 
     writers = [
+        _write_metadata,
         _write_geometry,
+        _write_symmetry,
+        _write_deltascf,
         _write_orbital_energies,
         _write_qro,
         _write_mulliken,
