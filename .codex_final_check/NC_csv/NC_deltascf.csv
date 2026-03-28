@@ -1,2 +1,0 @@
-electronic_state,target_configuration,alphaconf,betaconf,ionizealpha,ionizebeta,aufbau_metric,keep_initial_reference
-DeltaSCF excited-state,"ALPHACONF 0,1","0,1",,,,MOM,yes
