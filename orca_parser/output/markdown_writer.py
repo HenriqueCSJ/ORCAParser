@@ -132,7 +132,7 @@ def _render_molecule(
     # -- TDDFT / CIS excited states ---------------------------------------
     tddft = data.get("tddft")
     if tddft:
-        tddft_section = _render_tddft_section(tddft)
+        tddft_section = _render_tddft_section(tddft, data)
         if tddft_section:
             blocks.append(f"{H2} TDDFT Excited States\n{tddft_section}")
 
@@ -191,6 +191,10 @@ def _render_molecule(
                 rows = [("Irrep",) + tuple(irrs),
                         ("occ",)   + tuple(occ.get(i, 0) for i in irrs)]
             blocks.append(_table(rows))
+
+        orbital_window = _render_irrep_orbital_window(data)
+        if orbital_window:
+            blocks.append(f"{H2} Irrep-Resolved Orbital Window\n{orbital_window}")
 
     # ── QRO ───────────────────────────────────────────────────────────────
     qro = data.get("qro")
@@ -288,6 +292,10 @@ def _render_molecule(
             totals = {s: sum(spin_data[s].values()) for s in schemes}
             blocks.append("**Spin totals:** " +
                           "  ".join(f"{s} = {totals[s]:.4f}" for s in schemes))
+
+    reduced_orbital_section = _render_reduced_orbital_populations(data)
+    if reduced_orbital_section:
+        blocks.append(f"{H2} Reduced Orbital Populations\n{reduced_orbital_section}")
 
     # ── Mayer bond orders — full list ─────────────────────────────────────
     mayer   = data.get("mayer", {})
@@ -477,6 +485,46 @@ def _render_comparison(datasets: List[Dict[str, Any]]) -> str:
             ))
         blocks.append("## Symmetry\n" + _table(rows))
 
+        if any(_has_symmetry_setup(_get_symmetry_data(d)) for d in datasets):
+            rows = [("", "guess", "MO file", "geom match", "basis match", "reassign irreps", "renorm", "reorth")]
+            for lbl, d in zip(labels, datasets):
+                sym = _get_symmetry_data(d)
+                reorth = _yes_no_unknown(sym.get("initial_guess_mos_reorthogonalized"))
+                if reorth == "yes" and sym.get("initial_guess_reorthogonalization_method"):
+                    reorth = f"{reorth} ({sym['initial_guess_reorthogonalization_method']})"
+                rows.append((
+                    lbl,
+                    sym.get("initial_guess_method") or "—",
+                    sym.get("initial_guess_source_file") or "—",
+                    _yes_no_unknown(sym.get("initial_guess_geometry_matches")) if "initial_guess_geometry_matches" in sym else "—",
+                    _yes_no_unknown(sym.get("initial_guess_basis_matches")) if "initial_guess_basis_matches" in sym else "—",
+                    _yes_no_unknown(sym.get("initial_guess_irreps_reassigned")) if "initial_guess_irreps_reassigned" in sym else "—",
+                    _yes_no_unknown(sym.get("initial_guess_mos_renormalized")) if "initial_guess_mos_renormalized" in sym else "—",
+                    reorth if "initial_guess_mos_reorthogonalized" in sym else "—",
+                ))
+            blocks.append("## Symmetry Setup\n" + _table(rows))
+
+        if any(
+            d.get("orbital_energies", {}).get("alpha_occupied_per_irrep")
+            or d.get("orbital_energies", {}).get("beta_occupied_per_irrep")
+            or d.get("orbital_energies", {}).get("occupied_per_irrep")
+            for d in datasets
+        ):
+            any_uhf = any(d.get("context", {}).get("is_uhf") for d in datasets)
+            if any_uhf:
+                rows = [("", "alpha occupied per irrep", "beta occupied per irrep")]
+                for lbl, d in zip(labels, datasets):
+                    rows.append((
+                        lbl,
+                        _compact_irrep_counts(d, "a"),
+                        _compact_irrep_counts(d, "b"),
+                    ))
+            else:
+                rows = [("", "occupied per irrep")]
+                for lbl, d in zip(labels, datasets):
+                    rows.append((lbl, _compact_irrep_counts(d)))
+            blocks.append("## Symmetry Occupations\n" + _table(rows))
+
     # ── Energy table ───────────────────────────────────────────────────────
     rows = [("", "E (Eh)", "⟨S²⟩", "ideal", "dipole (D)")]
     has_s2 = any(d.get("scf", {}).get("s_squared") is not None for d in datasets)
@@ -511,12 +559,16 @@ def _render_comparison(datasets: List[Dict[str, Any]]) -> str:
             continue
         if not ctx.get("is_uhf"):
             gap = oe.get("HOMO_LUMO_gap_eV")
-            oe_blocks.append(f"{lbl}: HOMO {_f(oe.get('HOMO_energy_eV'))} / "
-                             f"LUMO {_f(oe.get('LUMO_energy_eV'))} / "
+            oe_blocks.append(f"{lbl}: HOMO {_format_orbital_energy_with_irrep(oe.get('HOMO_energy_eV'), oe.get('HOMO_irrep'))} / "
+                             f"LUMO {_format_orbital_energy_with_irrep(oe.get('LUMO_energy_eV'), oe.get('LUMO_irrep'))} / "
                              f"gap {_f(gap)} eV")
         else:
-            oe_blocks.append(f"{lbl}: α-HOMO {_f(oe.get('alpha_HOMO_energy_eV'))} / "
-                             f"β-HOMO {_f(oe.get('beta_HOMO_energy_eV'))} eV")
+            oe_blocks.append(
+                f"{lbl}: α-HOMO {_format_orbital_energy_with_irrep(oe.get('alpha_HOMO_energy_eV'), oe.get('alpha_HOMO_irrep'))} / "
+                f"β-HOMO {_format_orbital_energy_with_irrep(oe.get('beta_HOMO_energy_eV'), oe.get('beta_HOMO_irrep'))} / "
+                f"α-LUMO {_format_orbital_energy_with_irrep(oe.get('alpha_LUMO_energy_eV'), oe.get('alpha_LUMO_irrep'))} / "
+                f"β-LUMO {_format_orbital_energy_with_irrep(oe.get('beta_LUMO_energy_eV'), oe.get('beta_LUMO_irrep'))}"
+            )
         qro = d.get("qro")
         if qro:
             oe_blocks.append(f"  QRO: DOMO={qro.get('n_domo')} "
@@ -629,7 +681,215 @@ def _f(val, fmt=".4f") -> str:
         return str(val)
 
 
-def _render_tddft_section(tddft: Dict[str, Any]) -> str:
+def _format_orbital_energy_with_irrep(value: Any, irrep: Any) -> str:
+    """Format an orbital energy and append its irrep when available."""
+    text = _f(value)
+    if irrep:
+        return f"{text} ({irrep})"
+    return text
+
+
+def _normalize_spin_key(spin: Any) -> str:
+    """Normalize ORCA spin labels to a/b/'' keys."""
+    if not spin:
+        return ""
+    text = str(spin).strip().lower()
+    if text.startswith("a"):
+        return "a"
+    if text.startswith("b"):
+        return "b"
+    return ""
+
+
+def _build_orbital_irrep_lookup(data: Dict[str, Any]) -> Dict[str, Dict[int, str]]:
+    """Build a spin-aware lookup of orbital index -> irrep."""
+    oe = data.get("orbital_energies", {})
+    lookup: Dict[str, Dict[int, str]] = {"": {}, "a": {}, "b": {}}
+
+    for spin_key, orbitals in (
+        ("", oe.get("orbitals") or []),
+        ("a", oe.get("alpha_orbitals") or []),
+        ("b", oe.get("beta_orbitals") or []),
+    ):
+        for orbital in orbitals:
+            index = orbital.get("index")
+            irrep = orbital.get("irrep")
+            if index is None or not irrep:
+                continue
+            lookup[spin_key][int(index)] = str(irrep)
+
+    return lookup
+
+
+def _lookup_transition_irrep(
+    irrep_lookup: Dict[str, Dict[int, str]],
+    index: Any,
+    spin: Any,
+) -> str:
+    """Look up the irrep for an orbital index/spin pair."""
+    if index is None:
+        return ""
+    try:
+        index_int = int(index)
+    except (TypeError, ValueError):
+        return ""
+
+    spin_key = _normalize_spin_key(spin)
+    if spin_key and index_int in irrep_lookup.get(spin_key, {}):
+        return irrep_lookup[spin_key][index_int]
+    return irrep_lookup.get("", {}).get(index_int, "")
+
+
+def _format_transition_with_irreps(
+    transition: Dict[str, Any],
+    irrep_lookup: Dict[str, Dict[int, str]],
+) -> str:
+    """Format an excitation/NTO pair with orbital irreps when available."""
+    from_label = str(transition.get("from_orbital", "") or "")
+    to_label = str(transition.get("to_orbital", "") or "")
+    from_irrep = _lookup_transition_irrep(
+        irrep_lookup,
+        transition.get("from_index"),
+        transition.get("from_spin"),
+    )
+    to_irrep = _lookup_transition_irrep(
+        irrep_lookup,
+        transition.get("to_index"),
+        transition.get("to_spin"),
+    )
+    if from_irrep:
+        from_label = f"{from_label} ({from_irrep})"
+    if to_irrep:
+        to_label = f"{to_label} ({to_irrep})"
+    if not from_label and not to_label:
+        return "—"
+    return f"{from_label} -> {to_label}".strip()
+
+
+def _frontier_region_label(offset: int, occupied: bool) -> str:
+    """Return HOMO/LUMO-style labels for frontier windows."""
+    if occupied:
+        return "HOMO" if offset == 0 else f"HOMO-{offset}"
+    return "LUMO" if offset == 0 else f"LUMO+{offset}"
+
+
+def _render_orbital_window_table(orbitals: List[Dict[str, Any]], window: int = 12) -> str:
+    """Render a compact frontier orbital window with irrep labels."""
+    if not orbitals or not any(orbital.get("irrep") for orbital in orbitals):
+        return ""
+
+    occupied = [orbital for orbital in orbitals if float(orbital.get("occupation", 0.0) or 0.0) > 1e-8]
+    virtual = [orbital for orbital in orbitals if float(orbital.get("occupation", 0.0) or 0.0) <= 1e-8]
+    if not occupied and not virtual:
+        return ""
+
+    rows = [("Region", "NO", "occ", "E (Eh)", "E (eV)", "irrep")]
+
+    start_occ = max(0, len(occupied) - window)
+    for idx, orbital in enumerate(occupied[start_occ:], start=start_occ):
+        offset = len(occupied) - 1 - idx
+        rows.append((
+            _frontier_region_label(offset, occupied=True),
+            str(orbital.get("index", "")),
+            _f(orbital.get("occupation")),
+            _f(orbital.get("energy_Eh"), ".6f"),
+            _f(orbital.get("energy_eV")),
+            str(orbital.get("irrep", "") or "—"),
+        ))
+
+    for offset, orbital in enumerate(virtual[:window]):
+        rows.append((
+            _frontier_region_label(offset, occupied=False),
+            str(orbital.get("index", "")),
+            _f(orbital.get("occupation")),
+            _f(orbital.get("energy_Eh"), ".6f"),
+            _f(orbital.get("energy_eV")),
+            str(orbital.get("irrep", "") or "—"),
+        ))
+
+    return _table(rows)
+
+
+def _render_irrep_orbital_window(data: Dict[str, Any], window: int = 12) -> str:
+    """Render irrep-resolved frontier windows for RHF/UHF orbital lists."""
+    oe = data.get("orbital_energies", {})
+    ctx = data.get("context", {})
+
+    if ctx.get("is_uhf"):
+        blocks: List[str] = []
+        alpha_table = _render_orbital_window_table(oe.get("alpha_orbitals") or [], window=window)
+        beta_table = _render_orbital_window_table(oe.get("beta_orbitals") or [], window=window)
+        if alpha_table:
+            blocks.append("**Alpha orbitals**\n" + alpha_table)
+        if beta_table:
+            blocks.append("**Beta orbitals**\n" + beta_table)
+        return "\n\n".join(blocks)
+
+    return _render_orbital_window_table(oe.get("orbitals") or [], window=window)
+
+
+def _render_shell_totals_table(atom_blocks: List[Dict[str, Any]]) -> str:
+    """Render compact per-atom shell totals for reduced orbital populations."""
+    if not atom_blocks:
+        return ""
+
+    preferred_shells = ["s", "p", "d", "f", "g", "h"]
+    seen_shells = []
+    for atom in atom_blocks:
+        shell_totals = atom.get("shell_totals") or {}
+        for shell in shell_totals:
+            if shell not in seen_shells:
+                seen_shells.append(shell)
+
+    shell_columns = [shell for shell in preferred_shells if shell in seen_shells]
+    shell_columns.extend(sorted(shell for shell in seen_shells if shell not in shell_columns))
+    if not shell_columns:
+        return ""
+
+    rows = [("Atom",) + tuple(shell_columns) + ("Total",)]
+    for atom in atom_blocks:
+        index = atom.get("index")
+        symbol = str(atom.get("symbol", "?"))
+        atom_label = f"{symbol}{int(index) + 1}" if isinstance(index, int) else symbol
+        shell_totals = atom.get("shell_totals") or {}
+        total = sum(
+            float(value)
+            for value in shell_totals.values()
+            if isinstance(value, (int, float))
+        )
+        row = [atom_label]
+        for shell in shell_columns:
+            if shell in shell_totals:
+                row.append(_f(shell_totals.get(shell), ".6f"))
+            else:
+                row.append("—")
+        row.append(_f(total, ".6f"))
+        rows.append(tuple(row))
+
+    return _table(rows)
+
+
+def _render_reduced_orbital_populations(data: Dict[str, Any]) -> str:
+    """Render Mulliken/Loewdin reduced orbital shell populations."""
+    sections: List[str] = []
+    for scheme_key, scheme_label in (("mulliken", "Mulliken"), ("loewdin", "Loewdin")):
+        scheme = data.get(scheme_key, {}) or {}
+        charges = scheme.get("reduced_orbital_charges") or []
+        spin = scheme.get("reduced_orbital_spin_populations") or []
+
+        if charges:
+            sections.append(
+                f"**{scheme_label} shell totals — charge**\n" + _render_shell_totals_table(charges)
+            )
+        if spin:
+            sections.append(
+                f"**{scheme_label} shell totals — spin**\n" + _render_shell_totals_table(spin)
+            )
+
+    return "\n\n".join(section for section in sections if section)
+
+
+def _render_tddft_section(tddft: Dict[str, Any], data: Optional[Dict[str, Any]] = None) -> str:
     """Compact TDDFT/CIS summary for markdown reports."""
     final_block = tddft.get("final_excited_state_block")
     if not final_block:
@@ -639,6 +899,7 @@ def _render_tddft_section(tddft: Dict[str, Any]) -> str:
         return ""
 
     lines = []
+    irrep_lookup = _build_orbital_irrep_lookup(data or {})
     summary = tddft.get("summary", {})
     meta_bits = []
     if summary.get("input_block"):
@@ -665,27 +926,36 @@ def _render_tddft_section(tddft: Dict[str, Any]) -> str:
             if root is not None:
                 fosc_map[root] = transition.get("oscillator_strength")
 
-        rows = [("State", "E (eV)", "lambda (nm)", "fosc", "dominant excitation", "weight")]
+        state_has_symmetry = any(
+            state.get("state_label") or state.get("symmetry") or state.get("irrep")
+            for state in states
+        )
+        if state_has_symmetry:
+            rows = [("State", "Symmetry", "E (eV)", "lambda (nm)", "fosc", "dominant excitation", "weight")]
+        else:
+            rows = [("State", "E (eV)", "lambda (nm)", "fosc", "dominant excitation", "weight")]
         for state in states[:10]:
             dominant = max(
                 state.get("transitions", []),
                 key=lambda item: item.get("weight", 0.0),
                 default={},
             )
-            excitation = "—"
-            if dominant:
-                excitation = (
-                    f"{dominant.get('from_orbital', '')} -> "
-                    f"{dominant.get('to_orbital', '')}"
-                )
-            rows.append((
+            excitation = _format_transition_with_irreps(dominant, irrep_lookup) if dominant else "—"
+            state_row = [
                 str(state.get("state", "")),
+            ]
+            if state_has_symmetry:
+                state_row.append(
+                    str(state.get("state_label") or state.get("symmetry") or state.get("irrep") or "—")
+                )
+            state_row.extend([
                 _f(state.get("energy_eV")),
                 _f(state.get("wavelength_nm")),
                 _f(fosc_map.get(state.get("state"))),
                 excitation,
                 _f(dominant.get("weight"), ".3f") if dominant else "—",
-            ))
+            ])
+            rows.append(tuple(state_row))
         lines.append(_table(rows))
 
     nto_states = tddft.get("nto_states", [])
@@ -701,7 +971,7 @@ def _render_tddft_section(tddft: Dict[str, Any]) -> str:
                 continue
             rows.append((
                 str(nto_state.get("state", "")),
-                f"{lead.get('from_orbital', '')} -> {lead.get('to_orbital', '')}",
+                _format_transition_with_irreps(lead, irrep_lookup),
                 _f(lead.get("occupation")),
             ))
         if len(rows) > 1:
@@ -1213,7 +1483,50 @@ def _symmetry_inline_label(data: Dict[str, Any]) -> str:
 
     if point_group and orbital_group and orbital_group != point_group:
         return f"{point_group} -> {orbital_group}"
-    return orbital_group or point_group or "symmetry"
+    return orbital_group or point_group or ""
+
+
+def _has_symmetry_setup(sym: Dict[str, Any]) -> bool:
+    """Whether a symmetry payload includes initial-guess cleanup metadata."""
+    return any(
+        key in sym
+        for key in (
+            "initial_guess_method",
+            "initial_guess_source_file",
+            "initial_guess_geometry_matches",
+            "initial_guess_basis_matches",
+            "initial_guess_irreps_reassigned",
+            "initial_guess_mos_renormalized",
+            "initial_guess_mos_reorthogonalized",
+            "initial_guess_reorthogonalization_method",
+        )
+    )
+
+
+def _compact_irrep_counts(data: Dict[str, Any], spin: str = "") -> str:
+    """Compact formatter for occupied orbital counts per irrep."""
+    oe = data.get("orbital_energies", {})
+    sym = _get_symmetry_data(data)
+    spin_key = _normalize_spin_key(spin)
+    if spin_key == "a":
+        mapping = oe.get("alpha_occupied_per_irrep") or {}
+    elif spin_key == "b":
+        mapping = oe.get("beta_occupied_per_irrep") or {}
+    else:
+        mapping = oe.get("occupied_per_irrep") or {}
+
+    if not mapping:
+        return "—"
+
+    order: List[str] = [
+        entry.get("label", "")
+        for entry in sym.get("irreps", [])
+        if entry.get("label")
+    ]
+    for label in mapping:
+        if label not in order:
+            order.append(label)
+    return ", ".join(f"{label}={mapping[label]}" for label in order if label in mapping) or "—"
 
 
 def _irrep_group(data: Dict[str, Any]) -> str:
@@ -1268,6 +1581,31 @@ def _render_symmetry_section(data: Dict[str, Any]) -> str:
         ))
     if len(summary_rows) > 1:
         lines.append(_table(summary_rows))
+
+    if _has_symmetry_setup(sym):
+        guess_rows = [("field", "value")]
+        if sym.get("initial_guess_method"):
+            guess_rows.append(("Initial guess method", str(sym["initial_guess_method"])))
+        if sym.get("initial_guess_source_file"):
+            guess_rows.append(("Guess MO file", str(sym["initial_guess_source_file"])))
+        if "initial_guess_geometry_matches" in sym:
+            guess_rows.append(("Input geometry matches", _yes_no_unknown(sym.get("initial_guess_geometry_matches"))))
+        if "initial_guess_basis_matches" in sym:
+            guess_rows.append(("Input basis matches", _yes_no_unknown(sym.get("initial_guess_basis_matches"))))
+        if "initial_guess_irreps_reassigned" in sym:
+            guess_rows.append((
+                "Irreps reassigned after cleanup",
+                _yes_no_unknown(sym.get("initial_guess_irreps_reassigned")),
+            ))
+        if "initial_guess_mos_renormalized" in sym:
+            guess_rows.append(("MOs renormalized", _yes_no_unknown(sym.get("initial_guess_mos_renormalized"))))
+        if "initial_guess_mos_reorthogonalized" in sym:
+            reorth_value = _yes_no_unknown(sym.get("initial_guess_mos_reorthogonalized"))
+            method = sym.get("initial_guess_reorthogonalization_method")
+            if method and reorth_value == "yes":
+                reorth_value = f"{reorth_value} ({method})"
+            guess_rows.append(("MOs reorthogonalized", reorth_value))
+        lines.append("**Initial Guess / Symmetry Cleanup**\n" + _table(guess_rows))
 
     setup_bits = []
     if sym.get("setup_rms_distance_au") is not None:

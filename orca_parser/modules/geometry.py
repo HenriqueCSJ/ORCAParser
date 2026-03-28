@@ -246,6 +246,39 @@ class MetadataModule(BaseModule):
         sym: Dict[str, Any] = {}
 
         for i, ln in enumerate(lines):
+            m = re.search(r"INITIAL GUESS:\s+(.+)", ln)
+            if m:
+                sym["initial_guess_method"] = m.group(1).strip()
+                continue
+
+            m = re.search(r"Guess MOs are being read from file:\s+(\S+)", ln)
+            if m:
+                sym["initial_guess_source_file"] = m.group(1)
+                continue
+
+            if "Input Geometry matches current geometry" in ln:
+                sym["initial_guess_geometry_matches"] = "(good)" in ln.lower()
+                continue
+
+            if "Input basis set matches current basis set" in ln:
+                sym["initial_guess_basis_matches"] = "(good)" in ln.lower()
+                continue
+
+            if "We clean up the input orbitals and determine their irreps" in ln:
+                sym["initial_guess_irreps_reassigned"] = True
+                continue
+
+            if "MOs were renormalized" in ln:
+                sym["initial_guess_mos_renormalized"] = True
+                continue
+
+            m = re.search(r"MOs were reorthogonalized(?:\s+\(([^)]+)\))?", ln)
+            if m:
+                sym["initial_guess_mos_reorthogonalized"] = True
+                if m.group(1):
+                    sym["initial_guess_reorthogonalization_method"] = m.group(1).strip()
+                continue
+
             m = re.search(r"Auto-detected point group\s+\.+\s+(\S+)", ln)
             if m:
                 sym["auto_detected_point_group"] = m.group(1)
