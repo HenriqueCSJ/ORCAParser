@@ -131,6 +131,10 @@ class MetadataModule(BaseModule):
             data["input_keywords"] = input_keywords
 
         # ── DeltaSCF detection and metadata ──────────────────────────
+        # DeltaSCF converges SCF to an excited state (saddle point on the
+        # energy surface) rather than the ground state.  Used for excited
+        # states, core-ionized/core-excited states, and charge-transfer
+        # states.  Excitation energy = E(DeltaSCF) − E(ground state).
         is_deltascf = any(
             kw.upper() == "DELTASCF" for kw in input_keywords
         )
@@ -138,14 +142,7 @@ class MetadataModule(BaseModule):
             data["calculation_type"] = "DeltaSCF"
             deltascf: Dict[str, Any] = {}
 
-            # MOREAD source file from %moinp
-            for ln in lines:
-                m = re.match(r'^\|\s*\d+>\s*%moinp\s+"([^"]+)"', ln)
-                if m:
-                    deltascf["moinp"] = m.group(1)
-                    break
-
-            # Alpha/Beta configuration from %SCF block
+            # Parse the %SCF block for DeltaSCF-specific options
             in_scf_block = False
             for ln in lines:
                 if re.match(r"^\|\s*\d+>\s*%SCF", ln, re.I):
@@ -154,28 +151,42 @@ class MetadataModule(BaseModule):
                 if in_scf_block:
                     if re.match(r"^\|\s*\d+>\s*END", ln, re.I):
                         break
+
+                    # ALPHACONF / BETACONF — frontier orbital occupation
+                    # defining the target excited-state configuration.
+                    # e.g. "0,1" = HOMO→LUMO; "0,1,1" = HOMO-1→LUMO
                     m = re.match(
                         r"^\|\s*\d+>\s*(ALPHACONF|BETACONF)\s+(.+)",
                         ln, re.I,
                     )
                     if m:
-                        key = m.group(1).lower()
-                        # Parse comma-separated integers: "0,1" → [0, 1]
                         vals = [
                             int(v.strip())
                             for v in m.group(2).split(",")
                             if v.strip().lstrip("-").isdigit()
                         ]
-                        deltascf[key] = vals
+                        deltascf[m.group(1).lower()] = vals
+                        continue
 
-            # Parse the DELTA-SCF INITIAL CONFIGURATION block
+                    # IONIZEALPHA / IONIZEBETA — remove an electron from
+                    # a specific MO (used for core-hole / ionized states).
+                    m = re.match(
+                        r"^\|\s*\d+>\s*(IONIZEALPHA|IONIZEBETA)\s+(\d+)",
+                        ln, re.I,
+                    )
+                    if m:
+                        deltascf[m.group(1).lower()] = int(m.group(2))
+                        continue
+
+            # Parse the DELTA-SCF INITIAL CONFIGURATION block from output
             idx_ds = self.find_line(
                 lines, "DELTA-SCF INITIAL CONFIGURATION"
             )
             if idx_ds != -1:
                 for j in range(idx_ds + 1, min(idx_ds + 20, len(lines))):
                     ln = lines[j]
-                    # Alpha/Beta occupation vectors
+                    # Alpha/Beta occupation vectors — the actual electron
+                    # arrangement being converged to
                     m = re.match(
                         r"^\s*(Alpha|Beta)\s*:\s*([\d.\s]+)", ln
                     )
@@ -186,12 +197,16 @@ class MetadataModule(BaseModule):
                         ]
                         deltascf[f"{m.group(1).lower()}_occupation"] = occ
 
+                    # MOM vs PMOM — overlap metric used to keep SCF
+                    # converging toward the target excited state
                     m = re.match(
                         r"^\s*Aufbau metric\s+\.+\s+(\S+)", ln
                     )
                     if m:
                         deltascf["aufbau_metric"] = m.group(1)
 
+                    # IMOM — whether the initial (non-aufbau) reference
+                    # is kept throughout, or updated each iteration
                     m = re.match(
                         r"^\s*Keep initial reference\s+\.+\s+(\S+)", ln
                     )
@@ -199,12 +214,6 @@ class MetadataModule(BaseModule):
                         deltascf["keep_initial_reference"] = (
                             m.group(1).lower() == "true"
                         )
-
-                    m = re.match(
-                        r"^\s*Hessian update\s+\.+\s+(\S+)", ln
-                    )
-                    if m:
-                        deltascf["hessian_update"] = m.group(1)
 
                     # Stop at the SCF iterations header
                     if "---D-I-I-S---" in ln or "---S-O-S-C-F---" in ln:
