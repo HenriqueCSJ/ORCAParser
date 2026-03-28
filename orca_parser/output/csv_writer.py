@@ -619,6 +619,278 @@ def _write_dipole(data, directory, stem) -> List[Path]:
     return [fn]
 
 
+def _write_tddft(data, directory, stem) -> List[Path]:
+    tddft = data.get("tddft")
+    if not tddft:
+        return []
+
+    files: List[Path] = []
+
+    states = tddft.get("excited_states", [])
+    if states:
+        state_rows = []
+        transition_rows = []
+
+        for state in states:
+            transitions = state.get("transitions", [])
+            dominant = max(
+                transitions,
+                key=lambda item: item.get("weight", 0.0),
+                default={},
+            )
+            state_rows.append({
+                "block_index": state.get("block_index"),
+                "method": state.get("method"),
+                "manifold": state.get("manifold", ""),
+                "order_in_block": state.get("order_in_block"),
+                "state": state.get("state"),
+                "energy_au": state.get("energy_au"),
+                "energy_eV": state.get("energy_eV"),
+                "energy_cm1": state.get("energy_cm1"),
+                "wavelength_nm": state.get("wavelength_nm", ""),
+                "s_squared": state.get("s_squared", ""),
+                "multiplicity": state.get("multiplicity", ""),
+                "dominant_from_orbital": dominant.get("from_orbital", ""),
+                "dominant_to_orbital": dominant.get("to_orbital", ""),
+                "dominant_weight": dominant.get("weight", ""),
+                "dominant_coefficient": dominant.get("coefficient", ""),
+            })
+
+            for transition in transitions:
+                transition_rows.append({
+                    "block_index": state.get("block_index"),
+                    "method": state.get("method"),
+                    "manifold": state.get("manifold", ""),
+                    "state": state.get("state"),
+                    "from_orbital": transition.get("from_orbital"),
+                    "from_index": transition.get("from_index", ""),
+                    "from_spin": transition.get("from_spin", ""),
+                    "to_orbital": transition.get("to_orbital"),
+                    "to_index": transition.get("to_index", ""),
+                    "to_spin": transition.get("to_spin", ""),
+                    "weight": transition.get("weight"),
+                    "coefficient": transition.get("coefficient"),
+                })
+
+        files.append(_write_csv(
+            directory, f"{stem}_tddft_states.csv", state_rows,
+            [
+                "block_index", "method", "manifold", "order_in_block",
+                "state", "energy_au", "energy_eV", "energy_cm1",
+                "wavelength_nm", "s_squared", "multiplicity",
+                "dominant_from_orbital", "dominant_to_orbital",
+                "dominant_weight", "dominant_coefficient",
+            ],
+        ))
+
+        if transition_rows:
+            files.append(_write_csv(
+                directory, f"{stem}_tddft_transitions.csv", transition_rows,
+                [
+                    "block_index", "method", "manifold", "state",
+                    "from_orbital", "from_index", "from_spin",
+                    "to_orbital", "to_index", "to_spin",
+                    "weight", "coefficient",
+                ],
+            ))
+
+    nto_states = tddft.get("nto_states", [])
+    if nto_states:
+        nto_rows = []
+        for state in nto_states:
+            for pair in state.get("pairs", []):
+                nto_rows.append({
+                    "state": state.get("state"),
+                    "output_file": state.get("output_file", ""),
+                    "print_threshold": state.get("print_threshold", ""),
+                    "energy_au": state.get("energy_au", ""),
+                    "energy_eV": state.get("energy_eV", ""),
+                    "energy_cm1": state.get("energy_cm1", ""),
+                    "wavelength_nm": state.get("wavelength_nm", ""),
+                    "from_orbital": pair.get("from_orbital"),
+                    "from_index": pair.get("from_index", ""),
+                    "from_spin": pair.get("from_spin", ""),
+                    "to_orbital": pair.get("to_orbital"),
+                    "to_index": pair.get("to_index", ""),
+                    "to_spin": pair.get("to_spin", ""),
+                    "occupation": pair.get("occupation"),
+                })
+        if nto_rows:
+            files.append(_write_csv(
+                directory, f"{stem}_tddft_nto.csv", nto_rows,
+                [
+                    "state", "output_file", "print_threshold",
+                    "energy_au", "energy_eV", "energy_cm1", "wavelength_nm",
+                    "from_orbital", "from_index", "from_spin",
+                    "to_orbital", "to_index", "to_spin", "occupation",
+                ],
+            ))
+
+    spectra = tddft.get("spectra", {})
+    spectrum_suffixes = {
+        "absorption_electric_dipole": "tddft_absorption_electric.csv",
+        "absorption_velocity_dipole": "tddft_absorption_velocity.csv",
+        "cd_electric_dipole": "tddft_cd_electric.csv",
+        "cd_velocity_dipole": "tddft_cd_velocity.csv",
+    }
+    base_fields = [
+        "from_state_label", "from_root", "from_state_suffix",
+        "to_state_label", "to_root", "to_state_suffix",
+        "energy_eV", "energy_cm1", "wavelength_nm",
+    ]
+    for kind, filename in spectrum_suffixes.items():
+        table = spectra.get(kind)
+        if not table:
+            continue
+        transitions = table.get("transitions", [])
+        if not transitions:
+            continue
+
+        center = table.get("center_of_mass", {})
+        rows = []
+        for transition in transitions:
+            row = dict(transition)
+            row["center_of_mass_x"] = center.get("x", "")
+            row["center_of_mass_y"] = center.get("y", "")
+            row["center_of_mass_z"] = center.get("z", "")
+            rows.append(row)
+
+        extra_fields = [
+            field
+            for field in rows[0].keys()
+            if field not in base_fields
+            and field not in {"center_of_mass_x", "center_of_mass_y", "center_of_mass_z"}
+        ]
+        files.append(_write_csv(
+            directory, f"{stem}_{filename}", rows,
+            base_fields + extra_fields + [
+                "center_of_mass_x", "center_of_mass_y", "center_of_mass_z",
+            ],
+        ))
+
+    total_energy_blocks = tddft.get("total_energy_blocks", [])
+    if total_energy_blocks:
+        files.append(_write_csv(
+            directory, f"{stem}_tddft_total_energy.csv", total_energy_blocks,
+            [
+                "block_index", "excitation_method", "root",
+                "scf_energy_Eh", "delta_energy_Eh", "total_energy_Eh",
+                "maximum_memory_MB",
+            ],
+        ))
+
+    return files
+
+
+def _write_solvation(data, directory, stem) -> List[Path]:
+    solvation = data.get("solvation")
+    if not solvation:
+        return []
+
+    files: List[Path] = []
+    summary = solvation.get("summary", {})
+    latest_cpcm = solvation.get("cpcm", {})
+    latest_alpb = solvation.get("alpb", {})
+    latest_cosmors = solvation.get("cosmors", {})
+
+    summary_row = {
+        "is_solvated": solvation.get("is_solvated"),
+        "primary_model": solvation.get("primary_model", ""),
+        "solvent": solvation.get("solvent", ""),
+        "models": ";".join(solvation.get("models", [])),
+        "input_controlled": summary.get("input_controlled", ""),
+        "input_model": summary.get("input_model", ""),
+        "input_solvent": summary.get("input_solvent", ""),
+        "output_model": summary.get("output_model", ""),
+        "output_solvent": summary.get("output_solvent", ""),
+        "draco": solvation.get("input_flags", {}).get("draco", False),
+        "smd18": solvation.get("input_flags", {}).get("smd18", False),
+        "epsilon": summary.get(
+            "epsilon",
+            latest_cpcm.get("epsilon", latest_alpb.get("epsilon", "")),
+        ),
+        "surface_type": summary.get("surface_type", latest_cpcm.get("surface_type", "")),
+        "epsilon_function_type": latest_cpcm.get("epsilon_function_type", ""),
+        "rsolv_ang": latest_cpcm.get("rsolv_ang", ""),
+        "cpcm_block_count": summary.get("cpcm_block_count", 0),
+        "alpb_block_count": summary.get("alpb_block_count", 0),
+        "cosmors_block_count": summary.get("cosmors_block_count", 0),
+        "dGsolv_Eh": latest_cosmors.get("dGsolv_Eh", ""),
+        "free_energy_shift_Eh": latest_alpb.get("free_energy_shift_Eh", ""),
+    }
+    files.append(_write_csv(
+        directory, f"{stem}_solvation.csv", [summary_row],
+        [
+            "is_solvated", "primary_model", "solvent", "models",
+            "input_controlled", "input_model", "input_solvent",
+            "output_model", "output_solvent",
+            "draco", "smd18",
+            "epsilon", "surface_type", "epsilon_function_type", "rsolv_ang",
+            "cpcm_block_count", "alpb_block_count", "cosmors_block_count",
+            "dGsolv_Eh", "free_energy_shift_Eh",
+        ],
+    ))
+
+    history_rows: List[Dict[str, Any]] = []
+    for directive in solvation.get("input_directives", []):
+        history_rows.append({
+            "source": directive.get("source"),
+            "line_index": directive.get("line_index"),
+            "model": directive.get("model"),
+            "solvent": directive.get("solvent", ""),
+            "epsilon": "",
+            "surface_type": "",
+            "reference_state": "",
+        })
+
+    for block in solvation.get("cpcm_blocks", []):
+        history_rows.append({
+            "source": "output_cpcm",
+            "line_index": block.get("line_index"),
+            "model": block.get("model"),
+            "solvent": block.get("solvent", ""),
+            "epsilon": block.get("epsilon", ""),
+            "surface_type": block.get("surface_type", ""),
+            "reference_state": "",
+        })
+
+    for block in solvation.get("alpb_blocks", []):
+        history_rows.append({
+            "source": "output_alpb",
+            "line_index": block.get("line_index"),
+            "model": block.get("model"),
+            "solvent": block.get("solvent", ""),
+            "epsilon": block.get("epsilon", ""),
+            "surface_type": "",
+            "reference_state": block.get("reference_state", ""),
+        })
+
+    for block in solvation.get("cosmors_blocks", []):
+        history_rows.append({
+            "source": "output_cosmors",
+            "line_index": block.get("line_index"),
+            "model": block.get("model"),
+            "solvent": block.get("solvent", ""),
+            "epsilon": "",
+            "surface_type": "",
+            "reference_state": "",
+        })
+
+    if history_rows:
+        history_rows.sort(
+            key=lambda item: (item.get("line_index", -1), str(item.get("source", "")))
+        )
+        files.append(_write_csv(
+            directory, f"{stem}_solvation_history.csv", history_rows,
+            [
+                "source", "line_index", "model", "solvent",
+                "epsilon", "surface_type", "reference_state",
+            ],
+        ))
+
+    return files
+
+
 def _write_geom_opt(data: Dict[str, Any], directory: Path, stem: str) -> List[Path]:
     gopt = data.get("geom_opt")
     if not gopt:
@@ -697,6 +969,8 @@ def write_csvs(data: Dict[str, Any], directory: Path) -> List[Path]:
         _write_nbo_nao,
         _write_nbo_npa,
         _write_dipole,
+        _write_solvation,
+        _write_tddft,
         _write_nbo_lewis,
         _write_nbo_e2,
         _write_nbo_nlmo_hyb,

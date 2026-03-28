@@ -10,6 +10,7 @@ Multi-molecule   → compare()
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -38,7 +39,12 @@ def write_comparison(datasets: List[Dict[str, Any]], path: Path) -> Path:
 # Single-molecule renderer
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _render_molecule(data: Dict[str, Any], heading_level: int = 1) -> str:
+def _render_molecule(
+    data: Dict[str, Any],
+    heading_level: int = 1,
+    display_label: Optional[str] = None,
+    source_display: Optional[str] = None,
+) -> str:
     """Full markdown report for one molecule."""
     H = "#" * heading_level
     H2 = "#" * (heading_level + 1)
@@ -49,10 +55,11 @@ def _render_molecule(data: Dict[str, Any], heading_level: int = 1) -> str:
     meta = data.get("metadata", {})
     ctx  = data.get("context",  {})
     scf  = data.get("scf",      {})
-    src  = Path(data.get("source_file", "unknown")).name
+    src_path = Path(data.get("source_file", "unknown"))
+    src  = source_display or src_path.name
 
     # ── Title ──────────────────────────────────────────────────────────────
-    job   = meta.get("job_name", src)
+    job   = display_label or meta.get("job_name", src_path.stem)
     func  = meta.get("functional", "?")
     basis = meta.get("basis_set",  "?")
     hftyp = ctx.get("hf_type", "RHF")
@@ -89,6 +96,20 @@ def _render_molecule(data: Dict[str, Any], heading_level: int = 1) -> str:
 
     if scf_lines:
         blocks.append("\n".join(scf_lines))
+
+    # -- Solvation --------------------------------------------------------
+    solvation = data.get("solvation")
+    if solvation:
+        solvation_section = _render_solvation_section(solvation)
+        if solvation_section:
+            blocks.append(f"{H2} Solvation\n{solvation_section}")
+
+    # -- TDDFT / CIS excited states ---------------------------------------
+    tddft = data.get("tddft")
+    if tddft:
+        tddft_section = _render_tddft_section(tddft)
+        if tddft_section:
+            blocks.append(f"{H2} TDDFT Excited States\n{tddft_section}")
 
     # ── Orbital energies ───────────────────────────────────────────────────
     oe = data.get("orbital_energies")
@@ -378,7 +399,7 @@ def _render_comparison(datasets: List[Dict[str, Any]]) -> str:
 
     blocks: List[str] = ["# ORCA Calculation Comparison"]
 
-    labels = [_mol_label(d) for d in datasets]
+    labels = _comparison_labels(datasets)
 
     # ── Method table ───────────────────────────────────────────────────────
     rows = [("", "method", "basis", "charge", "mult", "symmetry")]
@@ -476,7 +497,12 @@ def _render_comparison(datasets: List[Dict[str, Any]]) -> str:
     # ── Per-molecule full reports ──────────────────────────────────────────
     blocks.append("---\n# Individual Reports")
     for lbl, d in zip(labels, datasets):
-        blocks.append(_render_molecule(d, heading_level=2))
+        blocks.append(_render_molecule(
+            d,
+            heading_level=2,
+            display_label=lbl,
+            source_display=lbl,
+        ))
 
     return "\n\n".join(blocks) + "\n"
 
@@ -511,11 +537,215 @@ def _f(val, fmt=".4f") -> str:
         return str(val)
 
 
+def _render_tddft_section(tddft: Dict[str, Any]) -> str:
+    """Compact TDDFT/CIS summary for markdown reports."""
+    final_block = tddft.get("final_excited_state_block")
+    if not final_block:
+        blocks = tddft.get("excited_state_blocks", [])
+        final_block = blocks[-1] if blocks else None
+    if not final_block:
+        return ""
+
+    lines = []
+    summary = tddft.get("summary", {})
+    meta_bits = []
+    if summary.get("input_block"):
+        meta_bits.append(f"input `%{summary['input_block']}`")
+    if summary.get("nroots") is not None:
+        meta_bits.append(f"nroots={summary['nroots']}")
+    if summary.get("tda") is not None:
+        meta_bits.append(f"tda={summary['tda']}")
+    if summary.get("donto") is not None:
+        meta_bits.append(f"donto={summary['donto']}")
+    if final_block.get("method"):
+        meta_bits.append(final_block["method"])
+    if final_block.get("manifold"):
+        meta_bits.append(str(final_block["manifold"]).lower())
+    if meta_bits:
+        lines.append(" | ".join(str(bit) for bit in meta_bits))
+
+    states = final_block.get("states", [])
+    if states:
+        fosc_map = {}
+        spectrum = tddft.get("spectra", {}).get("absorption_electric_dipole", {})
+        for transition in spectrum.get("transitions", []):
+            root = transition.get("to_root")
+            if root is not None:
+                fosc_map[root] = transition.get("oscillator_strength")
+
+        rows = [("State", "E (eV)", "lambda (nm)", "fosc", "dominant excitation", "weight")]
+        for state in states[:10]:
+            dominant = max(
+                state.get("transitions", []),
+                key=lambda item: item.get("weight", 0.0),
+                default={},
+            )
+            excitation = "—"
+            if dominant:
+                excitation = (
+                    f"{dominant.get('from_orbital', '')} -> "
+                    f"{dominant.get('to_orbital', '')}"
+                )
+            rows.append((
+                str(state.get("state", "")),
+                _f(state.get("energy_eV")),
+                _f(state.get("wavelength_nm")),
+                _f(fosc_map.get(state.get("state"))),
+                excitation,
+                _f(dominant.get("weight"), ".3f") if dominant else "—",
+            ))
+        lines.append(_table(rows))
+
+    nto_states = tddft.get("nto_states", [])
+    if nto_states:
+        rows = [("State", "leading NTO pair", "occ.")]
+        for nto_state in nto_states[:5]:
+            lead = max(
+                nto_state.get("pairs", []),
+                key=lambda item: item.get("occupation", 0.0),
+                default={},
+            )
+            if not lead:
+                continue
+            rows.append((
+                str(nto_state.get("state", "")),
+                f"{lead.get('from_orbital', '')} -> {lead.get('to_orbital', '')}",
+                _f(lead.get("occupation")),
+            ))
+        if len(rows) > 1:
+            lines.append("**Leading NTO Pairs**\n" + _table(rows))
+
+    total_energy = tddft.get("total_energy", {})
+    if total_energy:
+        energy_bits = []
+        if total_energy.get("root") is not None:
+            energy_bits.append(f"root {total_energy['root']}")
+        if total_energy.get("delta_energy_Eh") is not None:
+            energy_bits.append(f"DE = {_f(total_energy['delta_energy_Eh'], '.6f')} Eh")
+        if total_energy.get("total_energy_Eh") is not None:
+            energy_bits.append(f"E(tot) = {_f(total_energy['total_energy_Eh'], '.6f')} Eh")
+        if energy_bits:
+            lines.append("**Total Energy:** " + " | ".join(energy_bits))
+
+    return "\n\n".join(lines)
+
+
+def _render_solvation_section(solvation: Dict[str, Any]) -> str:
+    """Compact implicit-solvation summary for markdown reports."""
+    summary = solvation.get("summary", {})
+    lines: List[str] = []
+
+    if solvation.get("is_solvated"):
+        bits = []
+        if solvation.get("primary_model"):
+            bits.append(f"**Model:** {solvation['primary_model']}")
+        if solvation.get("solvent"):
+            bits.append(f"**Solvent:** {solvation['solvent']}")
+        if summary.get("models"):
+            bits.append(f"**Seen:** {', '.join(summary['models'])}")
+        if bits:
+            lines.append(" | ".join(bits))
+    else:
+        message = "**Final Input State:** no implicit solvation detected"
+        if summary.get("output_model"):
+            message += f" (earlier output blocks seen: {summary['output_model']}"
+            if summary.get("output_solvent"):
+                message += f" in {summary['output_solvent']}"
+            message += ")"
+        lines.append(message)
+
+    flags = []
+    if solvation.get("input_flags", {}).get("draco"):
+        flags.append("DRACO")
+    if solvation.get("input_flags", {}).get("smd18"):
+        flags.append("SMD18")
+    if flags:
+        lines.append("**Flags:** " + ", ".join(flags))
+
+    model = solvation.get("primary_model")
+    if model in {"CPCM", "CPCMC", "SMD"} and solvation.get("cpcm"):
+        cpcm = solvation["cpcm"]
+        rows = [("parameter", "value")]
+        if cpcm.get("epsilon") is not None:
+            rows.append(("epsilon", _f(cpcm.get("epsilon"))))
+        if cpcm.get("refractive_index") is not None:
+            rows.append(("refrac", _f(cpcm.get("refractive_index"))))
+        if cpcm.get("rsolv_ang") is not None:
+            rows.append(("rsolv (A)", _f(cpcm.get("rsolv_ang"))))
+        if cpcm.get("surface_type"):
+            rows.append(("surface", str(cpcm["surface_type"])))
+        if cpcm.get("epsilon_function_type"):
+            rows.append(("eps. function", str(cpcm["epsilon_function_type"])))
+        if model == "SMD" and cpcm.get("smd_descriptors"):
+            for key in ("soln", "soln25", "sola", "solb", "solg", "solc", "solh"):
+                if key in cpcm["smd_descriptors"]:
+                    rows.append((key, _f(cpcm["smd_descriptors"][key])))
+        if len(rows) > 1:
+            lines.append(_table(rows))
+    elif model == "ALPB" and solvation.get("alpb"):
+        alpb = solvation["alpb"]
+        rows = [("parameter", "value")]
+        if alpb.get("epsilon") is not None:
+            rows.append(("epsilon", _f(alpb.get("epsilon"))))
+        if alpb.get("reference_state"):
+            rows.append(("reference state", str(alpb["reference_state"])))
+        if alpb.get("free_energy_shift_kcal_mol") is not None:
+            rows.append(("free energy shift (kcal/mol)", _f(alpb.get("free_energy_shift_kcal_mol"))))
+        if alpb.get("interaction_kernel"):
+            rows.append(("kernel", str(alpb["interaction_kernel"])))
+        if len(rows) > 1:
+            lines.append(_table(rows))
+    elif model == "COSMO-RS" and solvation.get("cosmors"):
+        cosmors = solvation["cosmors"]
+        rows = [("parameter", "value")]
+        if cosmors.get("functional"):
+            rows.append(("functional", str(cosmors["functional"])))
+        if cosmors.get("basis_set"):
+            rows.append(("basis", str(cosmors["basis_set"])))
+        if cosmors.get("dGsolv_kcal_mol") is not None:
+            rows.append(("dGsolv (kcal/mol)", _f(cosmors.get("dGsolv_kcal_mol"))))
+        if len(rows) > 1:
+            lines.append(_table(rows))
+
+    return "\n\n".join(lines)
+
+
 def _mol_label(data: Dict[str, Any]) -> str:
     """Short identifier for a molecule/calculation."""
     meta = data.get("metadata", {})
     name = meta.get("job_name") or Path(data.get("source_file", "mol")).stem
     return name
+
+
+def _comparison_labels(datasets: List[Dict[str, Any]]) -> List[str]:
+    """Return stable labels for comparison reports.
+
+    Prefer source paths relative to the common parent directory of all parsed
+    files. If that does not work, fall back to the shortest unique path suffix.
+    """
+    source_paths = [Path(d.get("source_file", "mol")) for d in datasets]
+    if len(source_paths) <= 1:
+        return [source_paths[0].name] if source_paths else []
+    source_strs = [str(p) for p in source_paths]
+
+    try:
+        common = Path(os.path.commonpath(source_strs))
+        relative = [Path(os.path.relpath(p, common)).as_posix() for p in source_paths]
+        if len(set(relative)) == len(relative):
+            return relative
+    except ValueError:
+        pass
+
+    labels = [p.name for p in source_paths]
+    depth = 2
+    max_depth = max((len(p.parts) for p in source_paths), default=1) + 1
+    while len(set(labels)) != len(labels) and depth <= max_depth:
+        labels = []
+        for path in source_paths:
+            suffix = path.parts[-depth:] if len(path.parts) >= depth else path.parts
+            labels.append(Path(*suffix).as_posix())
+        depth += 1
+    return labels
 
 
 def _irrep_group(data: Dict[str, Any]) -> str:
