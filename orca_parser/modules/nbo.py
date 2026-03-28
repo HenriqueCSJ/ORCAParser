@@ -537,7 +537,7 @@ def _parse_cmo_bonding_character(lines: List[str], start: int) -> List[Dict]:
         if m:
             entries.append({
                 "mo_index": int(m.group(1)),
-                "type": "occ" if m.group(2) == "o" else "vir",
+                "type": "occ" if m.group(2).lower() == "o" else "vir",
                 "bonding_frac": float(m.group(3)),
                 "nonbonding_frac": float(m.group(4)),
                 "antibonding_frac": float(m.group(5)),
