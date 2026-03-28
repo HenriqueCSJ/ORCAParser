@@ -78,6 +78,8 @@ import sys
 from pathlib import Path
 from typing import List
 
+from orca_parser.parser import is_auxiliary_orca_file
+
 
 def parse_args():
     p = argparse.ArgumentParser(
@@ -146,7 +148,8 @@ def _resolve_files(paths: List[str]) -> List[Path]:
     """Expand directories recursively into *.out and *.log files.
 
     Regular files are passed through as-is. Directories are searched
-    recursively for files matching ORCA output extensions.
+    recursively for files matching ORCA output extensions, excluding
+    auxiliary ORCA helper files such as ``*_atom83.out``.
     Results are sorted by path for deterministic ordering.
     """
     resolved: List[Path] = []
@@ -154,7 +157,10 @@ def _resolve_files(paths: List[str]) -> List[Path]:
         fp = Path(p)
         if fp.is_dir():
             for ext in sorted(_ORCA_EXTENSIONS):
-                resolved.extend(sorted(fp.rglob(f"*{ext}")))
+                for candidate in sorted(fp.rglob(f"*{ext}")):
+                    if is_auxiliary_orca_file(candidate):
+                        continue
+                    resolved.append(candidate)
         else:
             resolved.append(fp)
     return resolved
