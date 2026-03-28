@@ -151,6 +151,11 @@ class ORCAParser:
         with open(self.filepath, "r", encoding="utf-8", errors="replace") as fh:
             self._lines = [ln.rstrip("\n") for ln in fh.readlines()]
 
+        if not self._is_orca_output():
+            raise ValueError(
+                f"Not a valid ORCA output file: {self.filepath.name}"
+            )
+
         self._build_context()
 
         active = _resolve_sections(sections)  # None → run all
@@ -266,6 +271,28 @@ class ORCAParser:
         return write_comparison(datasets, Path(path))
 
 
+
+    def _is_orca_output(self) -> bool:
+        """Check that the file looks like a valid ORCA output.
+
+        Requires *both*:
+        - An ORCA program banner somewhere near the top (first 200 lines)
+        - ``ORCA TERMINATED NORMALLY`` or ``TOTAL RUN TIME`` near the end
+          (last 50 lines), indicating the calculation completed.
+        """
+        head = self._lines[:200]
+        tail = self._lines[-50:] if len(self._lines) > 50 else self._lines
+
+        has_banner = any(
+            "An Ab Initio, DFT and Semiempirical electronic structure package"
+            in ln or "Program Version" in ln
+            for ln in head
+        )
+        has_termination = any(
+            "ORCA TERMINATED NORMALLY" in ln or "TOTAL RUN TIME" in ln
+            for ln in tail
+        )
+        return has_banner and has_termination
 
     def _build_context(self) -> None:
         """
