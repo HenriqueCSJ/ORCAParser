@@ -1,0 +1,9 @@
+irrep,n_basis_functions,offset,occupied_alpha,occupied_beta,occupied_total
+Ag,265,0,32,32,32
+B1g,232,265,20,20,20
+B2g,232,497,20,20,20
+B3g,232,729,20,20,20
+Au,218,961,18,18,18
+B1u,246,1179,25,24,25
+B2u,246,1425,25,24,25
+B3u,246,1671,25,24,25

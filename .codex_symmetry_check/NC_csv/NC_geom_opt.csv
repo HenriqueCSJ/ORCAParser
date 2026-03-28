@@ -1,0 +1,4 @@
+cycle,energy_Eh,energy_change_Eh,trust_radius_bohr,energy_change_val,energy_change_tol,energy_change_conv,rms_gradient_val,rms_gradient_tol,rms_gradient_conv,max_gradient_val,max_gradient_tol,max_gradient_conv,rms_step_val,rms_step_tol,rms_step_conv,max_step_val,max_step_tol,max_step_conv,rmsd_to_initial_ang,rmsd_to_previous_ang,orca_converged
+1,-2340.466786476662,,,,,,0.000648485,0.0001,False,0.004794622,0.0003,False,0.0018124094,0.002,True,0.0115778717,0.004,False,0.0,,False
+2,-2340.468739952656,-0.0019534759940142976,0.3,-0.001953476,5e-06,False,0.0002859526,0.0001,False,0.0020806807,0.0003,False,0.0011005215,0.002,True,0.0078616922,0.004,False,0.00489904,0.00489904,False
+3,-2340.469179819436,-0.0004398667797431699,0.45,-0.0004398668,5e-06,False,2.51991e-05,0.0001,True,0.0001302448,0.0003,True,0.0001214331,0.002,True,0.0005339915,0.004,True,0.00722252,0.00242269,True

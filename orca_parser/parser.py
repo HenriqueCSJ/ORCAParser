@@ -203,6 +203,7 @@ class ORCAParser:
             except Exception as exc:  # noqa: BLE001
                 results[f"{key}_parse_error"] = str(exc)
 
+        results["context"] = dict(self.context)
         self.data = results
         return results
 

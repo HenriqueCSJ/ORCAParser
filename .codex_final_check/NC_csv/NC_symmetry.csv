@@ -1,0 +1,2 @@
+use_sym,auto_detected_point_group,point_group,reduced_point_group,orbital_irrep_group,petite_list_algorithm,n_irreps,initial_guess_irrep,setup_rms_distance_au,setup_max_distance_au,setup_threshold_au,setup_time_s,symmetry_perfected_point_group,symmetry_perfected_atoms
+yes,Ih,Ih,D2h,D2h,no,8,4-B3u,1.2e-14,1.4e-14,0.01,0.016,Ih,61

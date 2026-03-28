@@ -38,6 +38,26 @@ def _parse_orbital_block(lines: List[str], start: int) -> List[Dict]:
     return orbitals
 
 
+def _find_last_line(lines: List[str], needle: str) -> int:
+    """Return the last line index containing *needle*, or -1 if absent."""
+    for idx in range(len(lines) - 1, -1, -1):
+        if needle in lines[idx]:
+            return idx
+    return -1
+
+
+def _parse_irrep_occupations(lines: List[str], start: int) -> Dict[str, int]:
+    """Parse occupied orbital counts per irrep from a header line index."""
+    occupations: Dict[str, int] = {}
+    for ln in lines[start + 1:]:
+        m = re.match(r"^\s*(\w+)\s+-\s+(\d+)", ln)
+        if m:
+            occupations[m.group(1)] = int(m.group(2))
+        elif occupations:
+            break
+    return occupations
+
+
 class OrbitalEnergiesModule(BaseModule):
     """
     Extracts orbital energies.
@@ -167,37 +187,25 @@ class OrbitalEnergiesModule(BaseModule):
                         data["beta_LUMO_irrep"] = beta_lumo["irrep"]
 
         # Occupied orbitals per irrep (symmetry only)
-        idx_occ = self.find_line(lines, "Number of occupied orbitals per irrep")
+        idx_occ = _find_last_line(lines, "Number of occupied orbitals per irrep")
         if idx_occ == -1:
-            idx_occ = self.find_line(lines, "Number of occupied orbitals per irrep of operator 0")
+            idx_occ = _find_last_line(lines, "Number of occupied orbitals per irrep of operator 0")
         if idx_occ != -1:
-            irrep_occ = {}
-            for ln in lines[idx_occ: idx_occ + 8]:
-                # Match: A1 - 3  etc.
-                m = re.match(r"\s+(\w+)\s+-\s+(\d+)", ln)
-                if m:
-                    irrep_occ[m.group(1)] = int(m.group(2))
+            irrep_occ = _parse_irrep_occupations(lines, idx_occ)
             if irrep_occ:
                 data["occupied_per_irrep"] = irrep_occ
 
         # Also grab alpha/beta per irrep for UHF
         if is_uhf:
-            idx_op0 = self.find_line(lines, "Number of occupied orbitals per irrep of operator 0")
-            idx_op1 = self.find_line(lines, "Number of occupied orbitals per irrep of operator 1")
+            idx_op0 = _find_last_line(lines, "Number of occupied orbitals per irrep of operator 0")
+            idx_op1 = _find_last_line(lines, "Number of occupied orbitals per irrep of operator 1")
             if idx_op0 != -1:
-                occ_alpha = {}
-                for ln in lines[idx_op0: idx_op0 + 8]:
-                    m = re.match(r"\s+(\w+)\s+-\s+(\d+)", ln)
-                    if m:
-                        occ_alpha[m.group(1)] = int(m.group(2))
+                occ_alpha = _parse_irrep_occupations(lines, idx_op0)
                 if occ_alpha:
                     data["alpha_occupied_per_irrep"] = occ_alpha
+                    data["occupied_per_irrep"] = occ_alpha
             if idx_op1 != -1:
-                occ_beta = {}
-                for ln in lines[idx_op1: idx_op1 + 8]:
-                    m = re.match(r"\s+(\w+)\s+-\s+(\d+)", ln)
-                    if m:
-                        occ_beta[m.group(1)] = int(m.group(2))
+                occ_beta = _parse_irrep_occupations(lines, idx_op1)
                 if occ_beta:
                     data["beta_occupied_per_irrep"] = occ_beta
 
