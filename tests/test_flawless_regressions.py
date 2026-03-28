@@ -176,6 +176,8 @@ def test_tddft_symmetry_and_dominant_excitations_are_preserved(
 ) -> None:
     data = tddft_sym_parser.data
     excited_states = data["tddft"]["final_excited_state_block"]["states"]
+    dipole = data["dipole"]
+    spectra = data["tddft"]["spectra"]
 
     assert data["metadata"]["point_group"] == "Cs"
     assert data["metadata"]["orbital_irrep_group"] == "Cs"
@@ -183,12 +185,25 @@ def test_tddft_symmetry_and_dominant_excitations_are_preserved(
     assert excited_states[0]["transitions"]
     assert excited_states[0]["transitions"][0]["from_orbital"] == "23a"
     assert excited_states[0]["transitions"][0]["to_orbital"] == "24a"
+    assert dipole["magnitude_Debye"] == pytest.approx(0.276865075)
+    assert dipole["total_dipole_au"]["x"] == pytest.approx(0.099935375)
+    assert dipole["rotational_constants_cm1"][0] == pytest.approx(0.185875)
+    assert spectra["absorption_electric_dipole"]["transition_count"] == 80
+    assert spectra["cd_electric_dipole"]["transition_count"] == 80
+    assert spectra["cd_velocity_dipole"]["transition_count"] == 80
 
     markdown_path = tmp_path / "tddft_sym.md"
     tddft_sym_parser.to_markdown(markdown_path)
     text = markdown_path.read_text(encoding="utf-8")
 
+    assert "## Dipole Moment" in text
+    assert "**Total magnitude:** 0.2769 D | 0.108925 a.u." in text
     assert "## TDDFT Excited States" in text
     assert "| State | Symmetry | E (eV)" in text
     assert '| 1     | A"' in text
     assert "23a (17-A') -> 24a (8-A\")" in text
+    assert "### Absorption Spectrum (Electric Dipole)" in text
+    assert "### Absorption Spectrum (Velocity Dipole)" in text
+    assert "### CD Spectrum (Electric Dipole)" in text
+    assert "### CD Spectrum (Velocity Dipole)" in text
+    assert "0-1A' -> 1-1A\"" in text

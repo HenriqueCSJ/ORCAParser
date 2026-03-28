@@ -15,6 +15,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 
+AU_TO_DEBYE = 2.541746473
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Public entry points
 # ─────────────────────────────────────────────────────────────────────────────
@@ -91,14 +94,21 @@ def _render_molecule(
 
     dip = data.get("dipole", {})
     if dip.get("magnitude_Debye") is not None:
-        vec = dip.get("total_debye", {})
+        vec = _get_dipole_vector(dip, "total_dipole", "Debye")
         xyz = ""
         if vec:
-            xyz = f"  ({vec.get('x',0):.4f}, {vec.get('y',0):.4f}, {vec.get('z',0):.4f}) D"
+            xyz = (
+                f"  ({vec.get('x', 0.0):.4f}, {vec.get('y', 0.0):.4f}, "
+                f"{vec.get('z', 0.0):.4f}) D"
+            )
         scf_lines.append(f"**Dipole:** {dip['magnitude_Debye']:.4f} D{xyz}")
 
     if scf_lines:
         blocks.append("\n".join(scf_lines))
+
+    dipole_section = _render_dipole_section(dip)
+    if dipole_section:
+        blocks.append(f"{H2} Dipole Moment\n{dipole_section}")
 
     # -- Basis-set summary -----------------------------------------------
     basis_set = data.get("basis_set")
@@ -542,11 +552,11 @@ def _render_comparison(datasets: List[Dict[str, Any]]) -> str:
                          f"{E:.10f}" if E else "—",
                          f"{s2:.6f}"  if s2 is not None else "—",
                          str(s2i),
-                         f"{mu:.4f}" if mu else "—"))
+                         f"{mu:.4f}" if mu is not None else "—"))
         else:
             rows.append((lbl,
                          f"{E:.10f}" if E else "—",
-                         f"{mu:.4f}" if mu else "—"))
+                         f"{mu:.4f}" if mu is not None else "—"))
     blocks.append("## Energies\n" + _table(rows))
 
     # ── Frontier orbitals comparison ───────────────────────────────────────
@@ -679,6 +689,41 @@ def _f(val, fmt=".4f") -> str:
         return format(float(val), fmt)
     except (TypeError, ValueError):
         return str(val)
+
+
+def _get_dipole_vector(
+    dipole: Dict[str, Any],
+    stem: str,
+    unit: str,
+) -> Optional[Dict[str, float]]:
+    """Return a dipole vector in the requested unit, converting from a.u. if needed."""
+    vector = dipole.get(f"{stem}_{unit}")
+    if isinstance(vector, dict):
+        return vector
+
+    if unit != "Debye":
+        return None
+
+    vector_au = dipole.get(f"{stem}_au")
+    if not isinstance(vector_au, dict):
+        return None
+    return {
+        axis: float(value) * AU_TO_DEBYE
+        for axis, value in vector_au.items()
+    }
+
+
+def _format_vector(vector: Optional[Dict[str, Any]], fmt: str = ".6f") -> str:
+    """Format an xyz vector for compact markdown display."""
+    if not isinstance(vector, dict):
+        return ""
+    try:
+        return ", ".join(
+            format(float(vector.get(axis, 0.0)), fmt)
+            for axis in ("x", "y", "z")
+        )
+    except (TypeError, ValueError):
+        return ""
 
 
 def _format_orbital_energy_with_irrep(value: Any, irrep: Any) -> str:
@@ -889,6 +934,172 @@ def _render_reduced_orbital_populations(data: Dict[str, Any]) -> str:
     return "\n\n".join(section for section in sections if section)
 
 
+def _render_dipole_section(dipole: Dict[str, Any]) -> str:
+    """Render permanent-dipole and rotational-axis dipole information."""
+    if not dipole:
+        return ""
+
+    lines: List[str] = []
+    magnitude_bits = []
+    if dipole.get("magnitude_Debye") is not None:
+        magnitude_bits.append(f"{_f(dipole.get('magnitude_Debye'))} D")
+    if dipole.get("magnitude_au") is not None:
+        magnitude_bits.append(f"{_f(dipole.get('magnitude_au'), '.6f')} a.u.")
+    if magnitude_bits:
+        lines.append("**Total magnitude:** " + " | ".join(magnitude_bits))
+
+    total_au = _get_dipole_vector(dipole, "total_dipole", "au")
+    if total_au:
+        lines.append(f"**Total vector (a.u.):** ({_format_vector(total_au)})")
+    total_debye = _get_dipole_vector(dipole, "total_dipole", "Debye")
+    if total_debye:
+        lines.append(f"**Total vector (D):** ({_format_vector(total_debye)})")
+
+    component_rows = [("Contribution", "X (a.u.)", "Y (a.u.)", "Z (a.u.)")]
+    for label, key in (
+        ("Electronic", "electronic_contribution"),
+        ("Nuclear", "nuclear_contribution"),
+        ("Total", "total_dipole"),
+    ):
+        vector = _get_dipole_vector(dipole, key, "au")
+        if not vector:
+            continue
+        component_rows.append((
+            label,
+            _f(vector.get("x"), ".6f"),
+            _f(vector.get("y"), ".6f"),
+            _f(vector.get("z"), ".6f"),
+        ))
+    if len(component_rows) > 1:
+        lines.append("**Cartesian components (a.u.)**\n" + _table(component_rows))
+
+    rotational_bits = []
+    rot_cm1 = dipole.get("rotational_constants_cm1")
+    if rot_cm1:
+        rotational_bits.append(
+            "cm^-1 = (" + ", ".join(_f(value, ".6f") for value in rot_cm1) + ")"
+        )
+    rot_mhz = dipole.get("rotational_constants_MHz")
+    if rot_mhz:
+        rotational_bits.append(
+            "MHz = (" + ", ".join(_f(value, ".3f") for value in rot_mhz) + ")"
+        )
+    if rotational_bits:
+        lines.append("**Rotational constants:** " + " | ".join(rotational_bits))
+
+    rot_axes_au = dipole.get("dipole_rot_axes_au")
+    if rot_axes_au:
+        lines.append(
+            f"**Dipole on rotational axes (a.u.):** ({_format_vector(rot_axes_au)})"
+        )
+    rot_axes_debye = dipole.get("dipole_rot_axes_Debye")
+    if rot_axes_debye:
+        lines.append(
+            f"**Dipole on rotational axes (D):** ({_format_vector(rot_axes_debye)})"
+        )
+
+    return "\n\n".join(lines)
+
+
+def _format_spectrum_transition(transition: Dict[str, Any]) -> str:
+    """Format a TDDFT spectrum transition label."""
+    from_label = str(transition.get("from_state_label", "") or "").strip()
+    to_label = str(transition.get("to_state_label", "") or "").strip()
+    if from_label and to_label:
+        return f"{from_label} -> {to_label}"
+    return from_label or to_label or "—"
+
+
+def _render_tddft_spectrum_table(
+    heading: str,
+    table: Dict[str, Any],
+    value_label: str,
+    value_key: str,
+    component_headers: List[tuple[str, str]],
+) -> str:
+    """Render one parsed TDDFT absorption/CD spectrum table."""
+    transitions = table.get("transitions") or []
+    if not transitions:
+        return ""
+
+    lines = [f"### {heading}"]
+    meta_bits = [f"transitions={len(transitions)}"]
+    center_of_mass = table.get("center_of_mass")
+    if isinstance(center_of_mass, dict):
+        meta_bits.append(f"center of mass = ({_format_vector(center_of_mass)})")
+    lines.append(" | ".join(meta_bits))
+
+    rows = [("Transition", "E (eV)", "E (cm^-1)", "lambda (nm)", value_label)]
+    rows[0] = rows[0] + tuple(header for header, _ in component_headers)
+
+    for transition in transitions:
+        row = [
+            _format_spectrum_transition(transition),
+            _f(transition.get("energy_eV"), ".6f"),
+            _f(transition.get("energy_cm1"), ".1f"),
+            _f(transition.get("wavelength_nm"), ".1f"),
+            _f(transition.get(value_key), ".9f"),
+        ]
+        for _, key in component_headers:
+            row.append(_f(transition.get(key), ".5f"))
+        rows.append(tuple(row))
+
+    lines.append(_table(rows))
+    return "\n\n".join(lines)
+
+
+def _render_tddft_spectra_section(tddft: Dict[str, Any]) -> str:
+    """Render all available TDDFT/CIS absorption and CD spectra tables."""
+    spectra = tddft.get("spectra") or {}
+    if not spectra:
+        return ""
+
+    sections = []
+    layouts = (
+        (
+            "absorption_electric_dipole",
+            "Absorption Spectrum (Electric Dipole)",
+            "fosc (D2)",
+            "oscillator_strength",
+            [("D2 (au^2)", "dipole_strength_au2"), ("DX (au)", "dx_au"), ("DY (au)", "dy_au"), ("DZ (au)", "dz_au")],
+        ),
+        (
+            "absorption_velocity_dipole",
+            "Absorption Spectrum (Velocity Dipole)",
+            "fosc (P2)",
+            "oscillator_strength",
+            [("P2 (au^2)", "velocity_strength_au2"), ("PX (au)", "px_au"), ("PY (au)", "py_au"), ("PZ (au)", "pz_au")],
+        ),
+        (
+            "cd_electric_dipole",
+            "CD Spectrum (Electric Dipole)",
+            "R (1e40*cgs)",
+            "rotatory_strength_cgs",
+            [("MX (au)", "mx_au"), ("MY (au)", "my_au"), ("MZ (au)", "mz_au")],
+        ),
+        (
+            "cd_velocity_dipole",
+            "CD Spectrum (Velocity Dipole)",
+            "R (1e40*cgs)",
+            "rotatory_strength_cgs",
+            [("MX (au)", "mx_au"), ("MY (au)", "my_au"), ("MZ (au)", "mz_au")],
+        ),
+    )
+
+    for kind, heading, value_label, value_key, component_headers in layouts:
+        section = _render_tddft_spectrum_table(
+            heading,
+            spectra.get(kind, {}),
+            value_label,
+            value_key,
+            component_headers,
+        )
+        if section:
+            sections.append(section)
+
+    return "\n\n".join(sections)
+
+
 def _render_tddft_section(tddft: Dict[str, Any], data: Optional[Dict[str, Any]] = None) -> str:
     """Compact TDDFT/CIS summary for markdown reports."""
     final_block = tddft.get("final_excited_state_block")
@@ -976,6 +1187,10 @@ def _render_tddft_section(tddft: Dict[str, Any], data: Optional[Dict[str, Any]] 
             ))
         if len(rows) > 1:
             lines.append("**Leading NTO Pairs**\n" + _table(rows))
+
+    spectra_section = _render_tddft_spectra_section(tddft)
+    if spectra_section:
+        lines.append(spectra_section)
 
     total_energy = tddft.get("total_energy", {})
     if total_energy:

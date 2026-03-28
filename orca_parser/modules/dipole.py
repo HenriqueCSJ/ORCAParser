@@ -14,20 +14,35 @@ from typing import Any, Dict, Optional
 from .base import BaseModule
 
 
+AU_TO_DEBYE = 2.541746473
+
+
 class DipoleMomentModule(BaseModule):
     """Parses the DIPOLE MOMENT and rotational spectrum sections."""
 
     name = "dipole"
+    _SECTION_HEADER_RE = re.compile(r"^\s*DIPOLE MOMENT\s*$", re.I)
+
+    @staticmethod
+    def _to_debye(vector: Dict[str, float]) -> Dict[str, float]:
+        return {
+            axis: float(value) * AU_TO_DEBYE
+            for axis, value in vector.items()
+        }
 
     def parse(self, lines):
-        idx = self.find_line(lines, "DIPOLE MOMENT")
-        if idx == -1:
+        header_indices = [
+            i for i, line in enumerate(lines)
+            if self._SECTION_HEADER_RE.match(line)
+        ]
+        if not header_indices:
             return None
+        idx = header_indices[-1]
 
         data: Dict[str, Any] = {}
 
-        # Scan the block (~25 lines)
-        for ln in lines[idx: idx + 30]:
+        # Scan the property block itself.
+        for ln in lines[idx: idx + 40]:
             m = re.search(
                 r"Electronic contribution:\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)", ln
             )
@@ -61,6 +76,15 @@ class DipoleMomentModule(BaseModule):
             m = re.search(r"Magnitude \(Debye\)\s+:\s+([-\d.]+)", ln)
             if m:
                 data["magnitude_Debye"] = float(m.group(1))
+
+        for key in (
+            "electronic_contribution_au",
+            "nuclear_contribution_au",
+            "total_dipole_au",
+        ):
+            vector = data.get(key)
+            if vector:
+                data[key.replace("_au", "_Debye")] = self._to_debye(vector)
 
         # Rotational spectrum (follows the dipole block)
         idx_rot = self.find_line(lines, "Rotational spectrum", idx)
