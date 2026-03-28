@@ -33,6 +33,7 @@ from .modules import (
     DipoleMomentModule,
     NBOModule,
     EPRModule,
+    GeomOptModule,
 )
 
 # ─────────────────────────────────────────────────────────────────
@@ -55,6 +56,7 @@ MODULE_REGISTRY: List[tuple] = [
     ("dipole",           DipoleMomentModule),
     ("nbo",              NBOModule),
     ("epr",              EPRModule),
+    ("geom_opt",         GeomOptModule),
 ]
 
 # Sections always included regardless of the `sections` argument.
@@ -71,6 +73,7 @@ SECTION_ALIASES: Dict[str, List[str]] = {
     "dipole":     ["dipole"],
     "geometry":   ["geometry", "basis_set"],
     "epr":        ["epr"],
+    "opt":        ["geom_opt"],
 }
 
 
@@ -313,7 +316,7 @@ class ORCAParser:
             m = re.search(r"Hartree-Fock type\s+HFTyp\s+\.\.\.\.\s+(\w+)", ln)
             if m:
                 ctx["hf_type"] = m.group(1)
-                ctx["is_uhf"] = m.group(1) == "UHF"
+                ctx["is_uhf"] = m.group(1).upper() == "UHF"
 
             # Multiplicity
             m = re.search(r"Multiplicity\s+Mult\s+\.\.\.\.\s+(\d+)", ln)

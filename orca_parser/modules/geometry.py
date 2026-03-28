@@ -224,7 +224,7 @@ class MetadataModule(BaseModule):
 
         # Set context flags based on parsed data
         hf_type = data.get("hf_type", "RHF")
-        self.context["is_uhf"] = hf_type == "UHF"
+        self.context["is_uhf"] = hf_type.upper() == "UHF"
         self.context["hf_type"] = hf_type
 
         return data if data else None

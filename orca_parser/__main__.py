@@ -17,6 +17,7 @@ Section aliases
   dipole     dipole
   geometry   geometry, basis_set
   epr        epr (ZFS, g-tensor, hyperfine/EFG)
+  opt        geom_opt (optimization cycles, convergence, RMSD)
 
   Plus any individual section name: scf, mulliken, mayer, chelpg, ...
   Core sections (metadata, geometry, basis_set, scf) are always included.
@@ -67,6 +68,9 @@ Examples
 
   # Extract EPR data (ZFS, g-tensor, hyperfine coupling)
   orca_parser radical.out --sections epr
+
+  # Parse geometry optimization data (per-cycle energies, convergence, RMSD)
+  orca_parser geom_opt.out --sections opt --summary
 """
 
 import argparse
@@ -197,6 +201,16 @@ def _print_summary(data: dict, path: Path) -> None:
     if qro:
         print(f"  QRO          : DOMO={qro.get('n_domo')}  "
               f"SOMO={qro.get('n_somo')}  VMO={qro.get('n_vmo')}")
+
+    gopt = data.get("geom_opt", {})
+    if gopt:
+        n = gopt.get("n_cycles", 0)
+        conv = "YES" if gopt.get("converged") else "NO"
+        print(f"  Opt cycles   : {n}  (converged: {conv})")
+        if gopt.get("final_energy_Eh") is not None:
+            print(f"  Opt energy   : {gopt['final_energy_Eh']:.10f} Eh")
+        if gopt.get("rmsd_initial_to_final_ang") is not None:
+            print(f"  RMSD i→f     : {gopt['rmsd_initial_to_final_ang']:.6f} Å")
 
     for name, key in [("Mulliken", "mulliken"), ("Hirshfeld", "hirshfeld"),
                       ("MBIS", "mbis"), ("CHELPG", "chelpg")]:
