@@ -619,6 +619,47 @@ def _write_dipole(data, directory, stem) -> List[Path]:
     return [fn]
 
 
+def _write_geom_opt(data: Dict[str, Any], directory: Path, stem: str) -> List[Path]:
+    gopt = data.get("geom_opt")
+    if not gopt:
+        return []
+    cycles = gopt.get("cycles", [])
+    if not cycles:
+        return []
+
+    fields = [
+        "cycle", "energy_Eh", "energy_change_Eh", "trust_radius_bohr",
+        "energy_change_val", "energy_change_tol", "energy_change_conv",
+        "rms_gradient_val", "rms_gradient_tol", "rms_gradient_conv",
+        "max_gradient_val", "max_gradient_tol", "max_gradient_conv",
+        "rms_step_val", "rms_step_tol", "rms_step_conv",
+        "max_step_val", "max_step_tol", "max_step_conv",
+        "rmsd_to_initial_ang", "rmsd_to_previous_ang",
+        "orca_converged",
+    ]
+    rows: List[Dict] = []
+    for c in cycles:
+        row: Dict[str, Any] = {
+            "cycle": c.get("cycle"),
+            "energy_Eh": c.get("energy_Eh"),
+            "energy_change_Eh": c.get("energy_change_Eh", ""),
+            "trust_radius_bohr": c.get("trust_radius_bohr", ""),
+            "rmsd_to_initial_ang": c.get("rmsd_to_initial_ang", ""),
+            "rmsd_to_previous_ang": c.get("rmsd_to_previous_ang", ""),
+            "orca_converged": c.get("orca_converged", False),
+        }
+        conv = c.get("convergence", {})
+        for key in ("energy_change", "rms_gradient", "max_gradient", "rms_step", "max_step"):
+            entry = conv.get(key, {})
+            row[f"{key}_val"] = entry.get("value", "")
+            row[f"{key}_tol"] = entry.get("tolerance", "")
+            row[f"{key}_conv"] = entry.get("converged", "")
+        rows.append(row)
+
+    fn = _write_csv(directory, f"{stem}_geom_opt.csv", rows, fields)
+    return [fn]
+
+
 # ─────────────────────────────────────────────────────────────────
 # Main entry point
 # ─────────────────────────────────────────────────────────────────
@@ -662,6 +703,7 @@ def write_csvs(data: Dict[str, Any], directory: Path) -> List[Path]:
         _write_nbo_nlmo_bo,
         _write_nbo_nlmo_steric,
         _write_epr,
+        _write_geom_opt,
     ]
 
     for writer in writers:
