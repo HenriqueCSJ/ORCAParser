@@ -12,6 +12,7 @@ from orca_parser.parser import is_auxiliary_orca_file
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SP_SYM_OUT = REPO_ROOT / "sample_outs" / "N" / "SP_Sym" / "NC.out"
 SP_SYM_DELTA_OUT = REPO_ROOT / "sample_outs" / "N" / "SP_Sym_Delta" / "NC.out"
+TDDFT_SYM_OUT = REPO_ROOT / "sample_outs" / "R2SCAN-QIDH" / "F3CNO.out"
 
 
 @pytest.fixture(scope="session")
@@ -24,6 +25,13 @@ def sp_sym_parser() -> ORCAParser:
 @pytest.fixture(scope="session")
 def sp_sym_delta_parser() -> ORCAParser:
     parser = ORCAParser(SP_SYM_DELTA_OUT)
+    parser.parse()
+    return parser
+
+
+@pytest.fixture(scope="session")
+def tddft_sym_parser() -> ORCAParser:
+    parser = ORCAParser(TDDFT_SYM_OUT)
     parser.parse()
     return parser
 
@@ -79,6 +87,10 @@ def test_markdown_calls_out_symmetry_and_deltascf(
     assert "Ih -> D2h" in sym_text
     assert "UseSym" in sym_text
     assert "Symmetry-perfected geometry" in sym_text
+    assert "Initial Guess / Symmetry Cleanup" in sym_text
+    assert "## Irrep-Resolved Orbital Window" in sym_text
+    assert "## Reduced Orbital Populations" in sym_text
+    assert "Mulliken shell totals — charge" in sym_text
 
     assert "state=DeltaSCF excited-state" in delta_text
     assert "## DeltaSCF / Excited-State Target" in delta_text
@@ -99,6 +111,8 @@ def test_comparison_markdown_distinguishes_ground_and_excited_states(
     assert "electronic state" in text
     assert "DeltaSCF excited-state" in text
     assert "## DeltaSCF" in text
+    assert "## Symmetry Setup" in text
+    assert "## Symmetry Occupations" in text
 
 
 def test_csv_exports_include_metadata_symmetry_and_deltascf(
@@ -134,3 +148,47 @@ def test_csv_exports_include_metadata_symmetry_and_deltascf(
     assert delta_summary[0]["aufbau_metric"] == "MOM"
     assert delta_summary[0]["keep_initial_reference"] == "yes"
     assert any(row["spin"] == "alpha" and row["slot"] == "6" and row["occupation"] == "0.0" for row in delta_targets)
+
+
+def test_reduced_orbital_populations_are_parsed_for_charge_and_spin(
+    sp_sym_parser: ORCAParser,
+) -> None:
+    data = sp_sym_parser.data
+
+    mulliken_charge = data["mulliken"]["reduced_orbital_charges"]
+    mulliken_spin = data["mulliken"]["reduced_orbital_spin_populations"]
+    loewdin_charge = data["loewdin"]["reduced_orbital_charges"]
+    loewdin_spin = data["loewdin"]["reduced_orbital_spin_populations"]
+
+    assert len(mulliken_charge) == 61
+    assert len(mulliken_spin) == 61
+    assert len(loewdin_charge) == 61
+    assert len(loewdin_spin) == 61
+
+    assert mulliken_charge[0]["symbol"] == "N"
+    assert "p" in mulliken_charge[0]["shell_totals"]
+    assert "p" in mulliken_spin[0]["shell_totals"]
+
+
+def test_tddft_symmetry_and_dominant_excitations_are_preserved(
+    tmp_path: Path,
+    tddft_sym_parser: ORCAParser,
+) -> None:
+    data = tddft_sym_parser.data
+    excited_states = data["tddft"]["final_excited_state_block"]["states"]
+
+    assert data["metadata"]["point_group"] == "Cs"
+    assert data["metadata"]["orbital_irrep_group"] == "Cs"
+    assert excited_states[0]["symmetry"] == 'A"'
+    assert excited_states[0]["transitions"]
+    assert excited_states[0]["transitions"][0]["from_orbital"] == "23a"
+    assert excited_states[0]["transitions"][0]["to_orbital"] == "24a"
+
+    markdown_path = tmp_path / "tddft_sym.md"
+    tddft_sym_parser.to_markdown(markdown_path)
+    text = markdown_path.read_text(encoding="utf-8")
+
+    assert "## TDDFT Excited States" in text
+    assert "| State | Symmetry | E (eV)" in text
+    assert '| 1     | A"' in text
+    assert "23a (17-A') -> 24a (8-A\")" in text

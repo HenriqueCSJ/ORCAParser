@@ -41,13 +41,14 @@ class TDDFTModule(BaseModule):
         r"\s+(?P<energy_ev>[-+]?\d*\.?\d+(?:[Ee][-+]?\d+)?)\s+eV"
         r"\s+(?P<energy_cm1>[-+]?\d*\.?\d+(?:[Ee][-+]?\d+)?)\s+cm\*\*-1"
         r"(?:\s+<S\*\*2>\s*=\s*(?P<s_squared>[-+]?\d*\.?\d+(?:[Ee][-+]?\d+)?))?"
+        r"(?:\s+Sym:\s*(?P<symmetry>\S+))?"
         r"(?:\s+Mult\s+(?P<multiplicity>\d+))?",
         re.I,
     )
     _EXCITATION_RE = re.compile(
         r"^\s*(?P<from_orbital>\d+[A-Za-z]+)\s*->\s*(?P<to_orbital>\d+[A-Za-z]+)\s*:\s*"
-        r"(?P<weight>[-+]?\d*\.?\d+(?:[Ee][-+]?\d+)?)\s*"
-        r"\(c=\s*(?P<coefficient>[-+]?\d*\.?\d+(?:[Ee][-+]?\d+)?)\)",
+        r"(?P<weight>[-+]?\d*\.?\d+(?:[Ee][-+]?\d+)?)"
+        r"(?:\s*\(c=\s*(?P<coefficient>[-+]?\d*\.?\d+(?:[Ee][-+]?\d+)?)\))?",
         re.I,
     )
 
@@ -515,6 +516,8 @@ class TDDFTModule(BaseModule):
 
         if state_match.group("s_squared") is not None:
             state_data["s_squared"] = float(state_match.group("s_squared"))
+        if state_match.group("symmetry") is not None:
+            state_data["symmetry"] = state_match.group("symmetry")
         if state_match.group("multiplicity") is not None:
             state_data["multiplicity"] = int(state_match.group("multiplicity"))
 
@@ -526,7 +529,8 @@ class TDDFTModule(BaseModule):
             to_orbital=match.group("to_orbital"),
         )
         transition["weight"] = float(match.group("weight"))
-        transition["coefficient"] = float(match.group("coefficient"))
+        if match.group("coefficient") is not None:
+            transition["coefficient"] = float(match.group("coefficient"))
         return transition
 
     def _build_orbital_pair_dict(

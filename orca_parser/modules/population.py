@@ -3,7 +3,7 @@ Population analysis modules: Mulliken, Loewdin, Mayer, Hirshfeld, MBIS, CHELPG.
 """
 
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 from .base import BaseModule
 
@@ -34,28 +34,59 @@ def _parse_atomic_values(lines: List[str], start: int, n_cols: int = 1):
     return atoms
 
 
-def _parse_reduced_orbital_charges(lines: List[str], start: int) -> List[Dict]:
+def _find_exact_label(lines: List[str], label: str, start: int = 0) -> int:
+    """Return the index of the first line whose stripped uppercase text equals *label*."""
+    target = label.strip().upper()
+    for i in range(start, len(lines)):
+        if lines[i].strip().upper() == target:
+            return i
+    return -1
+
+
+def _parse_reduced_orbital_charges(
+    lines: List[str],
+    start: int,
+    stop_exact: Optional[Iterable[str]] = None,
+) -> List[Dict]:
     """Parse reduced orbital charge blocks per atom (Mulliken or Loewdin)."""
     atom_blocks = []
     current_atom = None
-    current_shell = None
+    exact_stops = {marker.strip().upper() for marker in (stop_exact or [])}
 
     for ln in lines[start:]:
-        # New atom header: "  0 O s       :     3.806774  s :     3.806774"
-        m = re.match(r"\s+(\d+)\s+(\w+)\s+(\w+)\s+:\s+([\d.]+)\s+(\w+)\s+:\s+([\d.]+)", ln)
+        stripped = ln.strip()
+        upper = stripped.upper()
+
+        if upper in exact_stops:
+            if current_atom is not None:
+                atom_blocks.append(current_atom)
+            break
+
+        # New atom header, with or without a space between a two-letter symbol and the shell label:
+        # "  0 O s       :     3.806774  s :     3.806774"
+        # "  0 Bis       :    12.117041  s :    12.117041"
+        m = re.match(
+            r"\s+(?P<index>\d+)\s+"
+            r"(?:(?P<symbol>[A-Z][a-z]?)\s+(?P<orbital>\w+)|(?P<compact>[A-Z][a-z]?)(?P<compact_orbital>[spdfgh]))"
+            r"\s+:\s+(?P<population>[-\d.]+)\s+(?P<shell>\w+)\s+:\s+(?P<shell_total>[-\d.]+)",
+            ln,
+        )
         if m:
             if current_atom is not None:
                 atom_blocks.append(current_atom)
+            symbol = m.group("symbol") or m.group("compact")
+            orbital = m.group("orbital") or m.group("compact_orbital")
             current_atom = {
-                "index": int(m.group(1)),
-                "symbol": m.group(2),
+                "index": int(m.group("index")),
+                "symbol": symbol,
                 "orbitals": [],
                 "shell_totals": {},
             }
-            # Add orbital
-            current_atom["orbitals"].append({"orbital": m.group(3), "population": float(m.group(4))})
-            current_atom["shell_totals"][m.group(5)] = float(m.group(6))
-            current_shell = m.group(5)
+            current_atom["orbitals"].append({
+                "orbital": orbital,
+                "population": float(m.group("population")),
+            })
+            current_atom["shell_totals"][m.group("shell")] = float(m.group("shell_total"))
             continue
 
         # Continuation: "      pz      :     1.879214  p :     4.834638"
@@ -75,7 +106,16 @@ def _parse_reduced_orbital_charges(lines: List[str], start: int) -> List[Dict]:
         if ln.strip() == "" and current_atom is not None:
             atom_blocks.append(current_atom)
             current_atom = None
-        if "LOEWDIN" in ln or "MAYER" in ln or "HIRSHFELD" in ln or "CHELPG" in ln:
+        if (
+            "LOEWDIN" in ln
+            or "MAYER" in ln
+            or "HIRSHFELD" in ln
+            or "CHELPG" in ln
+            or "MBIS" in ln
+            or "ELECTROSTATIC POTENTIAL" in ln
+        ):
+            if current_atom is not None:
+                atom_blocks.append(current_atom)
             break
 
     if current_atom is not None:
@@ -123,22 +163,24 @@ class MullikenModule(BaseModule):
         # --- Reduced orbital charges ---
         idx_red = self.find_line(lines, "MULLIKEN REDUCED ORBITAL CHARGES")
         if idx_red != -1:
-            # Skip header and separator
-            blocks = _parse_reduced_orbital_charges(lines, idx_red + 2)
+            idx_charge = _find_exact_label(lines, "CHARGE", idx_red)
+            charge_start = idx_charge + 1 if idx_charge != -1 else idx_red + 2
+            blocks = _parse_reduced_orbital_charges(
+                lines,
+                charge_start,
+                stop_exact={"SPIN"},
+            )
             if is_uhf:
-                # After CHARGE block, there's a SPIN block
-                data["reduced_orbital_charges"] = blocks
-                idx_spin = self.find_line(lines, "\nSPIN\n", idx_red)
-                if idx_spin == -1:
-                    for i in range(idx_red, idx_red + 200):
-                        if i < len(lines) and lines[i].strip().upper() == "SPIN":
-                            idx_spin = i
-                            break
+                if blocks:
+                    data["reduced_orbital_charges"] = blocks
+                idx_spin = _find_exact_label(lines, "SPIN", idx_red)
                 if idx_spin != -1:
                     spin_blocks = _parse_reduced_orbital_charges(lines, idx_spin + 1)
-                    data["reduced_orbital_spin_populations"] = spin_blocks
+                    if spin_blocks:
+                        data["reduced_orbital_spin_populations"] = spin_blocks
             else:
-                data["reduced_orbital_charges"] = blocks
+                if blocks:
+                    data["reduced_orbital_charges"] = blocks
 
         # --- Frontier MO population analysis ---
         idx_fmo = self.find_line(lines, "FRONTIER MOLECULAR ORBITAL POPULATION ANALYSIS")
@@ -220,16 +262,24 @@ class LoewdinModule(BaseModule):
 
         idx_red = self.find_line(lines, "LOEWDIN REDUCED ORBITAL CHARGES")
         if idx_red != -1:
-            blocks = _parse_reduced_orbital_charges(lines, idx_red + 2)
+            idx_charge = _find_exact_label(lines, "CHARGE", idx_red)
+            charge_start = idx_charge + 1 if idx_charge != -1 else idx_red + 2
+            blocks = _parse_reduced_orbital_charges(
+                lines,
+                charge_start,
+                stop_exact={"SPIN"},
+            )
             if is_uhf:
-                data["reduced_orbital_charges"] = blocks
-                for i in range(idx_red, idx_red + 400):
-                    if i < len(lines) and lines[i].strip().upper() == "SPIN":
-                        spin_blocks = _parse_reduced_orbital_charges(lines, i + 1)
+                if blocks:
+                    data["reduced_orbital_charges"] = blocks
+                idx_spin = _find_exact_label(lines, "SPIN", idx_red)
+                if idx_spin != -1:
+                    spin_blocks = _parse_reduced_orbital_charges(lines, idx_spin + 1)
+                    if spin_blocks:
                         data["reduced_orbital_spin_populations"] = spin_blocks
-                        break
             else:
-                data["reduced_orbital_charges"] = blocks
+                if blocks:
+                    data["reduced_orbital_charges"] = blocks
 
         return data if data else None
 
