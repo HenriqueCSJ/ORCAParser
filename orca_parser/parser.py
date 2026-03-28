@@ -313,7 +313,7 @@ class ORCAParser:
             m = re.search(r"Hartree-Fock type\s+HFTyp\s+\.\.\.\.\s+(\w+)", ln)
             if m:
                 ctx["hf_type"] = m.group(1)
-                ctx["is_uhf"] = m.group(1) == "UHF"
+                ctx["is_uhf"] = m.group(1).upper() == "UHF"
 
             # Multiplicity
             m = re.search(r"Multiplicity\s+Mult\s+\.\.\.\.\s+(\d+)", ln)

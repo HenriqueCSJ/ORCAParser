@@ -50,16 +50,18 @@ class BaseModule(ABC):
 
     @staticmethod
     def find_line(lines: list[str], pattern: str, start: int = 0) -> int:
-        """Return index of first line containing *pattern* at or after *start*, else -1."""
+        """Return index of first line containing *pattern* (case-insensitive) at or after *start*, else -1."""
+        pat = pattern.lower()
         for i in range(start, len(lines)):
-            if pattern in lines[i]:
+            if pat in lines[i].lower():
                 return i
         return -1
 
     @staticmethod
     def find_all_lines(lines: list[str], pattern: str) -> list[int]:
-        """Return list of all line indices containing *pattern*."""
-        return [i for i, ln in enumerate(lines) if pattern in ln]
+        """Return list of all line indices containing *pattern* (case-insensitive)."""
+        pat = pattern.lower()
+        return [i for i, ln in enumerate(lines) if pat in ln.lower()]
 
     @staticmethod
     def safe_float(value: str) -> Optional[float]:
