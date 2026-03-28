@@ -131,7 +131,7 @@ class MullikenModule(BaseModule):
                 idx_spin = self.find_line(lines, "\nSPIN\n", idx_red)
                 if idx_spin == -1:
                     for i in range(idx_red, idx_red + 200):
-                        if i < len(lines) and lines[i].strip() == "SPIN":
+                        if i < len(lines) and lines[i].strip().upper() == "SPIN":
                             idx_spin = i
                             break
                 if idx_spin != -1:
@@ -224,7 +224,7 @@ class LoewdinModule(BaseModule):
             if is_uhf:
                 data["reduced_orbital_charges"] = blocks
                 for i in range(idx_red, idx_red + 400):
-                    if i < len(lines) and lines[i].strip() == "SPIN":
+                    if i < len(lines) and lines[i].strip().upper() == "SPIN":
                         spin_blocks = _parse_reduced_orbital_charges(lines, i + 1)
                         data["reduced_orbital_spin_populations"] = spin_blocks
                         break

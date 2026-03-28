@@ -8,6 +8,7 @@ from .population import (
 from .dipole import DipoleMomentModule
 from .nbo import NBOModule
 from .epr import EPRModule
+from .geom_opt import GeomOptModule
 
 __all__ = [
     "MetadataModule", "GeometryModule", "BasisSetModule",
@@ -18,4 +19,5 @@ __all__ = [
     "DipoleMomentModule",
     "NBOModule",
     "EPRModule",
+    "GeomOptModule",
 ]
