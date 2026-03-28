@@ -4,19 +4,26 @@ A modular Python parser for [ORCA](https://orcaforum.kofo.mpg.de/) quantum chemi
 
 ## Features
 
-- **14 parser modules** covering SCF energies, orbital data, 6 population analysis schemes (Mulliken, Loewdin, Mayer, Hirshfeld, MBIS, CHELPG), dipole moments, NBO analysis, and more
+- **16 parser modules** covering SCF energies, orbital data, 6 population analysis schemes (Mulliken, Loewdin, Mayer, Hirshfeld, MBIS, CHELPG), dipole moments, NBO analysis, EPR properties, and geometry optimizations
 - **4 output formats**: JSON (with optional gzip), CSV (one table per section), HDF5, and AI-readable Markdown
 - Handles both **RHF/RKS** and **UHF/UKS** calculations with spin-resolved data
+- **Geometry optimization** tracking: per-cycle energies, convergence criteria, trust radii, Kabsch-aligned RMSD (initial/final, step-to-step, mass-weighted)
+- **DeltaSCF** metadata extraction: ALPHACONF/BETACONF, IONIZEALPHA/IONIZEBETA, occupation vectors, MOM/IMOM settings
+- **EPR/EPR properties**: Zero-Field Splitting, g-tensor (with atomic breakdown), hyperfine coupling, EFG, quadrupole
 - **Point group symmetry** support (irrep labels on orbitals)
-- Selective section extraction via aliases (`charges`, `mos`, `bonds`, etc.)
+- **Case-insensitive** keyword and section matching (ORCA is case-insensitive, so is this parser)
+- Selective section extraction via aliases (`charges`, `mos`, `bonds`, `opt`, `epr`, etc.)
 - Batch processing of multiple files with **multi-molecule comparison** reports
+- **Recursive directory search** for `*.out` and `*.log` files
+- **ORCA output validation** — rejects non-ORCA files (requires program banner + normal termination)
 - **Quasi-Restricted Orbital (QRO)** parsing for UHF calculations
 - Comprehensive **Natural Bond Orbital (NBO)** analysis extraction
 
 ## Requirements
 
 - Python >= 3.10
-- Optional: `h5py` and `numpy` (for HDF5 output)
+- Optional: `numpy` (for Kabsch-aligned RMSD in geometry optimizations; plain RMSD fallback without it)
+- Optional: `h5py` (for HDF5 output; requires `numpy`)
 
 ## Installation
 
@@ -58,6 +65,12 @@ orca_parser calculations/ --compare --outdir results/
 
 # Human-readable summary to stdout
 orca_parser water.out --summary
+
+# Parse geometry optimization (per-cycle energies, convergence, RMSD)
+orca_parser geom_opt.out --sections opt --summary
+
+# Extract EPR data (ZFS, g-tensor, hyperfine coupling)
+orca_parser radical.out --sections epr
 ```
 
 ### Python API
@@ -80,10 +93,14 @@ parser.to_markdown("water.md")
 # Selective parsing
 data = parser.parse(sections=["charges", "dipole"])
 
+# Geometry optimization data
+opt = data.get("geom_opt", {})
+if opt:
+    print(f"Converged: {opt['converged']} in {opt['n_cycles']} cycles")
+    print(f"Final energy: {opt['final_energy_Eh']} Eh")
+    print(f"RMSD initial→final: {opt['rmsd_initial_to_final_ang']} Å")
+
 # Multi-molecule comparison
-parsers = [ORCAParser(f).parse() or p for f, p in
-           [("mol1.out", ORCAParser("mol1.out")),
-            ("mol2.out", ORCAParser("mol2.out"))]]
 p1, p2 = ORCAParser("mol1.out"), ORCAParser("mol2.out")
 p1.parse(); p2.parse()
 ORCAParser.compare([p1, p2], "comparison.md")
@@ -95,7 +112,7 @@ ORCAParser.compare([p1, p2], "comparison.md")
 
 | Module | Data |
 |--------|------|
-| **metadata** | ORCA version, job name, functional, basis set, charge, multiplicity |
+| **metadata** | ORCA version, job name, functional, basis set, charge, multiplicity, DeltaSCF detection (ALPHACONF/BETACONF, IONIZEALPHA/IONIZEBETA, occupation vectors, MOM/IMOM) |
 | **geometry** | Cartesian coordinates (Å and a.u.), internal coordinates, symmetry |
 | **basis_set** | Basis set groups, atom mappings, shell count |
 | **scf** | Total energy, energy components, DFT data, convergence, spin expectation |
@@ -115,6 +132,7 @@ ORCAParser.compare([p1, p2], "comparison.md")
 | **dipole** | Dipole moment (electronic, nuclear, total), rotational constants |
 | **nbo** | NAO, NPA, Wiberg indices, Lewis structure, E(2) perturbation, NLMO |
 | **epr** | Zero-Field Splitting, g-tensor (with atom analysis), hyperfine coupling, EFG, quadrupole |
+| **geom_opt** | Per-cycle energies, convergence criteria (5 items), trust radii, geometries, internal coord extrema, RMSD (to initial, to previous, mass-weighted), optimization settings/tolerances, OPT/LooseOPT/TightOPT detection |
 
 ### Section Aliases
 
@@ -122,7 +140,7 @@ Use aliases on the CLI to select groups of related sections:
 
 | Alias | Expands to |
 |-------|------------|
-| `all` | All 15 modules (default) |
+| `all` | All 16 modules (default) |
 | `charges` | mulliken, loewdin, hirshfeld, mbis, chelpg |
 | `population` | mulliken, loewdin, mayer |
 | `mos` | orbital_energies, qro |
@@ -131,6 +149,7 @@ Use aliases on the CLI to select groups of related sections:
 | `dipole` | dipole |
 | `geometry` | geometry, basis_set |
 | `epr` | epr (ZFS, g-tensor, hyperfine/EFG) |
+| `opt` | geom_opt (optimization cycles, convergence, RMSD) |
 
 ## Output Formats
 
