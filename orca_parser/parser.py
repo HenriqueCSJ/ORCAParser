@@ -82,6 +82,16 @@ SECTION_ALIASES: Dict[str, List[str]] = {
     "opt":        ["geom_opt"],
 }
 
+_AUXILIARY_ATOM_FILE_RE = re.compile(
+    r"_atom\d+\.(?:out|log)$",
+    re.IGNORECASE,
+)
+
+
+def is_auxiliary_orca_file(path: str | Path) -> bool:
+    """Return True for ORCA helper atom/ECP files such as ``*_atom83.out``."""
+    return bool(_AUXILIARY_ATOM_FILE_RE.search(Path(path).name))
+
 
 def _resolve_sections(sections) -> Optional[set]:
     """Expand aliases and return the full set of section keys to run.
@@ -161,6 +171,12 @@ class ORCAParser:
         """
         with open(self.filepath, "r", encoding="utf-8", errors="replace") as fh:
             self._lines = [ln.rstrip("\n") for ln in fh.readlines()]
+
+        if is_auxiliary_orca_file(self.filepath):
+            raise ValueError(
+                "Auxiliary ORCA atom/ECP files are not included in parsing: "
+                f"{self.filepath.name}"
+            )
 
         if not self._is_orca_output():
             raise ValueError(
