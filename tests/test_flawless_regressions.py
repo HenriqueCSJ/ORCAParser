@@ -14,6 +14,7 @@ SP_SYM_OUT = REPO_ROOT / "sample_outs" / "N" / "SP_Sym" / "NC.out"
 SP_SYM_DELTA_OUT = REPO_ROOT / "sample_outs" / "N" / "SP_Sym_Delta" / "NC.out"
 TDDFT_SYM_OUT = REPO_ROOT / "sample_outs" / "R2SCAN-QIDH" / "F3CNO.out"
 TDDFT_NBO_OUT = REPO_ROOT / "sample_outs" / "Diox" / "TDDFT" / "RDB_vinyl_a_TDDFT_Diox.out"
+SCAN_OUT = REPO_ROOT / "sample_outs" / "Scan" / "F3CNO.out"
 
 
 @pytest.fixture(scope="session")
@@ -40,6 +41,13 @@ def tddft_sym_parser() -> ORCAParser:
 @pytest.fixture(scope="session")
 def tddft_nbo_parser() -> ORCAParser:
     parser = ORCAParser(TDDFT_NBO_OUT)
+    parser.parse()
+    return parser
+
+
+@pytest.fixture(scope="session")
+def surface_scan_parser() -> ORCAParser:
+    parser = ORCAParser(SCAN_OUT)
     parser.parse()
     return parser
 
@@ -268,3 +276,98 @@ def test_markdown_renders_natural_electron_configurations_and_cmo_character(
     assert "n(S17)" in text
     assert "pi*(C7-C8)" in text
     assert "CMO/NBO character" in text
+
+
+def test_surface_scan_is_parsed_without_fake_geom_opt(
+    surface_scan_parser: ORCAParser,
+) -> None:
+    data = surface_scan_parser.data
+    scan = data["surface_scan"]
+    parameter = scan["parameters"][0]
+    first_step = scan["steps"][0]
+    last_step = scan["steps"][-1]
+
+    assert data["metadata"]["calculation_type"] == "Relaxed Surface Scan"
+    assert data["context"]["is_surface_scan"] is True
+    assert "geom_opt" not in data
+
+    assert scan["mode"] == "single"
+    assert scan["n_parameters"] == 1
+    assert scan["n_constrained_optimizations"] == 37
+    assert parameter["kind"] == "D"
+    assert parameter["atoms"] == [5, 2, 0, 4]
+    assert parameter["start"] == pytest.approx(-180.0)
+    assert parameter["end"] == pytest.approx(360.0)
+    assert parameter["steps"] == 37
+
+    assert len(scan["steps"]) == 37
+    assert first_step["coordinate_values"][0] == pytest.approx(-180.0)
+    assert first_step["actual_energy_Eh"] == pytest.approx(-467.64138313)
+    assert first_step["optimized_xyz_file"] == "F3CNO.001.xyz"
+    assert last_step["coordinate_values"][0] == pytest.approx(360.0)
+    assert last_step["actual_energy_Eh"] == pytest.approx(-467.64286504)
+
+    sidecars = scan["sidecar_files"]
+    assert sidecars["actual_surface_dat"].endswith("F3CNO.relaxscanact.dat")
+    assert sidecars["scf_surface_dat"].endswith("F3CNO.relaxscanscf.dat")
+    assert sidecars["allxyz"].endswith("F3CNO.allxyz")
+    assert sidecars["allxyz_frame_count"] == 37
+
+
+def test_surface_scan_markdown_and_comparison_render(
+    tmp_path: Path,
+    surface_scan_parser: ORCAParser,
+) -> None:
+    markdown_path = tmp_path / "scan.md"
+    comparison_path = tmp_path / "scan_comparison.md"
+
+    surface_scan_parser.to_markdown(markdown_path)
+    ORCAParser.compare([surface_scan_parser], comparison_path)
+
+    text = markdown_path.read_text(encoding="utf-8")
+    comparison = comparison_path.read_text(encoding="utf-8")
+
+    assert "## Relaxed Surface Scan" in text
+    assert "**Constrained optimizations:** 37" in text
+    assert "D(5,2,0,4)" in text
+    assert "F3CNO.relaxscanact.dat" in text
+    assert "**Surface Profile**" in text
+    assert "-180.0000" in text
+    assert "360.0000" in text
+    assert "F3CNO.037.xyz" in text
+
+    assert "## Surface Scans" in comparison
+    assert "single" in comparison
+    assert "37" in comparison
+    assert "D(5,2,0,4) -180.0000->360.0000 (37)" in comparison
+
+
+def test_surface_scan_csv_exports(
+    tmp_path: Path,
+    surface_scan_parser: ORCAParser,
+) -> None:
+    out_dir = tmp_path / "scan_csv"
+    surface_scan_parser.to_csv(out_dir)
+
+    metadata_rows = _read_csv_rows(out_dir / "F3CNO_metadata.csv")
+    parameter_rows = _read_csv_rows(out_dir / "F3CNO_surface_scan_parameters.csv")
+    scan_rows = _read_csv_rows(out_dir / "F3CNO_surface_scan.csv")
+    summary_rows = _read_csv_rows(out_dir / "F3CNO_surface_scan_summary.csv")
+
+    assert metadata_rows[0]["is_surface_scan"] == "yes"
+    assert metadata_rows[0]["scan_mode"] == "single"
+    assert metadata_rows[0]["scan_parameters"] == "1"
+    assert metadata_rows[0]["scan_steps"] == "37"
+
+    assert parameter_rows[0]["label"] == "D(5,2,0,4)"
+    assert parameter_rows[0]["kind"] == "D"
+    assert parameter_rows[0]["atoms"] == "5,2,0,4"
+    assert parameter_rows[0]["steps"] == "37"
+
+    assert len(scan_rows) == 37
+    assert scan_rows[0]["coord_1_value"] == "-180.0"
+    assert scan_rows[0]["optimized_xyz_file"] == "F3CNO.001.xyz"
+    assert scan_rows[-1]["coord_1_value"] == "360.0"
+    assert scan_rows[-1]["optimized_xyz_file"] == "F3CNO.037.xyz"
+
+    assert summary_rows[0]["allxyz_frame_count"] == "37"

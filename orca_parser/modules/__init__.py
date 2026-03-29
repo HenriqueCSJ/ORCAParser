@@ -11,6 +11,7 @@ from .tddft import TDDFTModule
 from .nbo import NBOModule
 from .epr import EPRModule
 from .geom_opt import GeomOptModule
+from .surface_scan import SurfaceScanModule
 
 __all__ = [
     "MetadataModule", "GeometryModule", "BasisSetModule",
@@ -24,4 +25,5 @@ __all__ = [
     "NBOModule",
     "EPRModule",
     "GeomOptModule",
+    "SurfaceScanModule",
 ]

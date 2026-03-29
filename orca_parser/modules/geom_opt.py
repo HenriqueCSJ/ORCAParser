@@ -263,6 +263,9 @@ class GeomOptModule(BaseModule):
     name = "geom_opt"
 
     def parse(self, lines: list[str]) -> Optional[Dict[str, Any]]:
+        if self.context.get("is_surface_scan"):
+            return None
+
         # Detect whether this is a geometry optimization at all
         has_opt_cycle = any(_CYCLE_RE.search(ln) for ln in lines[:5000])
         if not has_opt_cycle:

@@ -125,6 +125,12 @@ def _render_molecule(
     if deltascf_section:
         blocks.append(f"{H2} DeltaSCF / Excited-State Target\n{deltascf_section}")
 
+    surface_scan = data.get("surface_scan")
+    if surface_scan:
+        surface_scan_section = _render_surface_scan_section(surface_scan)
+        if surface_scan_section:
+            blocks.append(f"{H2} Relaxed Surface Scan\n{surface_scan_section}")
+
     # -- Geometry optimization summary -----------------------------------
     geom_opt = data.get("geom_opt")
     if geom_opt:
@@ -542,6 +548,29 @@ def _render_comparison(datasets: List[Dict[str, Any]]) -> str:
                 for lbl, d in zip(labels, datasets):
                     rows.append((lbl, _compact_irrep_counts(d)))
             blocks.append("## Symmetry Occupations\n" + _table(rows))
+
+    if any(d.get("surface_scan") for d in datasets):
+        rows = [("", "mode", "parameters", "steps", "coordinates", "span (kcal/mol)")]
+        for lbl, d in zip(labels, datasets):
+            scan = d.get("surface_scan") or {}
+            parameters = scan.get("parameters") or []
+            coord_summary = "; ".join(
+                f"{parameter.get('label', '?')} "
+                f"{_f(parameter.get('start'))}->{_f(parameter.get('end'))} "
+                f"({parameter.get('steps', '?')})"
+                if parameter.get("mode") != "values"
+                else f"{parameter.get('label', '?')} [{len(parameter.get('values') or [])} values]"
+                for parameter in parameters
+            ) or "—"
+            rows.append((
+                lbl,
+                scan.get("mode", "—"),
+                str(scan.get("n_parameters", "—")),
+                str(scan.get("n_constrained_optimizations", "—")),
+                coord_summary,
+                _f(scan.get("actual_energy_span_kcal_mol")),
+            ))
+        blocks.append("## Surface Scans\n" + _table(rows))
 
     # ── Energy table ───────────────────────────────────────────────────────
     rows = [("", "E (Eh)", "⟨S²⟩", "ideal", "dipole (D)")]
@@ -1437,6 +1466,118 @@ def _render_basis_set_section(basis_set: Dict[str, Any]) -> str:
         for idx in sorted(counts):
             rows.append((str(idx), str(counts[idx])))
         lines.append("**Atom-to-group counts**\n" + _table(rows))
+
+    return "\n\n".join(lines)
+
+
+def _scan_surfaces_differ(surface_scan: Dict[str, Any]) -> bool:
+    """Whether the actual and SCF scan surfaces differ meaningfully."""
+    actual = surface_scan.get("surface_actual_energy") or []
+    scf = surface_scan.get("surface_scf_energy") or []
+    if not actual or not scf or len(actual) != len(scf):
+        return bool(scf)
+    for a_row, s_row in zip(actual, scf):
+        a_energy = a_row.get("energy_Eh")
+        s_energy = s_row.get("energy_Eh")
+        if a_energy is None or s_energy is None:
+            continue
+        if abs(a_energy - s_energy) > 1.0e-9:
+            return True
+    return False
+
+
+def _render_surface_scan_section(surface_scan: Dict[str, Any]) -> str:
+    """Compact relaxed surface scan summary for markdown reports."""
+    lines: List[str] = []
+
+    bits: List[str] = []
+    if surface_scan.get("mode"):
+        bits.append(f"**Mode:** {surface_scan['mode']}")
+    if surface_scan.get("n_parameters") is not None:
+        bits.append(f"**Parameters:** {surface_scan['n_parameters']}")
+    if surface_scan.get("n_constrained_optimizations") is not None:
+        bits.append(
+            f"**Constrained optimizations:** "
+            f"{surface_scan['n_constrained_optimizations']}"
+        )
+    if surface_scan.get("actual_energy_span_kcal_mol") is not None:
+        bits.append(
+            f"**Actual energy span:** "
+            f"{_f(surface_scan['actual_energy_span_kcal_mol'])} kcal/mol"
+        )
+    if surface_scan.get("scf_energy_span_kcal_mol") is not None and _scan_surfaces_differ(surface_scan):
+        bits.append(
+            f"**SCF energy span:** "
+            f"{_f(surface_scan['scf_energy_span_kcal_mol'])} kcal/mol"
+        )
+    if bits:
+        lines.append(" | ".join(bits))
+
+    parameters = surface_scan.get("parameters") or []
+    if parameters:
+        rows = [("label", "type", "atoms", "definition", "unit")]
+        for parameter in parameters:
+            atoms = ",".join(str(atom) for atom in parameter.get("atoms") or [])
+            if parameter.get("mode") == "values":
+                values = parameter.get("values") or []
+                definition = ", ".join(_f(value) for value in values)
+            else:
+                definition = (
+                    f"{_f(parameter.get('start'))} -> {_f(parameter.get('end'))} "
+                    f"({parameter.get('steps', '?')} steps)"
+                )
+            rows.append((
+                parameter.get("label", "?"),
+                parameter.get("coordinate_type", "?"),
+                atoms or "?",
+                definition,
+                parameter.get("unit", ""),
+            ))
+        lines.append("**Scan Coordinates**\n" + _table(rows))
+
+    sidecars = surface_scan.get("sidecar_files") or {}
+    sidecar_bits: List[str] = []
+    for key in ("actual_surface_dat", "scf_surface_dat", "allxyz", "xyzall", "trajectory_xyz"):
+        if sidecars.get(key):
+            sidecar_bits.append(f"{key}=`{Path(sidecars[key]).name}`")
+    if sidecars.get("allxyz_frame_count") is not None:
+        sidecar_bits.append(f"frames={sidecars['allxyz_frame_count']}")
+    if sidecar_bits:
+        lines.append("**Sidecar files:** " + "  ".join(sidecar_bits))
+
+    steps = surface_scan.get("steps") or []
+    if steps:
+        parameter_labels = steps[0].get("coordinate_labels") or [
+            parameter.get("label", f"coord {idx + 1}")
+            for idx, parameter in enumerate(parameters)
+        ]
+        header = ("step",) + tuple(parameter_labels) + ("E_actual (Eh)", "dE_actual (kcal/mol)")
+        include_scf = _scan_surfaces_differ(surface_scan) or any(
+            row.get("scf_energy_Eh") is not None for row in steps
+        )
+        if include_scf:
+            header += ("E_SCF (Eh)", "dE_SCF (kcal/mol)")
+        include_xyz = any(row.get("optimized_xyz_file") for row in steps)
+        if include_xyz:
+            header += ("xyz",)
+
+        rows: List[tuple] = [header]
+        for step in steps:
+            row = (
+                str(step.get("step", "")),
+                *tuple(_f(value) for value in (step.get("coordinate_values") or [])),
+                _f(step.get("actual_energy_Eh"), ".10f"),
+                _f(step.get("relative_actual_energy_kcal_mol")),
+            )
+            if include_scf:
+                row += (
+                    _f(step.get("scf_energy_Eh"), ".10f"),
+                    _f(step.get("relative_scf_energy_kcal_mol")),
+                )
+            if include_xyz:
+                row += (step.get("optimized_xyz_file", "—"),)
+            rows.append(row)
+        lines.append("**Surface Profile**\n" + _table(rows))
 
     return "\n\n".join(lines)
 

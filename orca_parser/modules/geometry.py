@@ -141,6 +141,13 @@ class MetadataModule(BaseModule):
                 break
         if input_keywords:
             data["input_keywords"] = input_keywords
+        is_surface_scan = (
+            any("Relaxed Surface Scan" in ln for ln in lines[:5000])
+            or self._input_contains_geom_scan(lines)
+        )
+        if is_surface_scan:
+            data["calculation_type"] = "Relaxed Surface Scan"
+            self.context["is_surface_scan"] = True
 
         # ── DeltaSCF detection and metadata ──────────────────────────
         # DeltaSCF converges SCF to an excited state (saddle point on the
@@ -240,6 +247,25 @@ class MetadataModule(BaseModule):
         self.context["hf_type"] = hf_type
 
         return data if data else None
+
+    def _input_contains_geom_scan(self, lines: List[str]) -> bool:
+        """Detect echoed ``%geom ... scan`` blocks in the ORCA input."""
+        in_geom = False
+        for ln in lines:
+            if "****END OF INPUT****" in ln:
+                break
+            m = re.match(r"^\|\s*\d+>\s*(.*)$", ln)
+            if not m:
+                continue
+            content = m.group(1).strip().lower()
+            if content.startswith("%geom"):
+                in_geom = True
+                continue
+            if in_geom and content == "scan":
+                return True
+            if in_geom and content == "end":
+                in_geom = False
+        return False
 
     def _parse_symmetry(self, lines: List[str]) -> Dict[str, Any]:
         """Extract ORCA symmetry metadata, keeping geometry and MO irreps distinct."""
