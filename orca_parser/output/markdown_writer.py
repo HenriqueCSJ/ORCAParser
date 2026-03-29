@@ -125,6 +125,10 @@ def _render_molecule(
     if deltascf_section:
         blocks.append(f"{H2} DeltaSCF / Excited-State Target\n{deltascf_section}")
 
+    excited_state_opt_section = _render_excited_state_opt_section(data)
+    if excited_state_opt_section:
+        blocks.append(f"{H2} Excited-State Geometry Optimization\n{excited_state_opt_section}")
+
     surface_scan = data.get("surface_scan")
     if surface_scan:
         surface_scan_section = _render_surface_scan_section(surface_scan)
@@ -493,6 +497,21 @@ def _render_comparison(datasets: List[Dict[str, Any]]) -> str:
                 _yes_no_unknown(deltascf.get("keep_initial_reference")),
             ))
         blocks.append("## DeltaSCF\n" + _table(rows))
+
+    if any(_is_excited_state_opt(d) for d in datasets):
+        rows = [("", "electronic state", "target", "input", "followiroot", "SOC grad", "final root")]
+        for lbl, d in zip(labels, datasets):
+            excopt = _get_excited_state_opt_data(d)
+            rows.append((
+                lbl,
+                _electronic_state_label(d) or "ground-state",
+                _excited_state_target_label(excopt) or "—",
+                f"%{excopt.get('input_block')}" if excopt.get("input_block") else "—",
+                _yes_no_unknown(excopt.get("followiroot")) if "followiroot" in excopt else "—",
+                _yes_no_unknown(excopt.get("socgrad")) if "socgrad" in excopt else "—",
+                str(excopt.get("final_root")) if excopt.get("final_root") is not None else "—",
+            ))
+        blocks.append("## Excited-State Optimization\n" + _table(rows))
 
     if any(_has_symmetry(d) for d in datasets):
         rows = [("", "UseSym", "point group", "reduced", "orbital irreps", "n_irreps", "initial guess")]
@@ -1326,11 +1345,18 @@ def _render_tddft_section(tddft: Dict[str, Any], data: Optional[Dict[str, Any]] 
     irrep_lookup = _build_orbital_irrep_lookup(render_data)
     cmo_lookup = _build_cmo_lookup(render_data)
     summary = tddft.get("summary", {})
+    excopt = _get_excited_state_opt_data(render_data)
     meta_bits = []
     if summary.get("input_block"):
         meta_bits.append(f"input `%{summary['input_block']}`")
     if summary.get("nroots") is not None:
         meta_bits.append(f"nroots={summary['nroots']}")
+    if excopt.get("target_root") is not None:
+        meta_bits.append(f"iroot={excopt['target_root']}")
+    if excopt.get("target_multiplicity"):
+        meta_bits.append(f"irootmult={excopt['target_multiplicity']}")
+    if "followiroot" in excopt:
+        meta_bits.append(f"followiroot={_yes_no_unknown(excopt.get('followiroot'))}")
     if summary.get("tda") is not None:
         meta_bits.append(f"tda={summary['tda']}")
     if summary.get("donto") is not None:
@@ -1922,10 +1948,50 @@ def _is_deltascf(data: Dict[str, Any]) -> bool:
     return bool(_get_deltascf_data(data) or str(data.get("metadata", {}).get("calculation_type", "")).lower() == "deltascf")
 
 
+def _get_excited_state_opt_data(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Return excited-state optimization metadata for CIS/TDDFT jobs."""
+    meta = data.get("metadata", {})
+    excopt = meta.get("excited_state_optimization")
+    if isinstance(excopt, dict) and excopt:
+        return dict(excopt)
+    tddft = data.get("tddft", {})
+    if isinstance(tddft, dict):
+        excopt = tddft.get("excited_state_optimization")
+        if isinstance(excopt, dict) and excopt:
+            return dict(excopt)
+    return {}
+
+
+def _is_excited_state_opt(data: Dict[str, Any]) -> bool:
+    """Whether the parsed job is an excited-state geometry optimization."""
+    return bool(_get_excited_state_opt_data(data))
+
+
+def _excited_state_target_label(excopt: Dict[str, Any]) -> str:
+    """Short state label such as S1/T2/root 3 for excited-state optimizations."""
+    if not excopt:
+        return ""
+    label = str(excopt.get("target_state_label") or "").strip()
+    if label:
+        return label
+    root = excopt.get("target_root")
+    if root is None:
+        root = excopt.get("final_root")
+    if root is None:
+        return ""
+    return f"root {root}"
+
+
 def _electronic_state_label(data: Dict[str, Any]) -> str:
-    """Short label describing whether this is a ground-state or DeltaSCF job."""
+    """Short label describing whether this is a ground-state or excited-state job."""
     if _is_deltascf(data):
         return "DeltaSCF excited-state"
+    excopt = _get_excited_state_opt_data(data)
+    if excopt:
+        target = _excited_state_target_label(excopt)
+        if target:
+            return f"Excited-state optimization ({target})"
+        return "Excited-state optimization"
     return ""
 
 
@@ -2238,6 +2304,90 @@ def _render_deltascf_section(data: Dict[str, Any]) -> str:
         lines.append(f"`Alpha target occupation:` {alpha_occ}")
     if beta_occ:
         lines.append(f"`Beta target occupation:` {beta_occ}")
+
+    return "\n\n".join(lines)
+
+
+def _render_excited_state_opt_section(data: Dict[str, Any]) -> str:
+    """Render CIS/TDDFT excited-state geometry-optimization metadata."""
+    excopt = _get_excited_state_opt_data(data)
+    if not excopt:
+        return ""
+
+    lines = [
+        "**This geometry optimization targets an excited state, not the ground-state surface.**",
+    ]
+
+    rows = [("field", "value")]
+    target = _excited_state_target_label(excopt)
+    if target:
+        rows.append(("Target state", target))
+    if excopt.get("target_root") is not None:
+        rows.append(("Target root", str(excopt["target_root"])))
+    if excopt.get("target_multiplicity"):
+        rows.append(("Target manifold", str(excopt["target_multiplicity"])))
+    if excopt.get("input_block"):
+        rows.append(("Input block", f"%{excopt['input_block']}"))
+    if excopt.get("input_nroots") is not None:
+        rows.append(("NRoots", str(excopt["input_nroots"])))
+    if "followiroot" in excopt:
+        rows.append(("Follow IRoot", _yes_no_unknown(excopt.get("followiroot"))))
+    if "firkeepfirstref" in excopt:
+        rows.append(("FIRKeepFirstRef", _yes_no_unknown(excopt.get("firkeepfirstref"))))
+    if "analytic_excited_state_gradients" in excopt:
+        rows.append((
+            "Analytic excited-state gradients",
+            _yes_no_unknown(excopt.get("analytic_excited_state_gradients")),
+        ))
+    if "socgrad" in excopt:
+        rows.append(("SOC gradient", _yes_no_unknown(excopt.get("socgrad"))))
+    if excopt.get("final_root") is not None:
+        rows.append(("Final root", str(excopt["final_root"])))
+    if excopt.get("final_state_of_interest") is not None:
+        rows.append(("Final state of interest", str(excopt["final_state_of_interest"])))
+    if excopt.get("input_electron_density"):
+        rows.append(("Input electron density", str(excopt["input_electron_density"])))
+    if excopt.get("cispre_job_title"):
+        rows.append(("CIS/TDDFT subjob", str(excopt["cispre_job_title"])))
+    if excopt.get("gradient_block_count") is not None:
+        rows.append(("Gradient evaluations", str(excopt["gradient_block_count"])))
+    lines.append(_table(rows))
+
+    threshold_rows = [("keyword", "value")]
+    for label, key in (
+        ("FIRENTHRESH (eV)", "firen_thresh_eV"),
+        ("FIRS2THRESH", "firs2_thresh"),
+        ("FIRSTHRESH", "firsthresh"),
+        ("FIRMINOVERLAP", "firminoverlap"),
+        ("FIRDYNOVERLAP", "firdynoverlap"),
+        ("FIRDYNOVERRATIO", "firdynoverratio"),
+    ):
+        value = excopt.get(key)
+        if value is None:
+            continue
+        if isinstance(value, list):
+            rendered = ", ".join(_f(item) for item in value)
+        elif isinstance(value, bool):
+            rendered = _yes_no_unknown(value)
+        else:
+            rendered = str(value)
+        threshold_rows.append((label, rendered))
+    if len(threshold_rows) > 1:
+        lines.append("**Root-Following Controls**\n" + _table(threshold_rows))
+
+    cycle_rows = [("cycle", "root", "state of interest", "DE (eV)", "E(tot) (Eh)", "followiroot", "density file")]
+    for record in (excopt.get("cycle_records") or [])[:12]:
+        cycle_rows.append((
+            str(record.get("optimization_cycle", "—")),
+            str(record.get("current_iroot") if record.get("current_iroot") is not None else record.get("root", "—")),
+            str(record.get("state_of_interest", "—")),
+            _f(record.get("delta_energy_eV")),
+            _f(record.get("total_energy_Eh"), ".6f"),
+            _yes_no_unknown(record.get("followiroot_runtime")) if "followiroot_runtime" in record else "—",
+            str(record.get("input_electron_density", "—")),
+        ))
+    if len(cycle_rows) > 1:
+        lines.append("**Optimization Root History**\n" + _table(cycle_rows))
 
     return "\n\n".join(lines)
 

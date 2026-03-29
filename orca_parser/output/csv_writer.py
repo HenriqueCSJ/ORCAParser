@@ -88,9 +88,51 @@ def _is_deltascf(data: Dict[str, Any]) -> bool:
     return str(data.get("metadata", {}).get("calculation_type", "")).lower() == "deltascf"
 
 
+def _get_excited_state_opt_data(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Return excited-state geometry-optimization metadata when available."""
+    meta = data.get("metadata", {})
+    excopt = meta.get("excited_state_optimization")
+    if isinstance(excopt, dict) and excopt:
+        return dict(excopt)
+    tddft = data.get("tddft", {})
+    if isinstance(tddft, dict):
+        excopt = tddft.get("excited_state_optimization")
+        if isinstance(excopt, dict) and excopt:
+            return dict(excopt)
+    return {}
+
+
+def _is_excited_state_opt(data: Dict[str, Any]) -> bool:
+    """Whether this parsed job is an excited-state geometry optimization."""
+    return bool(_get_excited_state_opt_data(data))
+
+
+def _excited_state_target_label(excopt: Dict[str, Any]) -> str:
+    """Compact excited-state target label such as S1/T2/root 3."""
+    if not excopt:
+        return ""
+    label = str(excopt.get("target_state_label") or "").strip()
+    if label:
+        return label
+    root = excopt.get("target_root")
+    if root is None:
+        root = excopt.get("final_root")
+    if root is None:
+        return ""
+    return f"root {root}"
+
+
 def _electronic_state_label(data: Dict[str, Any]) -> str:
     """Short electronic-state label for metadata exports."""
-    return "DeltaSCF excited-state" if _is_deltascf(data) else "Ground-state"
+    if _is_deltascf(data):
+        return "DeltaSCF excited-state"
+    excopt = _get_excited_state_opt_data(data)
+    if excopt:
+        target = _excited_state_target_label(excopt)
+        if target:
+            return f"Excited-state optimization ({target})"
+        return "Excited-state optimization"
+    return "Ground-state"
 
 
 def _is_surface_scan(data: Dict[str, Any]) -> bool:
@@ -187,6 +229,7 @@ def _write_metadata(data: Dict[str, Any], directory: Path, stem: str) -> List[Pa
 
     sym = _get_symmetry_data(data)
     deltascf = meta.get("deltascf") or {}
+    excopt = _get_excited_state_opt_data(data)
     geom = data.get("geometry", {})
     surface_scan = data.get("surface_scan") or {}
     row = {
@@ -217,6 +260,11 @@ def _write_metadata(data: Dict[str, Any], directory: Path, stem: str) -> List[Pa
         "deltascf_target": _format_deltascf_target(deltascf),
         "deltascf_metric": deltascf.get("aufbau_metric", ""),
         "keep_initial_reference": _bool_to_label(deltascf.get("keep_initial_reference")),
+        "excited_state_target": _excited_state_target_label(excopt),
+        "excited_state_input_block": excopt.get("input_block", ""),
+        "excited_state_followiroot": _bool_to_label(excopt.get("followiroot")),
+        "excited_state_socgrad": _bool_to_label(excopt.get("socgrad")),
+        "excited_state_final_root": excopt.get("final_root", ""),
         "input_keywords": " ".join(meta.get("input_keywords") or []),
     }
     fn = _write_csv(directory, f"{stem}_metadata.csv", [row], list(row.keys()))
@@ -319,6 +367,85 @@ def _write_deltascf(data: Dict[str, Any], directory: Path, stem: str) -> List[Pa
         files.append(_write_csv(
             directory, f"{stem}_deltascf_occupations.csv", target_rows,
             ["spin", "slot", "occupation"],
+        ))
+
+    return files
+
+
+def _write_excited_state_optimization(
+    data: Dict[str, Any], directory: Path, stem: str
+) -> List[Path]:
+    """Write excited-state geometry-optimization metadata and cycle history."""
+    excopt = _get_excited_state_opt_data(data)
+    if not excopt:
+        return []
+
+    files: List[Path] = []
+    summary_row = {
+        "electronic_state": _electronic_state_label(data),
+        "target_state": _excited_state_target_label(excopt),
+        "target_root": excopt.get("target_root", ""),
+        "target_multiplicity": excopt.get("target_multiplicity", ""),
+        "input_block": excopt.get("input_block", ""),
+        "input_nroots": excopt.get("input_nroots", ""),
+        "followiroot": _bool_to_label(excopt.get("followiroot")),
+        "firkeepfirstref": _bool_to_label(excopt.get("firkeepfirstref")),
+        "analytic_excited_state_gradients": _bool_to_label(
+            excopt.get("analytic_excited_state_gradients")
+        ),
+        "socgrad": _bool_to_label(excopt.get("socgrad")),
+        "final_root": excopt.get("final_root", ""),
+        "final_state_of_interest": excopt.get("final_state_of_interest", ""),
+        "gradient_block_count": excopt.get("gradient_block_count", ""),
+        "input_electron_density": excopt.get("input_electron_density", ""),
+        "cispre_job_title": excopt.get("cispre_job_title", ""),
+        "firen_thresh_eV": excopt.get("firen_thresh_eV", ""),
+        "firs2_thresh": excopt.get("firs2_thresh", ""),
+        "firsthresh": excopt.get("firsthresh", ""),
+        "firminoverlap": excopt.get("firminoverlap", ""),
+        "firdynoverlap": _bool_to_label(excopt.get("firdynoverlap")),
+        "firdynoverratio": _format_simple_vector(excopt.get("firdynoverratio")),
+        "root_follow_updates": _format_simple_vector(excopt.get("root_follow_updates")),
+    }
+    files.append(_write_csv(
+        directory,
+        f"{stem}_excited_state_optimization.csv",
+        [summary_row],
+        list(summary_row.keys()),
+    ))
+
+    cycle_records = excopt.get("cycle_records") or []
+    if cycle_records:
+        cycle_rows = []
+        for record in cycle_records:
+            cycle_rows.append({
+                "block_index": record.get("block_index", ""),
+                "optimization_cycle": record.get("optimization_cycle", ""),
+                "root": record.get("root", ""),
+                "current_iroot": record.get("current_iroot", ""),
+                "state_of_interest": record.get("state_of_interest", ""),
+                "delta_energy_Eh": record.get("delta_energy_Eh", ""),
+                "delta_energy_eV": record.get("delta_energy_eV", ""),
+                "total_energy_Eh": record.get("total_energy_Eh", ""),
+                "followiroot_runtime": _bool_to_label(record.get("followiroot_runtime")),
+                "input_electron_density": record.get("input_electron_density", ""),
+            })
+        files.append(_write_csv(
+            directory,
+            f"{stem}_excited_state_optimization_cycles.csv",
+            cycle_rows,
+            [
+                "block_index",
+                "optimization_cycle",
+                "root",
+                "current_iroot",
+                "state_of_interest",
+                "delta_energy_Eh",
+                "delta_energy_eV",
+                "total_energy_Eh",
+                "followiroot_runtime",
+                "input_electron_density",
+            ],
         ))
 
     return files
@@ -880,6 +1007,8 @@ def _write_tddft(data, directory, stem) -> List[Path]:
                 "manifold": state.get("manifold", ""),
                 "order_in_block": state.get("order_in_block"),
                 "state": state.get("state"),
+                "state_label": state.get("state_label", ""),
+                "symmetry": state.get("symmetry", ""),
                 "energy_au": state.get("energy_au"),
                 "energy_eV": state.get("energy_eV"),
                 "energy_cm1": state.get("energy_cm1"),
@@ -898,6 +1027,7 @@ def _write_tddft(data, directory, stem) -> List[Path]:
                     "method": state.get("method"),
                     "manifold": state.get("manifold", ""),
                     "state": state.get("state"),
+                    "state_label": state.get("state_label", ""),
                     "from_orbital": transition.get("from_orbital"),
                     "from_index": transition.get("from_index", ""),
                     "from_spin": transition.get("from_spin", ""),
@@ -912,7 +1042,7 @@ def _write_tddft(data, directory, stem) -> List[Path]:
             directory, f"{stem}_tddft_states.csv", state_rows,
             [
                 "block_index", "method", "manifold", "order_in_block",
-                "state", "energy_au", "energy_eV", "energy_cm1",
+                "state", "state_label", "symmetry", "energy_au", "energy_eV", "energy_cm1",
                 "wavelength_nm", "s_squared", "multiplicity",
                 "dominant_from_orbital", "dominant_to_orbital",
                 "dominant_weight", "dominant_coefficient",
@@ -923,7 +1053,7 @@ def _write_tddft(data, directory, stem) -> List[Path]:
             files.append(_write_csv(
                 directory, f"{stem}_tddft_transitions.csv", transition_rows,
                 [
-                    "block_index", "method", "manifold", "state",
+                    "block_index", "method", "manifold", "state", "state_label",
                     "from_orbital", "from_index", "from_spin",
                     "to_orbital", "to_index", "to_spin",
                     "weight", "coefficient",
@@ -1006,12 +1136,29 @@ def _write_tddft(data, directory, stem) -> List[Path]:
 
     total_energy_blocks = tddft.get("total_energy_blocks", [])
     if total_energy_blocks:
+        total_energy_rows = []
+        for block in total_energy_blocks:
+            total_energy_rows.append({
+                "block_index": block.get("block_index", ""),
+                "excitation_method": block.get("excitation_method", ""),
+                "root": block.get("root", ""),
+                "optimization_cycle": block.get("optimization_cycle", ""),
+                "state_of_interest": block.get("state_of_interest", ""),
+                "current_iroot": block.get("current_iroot", ""),
+                "scf_energy_Eh": block.get("scf_energy_Eh", ""),
+                "delta_energy_Eh": block.get("delta_energy_Eh", ""),
+                "total_energy_Eh": block.get("total_energy_Eh", ""),
+                "maximum_memory_MB": block.get("maximum_memory_MB", ""),
+                "followiroot_runtime": _bool_to_label(block.get("followiroot_runtime")),
+                "input_electron_density": block.get("input_electron_density", ""),
+            })
         files.append(_write_csv(
-            directory, f"{stem}_tddft_total_energy.csv", total_energy_blocks,
+            directory, f"{stem}_tddft_total_energy.csv", total_energy_rows,
             [
                 "block_index", "excitation_method", "root",
+                "optimization_cycle", "state_of_interest", "current_iroot",
                 "scf_energy_Eh", "delta_energy_Eh", "total_energy_Eh",
-                "maximum_memory_MB",
+                "maximum_memory_MB", "followiroot_runtime", "input_electron_density",
             ],
         ))
 
@@ -1288,6 +1435,7 @@ def write_csvs(data: Dict[str, Any], directory: Path) -> List[Path]:
         _write_geometry,
         _write_symmetry,
         _write_deltascf,
+        _write_excited_state_optimization,
         _write_orbital_energies,
         _write_qro,
         _write_mulliken,

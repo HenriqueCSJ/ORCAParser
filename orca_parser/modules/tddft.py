@@ -7,6 +7,7 @@ Extracts:
   - Natural transition orbital (NTO) blocks
   - Absorption and CD spectra tables
   - CIS/TDDFT total-energy summary
+  - Excited-state geometry-optimization targets and root-follow metadata
 """
 
 from __future__ import annotations
@@ -15,6 +16,9 @@ import re
 from typing import Any, Dict, List, Optional, Tuple
 
 from .base import BaseModule
+
+
+_HARTREE_TO_EV = 27.211386245988
 
 
 class TDDFTModule(BaseModule):
@@ -76,6 +80,30 @@ class TDDFTModule(BaseModule):
 
     _CENTER_OF_MASS_RE = re.compile(
         r"Center of mass\s*=\s*\(\s*([-\d.]+),\s*([-\d.]+),\s*([-\d.]+)\s*\)",
+        re.I,
+    )
+    _ANALYTIC_GRADIENT_RE = re.compile(
+        r"WARNING:\s*\((?:CIS/TDDFT|TDDFT/CIS)\)\s*:\s*Analytic excited state gradients requested",
+        re.I,
+    )
+    _GEOM_OPT_CYCLE_RE = re.compile(r"GEOMETRY OPTIMIZATION CYCLE\s+(\d+)", re.I)
+    _FOLLOW_IROOT_RE = re.compile(r"Follow IRoot\s+\.+\s+(\S+)", re.I)
+    _STATE_OF_INTEREST_RE = re.compile(r"State of interest\s+\.+\s+(\d+)", re.I)
+    _BLOCK_IROOT_RE = re.compile(r"^\s*IROOT\s+(\d+)\s*$", re.I)
+    _INPUT_ELECTRON_DENSITY_RE = re.compile(
+        r"Input electron density\s+\.+\s+(\S+)",
+        re.I,
+    )
+    _CISPRE_JOB_TITLE_RE = re.compile(
+        r"Job title:\s+ORCA Job:\s+(.+)$",
+        re.I,
+    )
+    _ROOT_UPDATE_RE = re.compile(
+        r"The IROOT now is:\s*(?:\.{3}\s*)?(\d+)",
+        re.I,
+    )
+    _EXCITED_STATE_GRADIENT_DONE_RE = re.compile(
+        r"EXCITED STATE GRADIENT DONE",
         re.I,
     )
     _TOTAL_ENERGY_HEADER = "CIS/TD-DFT TOTAL ENERGY"
@@ -165,6 +193,15 @@ class TDDFTModule(BaseModule):
             data["total_energy_blocks"] = total_energy_blocks
             data["total_energy"] = total_energy_blocks[-1]
 
+        excited_state_optimization = self._parse_excited_state_optimization(
+            lines=lines,
+            input_blocks=input_blocks,
+            excited_state_blocks=excited_state_blocks,
+            total_energy_blocks=total_energy_blocks,
+        )
+        if excited_state_optimization:
+            data["excited_state_optimization"] = excited_state_optimization
+
         if not data:
             return None
 
@@ -175,6 +212,15 @@ class TDDFTModule(BaseModule):
             spectra=spectra,
             total_energy_blocks=total_energy_blocks,
         )
+        if excited_state_optimization:
+            summary.update(
+                {
+                    "iroot": excited_state_optimization.get("target_root"),
+                    "irootmult": excited_state_optimization.get("target_multiplicity"),
+                    "followiroot": excited_state_optimization.get("followiroot"),
+                    "target_state_label": excited_state_optimization.get("target_state_label"),
+                }
+            )
         if summary:
             data["summary"] = summary
 
@@ -440,10 +486,154 @@ class TDDFTModule(BaseModule):
                     block["maximum_memory_MB"] = float(memory_match.group(1))
                     break
 
+            cycle_number = self._nearest_geometry_optimization_cycle(lines, idx)
+            if cycle_number is not None:
+                block["optimization_cycle"] = cycle_number
+
+            followiroot_runtime = self._nearest_followiroot_setting(lines, idx)
+            if followiroot_runtime is not None:
+                block["followiroot_runtime"] = followiroot_runtime
+
+            for line in lines[idx : idx + 320]:
+                state_match = self._STATE_OF_INTEREST_RE.search(line)
+                if state_match:
+                    block["state_of_interest"] = int(state_match.group(1))
+
+                iroot_match = self._BLOCK_IROOT_RE.match(line.strip())
+                if iroot_match:
+                    block["current_iroot"] = int(iroot_match.group(1))
+
+                density_match = self._INPUT_ELECTRON_DENSITY_RE.search(line)
+                if density_match:
+                    block["input_electron_density"] = density_match.group(1)
+
             if len(block) > 1:
                 blocks.append(block)
 
         return blocks
+
+    def _parse_excited_state_optimization(
+        self,
+        lines: List[str],
+        input_blocks: List[Dict[str, Any]],
+        excited_state_blocks: List[Dict[str, Any]],
+        total_energy_blocks: List[Dict[str, Any]],
+    ) -> Optional[Dict[str, Any]]:
+        has_geom_opt = (
+            self.find_line(lines, "Geometry Optimization Run") != -1
+            or any(self._GEOM_OPT_CYCLE_RE.search(line) for line in lines)
+        )
+        if not has_geom_opt:
+            return None
+
+        target_block = next(
+            (
+                block
+                for block in input_blocks
+                if block.get("block") in {"tddft", "cis"}
+            ),
+            None,
+        )
+        if not target_block:
+            return None
+
+        settings = target_block.get("settings", {})
+        has_explicit_target = (
+            "iroot" in settings
+            or "irootmult" in settings
+            or "followiroot" in settings
+            or "socgrad" in settings
+        )
+        analytic_gradients_requested = any(
+            self._ANALYTIC_GRADIENT_RE.search(line)
+            for line in lines[:5000]
+        )
+        gradient_count = sum(
+            1 for line in lines if self._EXCITED_STATE_GRADIENT_DONE_RE.search(line)
+        )
+        if not has_explicit_target and not analytic_gradients_requested and gradient_count == 0:
+            return None
+
+        first_block = excited_state_blocks[0] if excited_state_blocks else {}
+        final_block = excited_state_blocks[-1] if excited_state_blocks else {}
+        manifold = self._normalize_manifold(
+            settings.get("irootmult")
+            or final_block.get("manifold")
+            or first_block.get("manifold")
+        )
+        target_root = self.safe_int(settings.get("iroot"))
+        root_updates = [
+            int(match.group(1))
+            for line in lines
+            if (match := self._ROOT_UPDATE_RE.search(line))
+        ]
+        cycle_records = [
+            {
+                "block_index": block.get("block_index"),
+                "optimization_cycle": block.get("optimization_cycle"),
+                "root": block.get("root"),
+                "state_of_interest": block.get("state_of_interest"),
+                "current_iroot": block.get("current_iroot"),
+                "delta_energy_Eh": block.get("delta_energy_Eh"),
+                "delta_energy_eV": (
+                    block["delta_energy_Eh"] * _HARTREE_TO_EV
+                    if block.get("delta_energy_Eh") is not None
+                    else None
+                ),
+                "total_energy_Eh": block.get("total_energy_Eh"),
+                "followiroot_runtime": block.get("followiroot_runtime"),
+                "input_electron_density": block.get("input_electron_density"),
+            }
+            for block in total_energy_blocks
+        ]
+        job_titles = [
+            match.group(1).strip()
+            for line in lines
+            if (match := self._CISPRE_JOB_TITLE_RE.search(line))
+        ]
+
+        final_root = None
+        final_state_of_interest = None
+        final_density = None
+        if total_energy_blocks:
+            final_block_energy = total_energy_blocks[-1]
+            if final_block_energy.get("current_iroot") is not None:
+                final_root = final_block_energy.get("current_iroot")
+            elif final_block_energy.get("root") is not None:
+                final_root = final_block_energy.get("root")
+            final_state_of_interest = final_block_energy.get("state_of_interest")
+            final_density = final_block_energy.get("input_electron_density")
+
+        summary: Dict[str, Any] = {
+            "input_block": target_block.get("block"),
+            "input_nroots": settings.get("nroots"),
+            "target_root": target_root,
+            "target_multiplicity": manifold,
+            "target_state_label": self._format_state_label(manifold, target_root),
+            "followiroot": self._parse_bool_like(settings.get("followiroot")),
+            "firkeepfirstref": self._parse_bool_like(settings.get("firkeepfirstref")),
+            "firen_thresh_eV": settings.get("firenthresh"),
+            "firs2_thresh": settings.get("firs2thresh"),
+            "firsthresh": settings.get("firsthresh"),
+            "firminoverlap": settings.get("firminoverlap"),
+            "firdynoverlap": self._parse_bool_like(settings.get("firdynoverlap")),
+            "firdynoverratio": settings.get("firdynoverratio"),
+            "socgrad": self._parse_bool_like(settings.get("socgrad")),
+            "analytic_excited_state_gradients": analytic_gradients_requested,
+            "gradient_block_count": gradient_count,
+            "root_follow_updates": root_updates,
+            "final_root": final_root,
+            "final_state_of_interest": final_state_of_interest,
+            "input_electron_density": final_density,
+            "cispre_job_title": job_titles[-1] if job_titles else None,
+            "cycle_records": cycle_records,
+        }
+
+        return {
+            key: value
+            for key, value in summary.items()
+            if value not in (None, [], {})
+        }
 
     def _build_summary(
         self,
@@ -484,6 +674,24 @@ class TDDFTModule(BaseModule):
                 summary["delta_energy_Eh"] = final_energy["delta_energy_Eh"]
 
         return summary
+
+    def _nearest_geometry_optimization_cycle(
+        self, lines: List[str], index: int
+    ) -> Optional[int]:
+        for j in range(index, -1, -1):
+            match = self._GEOM_OPT_CYCLE_RE.search(lines[j])
+            if match:
+                return int(match.group(1))
+        return None
+
+    def _nearest_followiroot_setting(
+        self, lines: List[str], index: int
+    ) -> Optional[bool]:
+        for j in range(index, max(-1, index - 1200), -1):
+            match = self._FOLLOW_IROOT_RE.search(lines[j])
+            if match:
+                return self._parse_bool_like(match.group(1))
+        return None
 
     def _find_print_threshold(
         self, lines: List[str], start: int, stop: int
@@ -628,11 +836,73 @@ class TDDFTModule(BaseModule):
             return True
         if lowered in {"false", "no", "off"}:
             return False
+        if "," in cleaned:
+            parts = [part.strip() for part in cleaned.split(",")]
+            if parts and all(
+                re.fullmatch(r"[-+]?\d+", part)
+                or re.fullmatch(r"[-+]?\d*\.?\d+(?:[Ee][-+]?\d+)?", part)
+                for part in parts
+            ):
+                parsed: List[Any] = []
+                for part in parts:
+                    if re.fullmatch(r"[-+]?\d+", part):
+                        parsed.append(int(part))
+                    else:
+                        parsed.append(float(part))
+                return parsed
         if re.fullmatch(r"[-+]?\d+", cleaned):
             return int(cleaned)
         if re.fullmatch(r"[-+]?\d*\.?\d+(?:[Ee][-+]?\d+)?", cleaned):
             return float(cleaned)
         return cleaned
+
+    def _parse_bool_like(self, value: Any) -> Optional[bool]:
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return None
+        if isinstance(value, str):
+            lowered = value.strip().lower()
+            if lowered in {"true", "yes", "on"}:
+                return True
+            if lowered in {"false", "no", "off"}:
+                return False
+        return None
+
+    def _normalize_manifold(self, value: Any) -> Optional[str]:
+        if value is None:
+            return None
+        cleaned = str(value).strip().lower()
+        if not cleaned:
+            return None
+        if cleaned.endswith("s"):
+            cleaned = cleaned[:-1]
+        aliases = {
+            "singlet": "singlet",
+            "triplet": "triplet",
+            "sf": "spin-flip",
+            "spin-flip": "spin-flip",
+            "soc": "soc",
+        }
+        return aliases.get(cleaned, cleaned)
+
+    def _format_state_label(
+        self, manifold: Optional[str], root: Optional[int]
+    ) -> Optional[str]:
+        if root is None:
+            return None
+        prefix_map = {
+            "singlet": "S",
+            "triplet": "T",
+            "soc": "SOC",
+            "spin-flip": "SF",
+        }
+        prefix = prefix_map.get((manifold or "").lower())
+        if prefix == "SOC":
+            return f"{prefix}{root}"
+        if prefix:
+            return f"{prefix}{root}"
+        return f"root {root}"
 
     def _wavelength_from_cm1(self, energy_cm1: float) -> Optional[float]:
         if not energy_cm1:

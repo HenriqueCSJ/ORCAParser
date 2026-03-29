@@ -14,6 +14,7 @@ SP_SYM_OUT = REPO_ROOT / "sample_outs" / "N" / "SP_Sym" / "NC.out"
 SP_SYM_DELTA_OUT = REPO_ROOT / "sample_outs" / "N" / "SP_Sym_Delta" / "NC.out"
 TDDFT_SYM_OUT = REPO_ROOT / "sample_outs" / "R2SCAN-QIDH" / "F3CNO.out"
 TDDFT_NBO_OUT = REPO_ROOT / "sample_outs" / "Diox" / "TDDFT" / "RDB_vinyl_a_TDDFT_Diox.out"
+S1_OPT_OUT = REPO_ROOT / "sample_outs" / "Diox" / "S1" / "RDB_vinyl_a_S1_Diox.out"
 SCAN_OUT = REPO_ROOT / "sample_outs" / "Scan" / "F3CNO.out"
 
 
@@ -41,6 +42,13 @@ def tddft_sym_parser() -> ORCAParser:
 @pytest.fixture(scope="session")
 def tddft_nbo_parser() -> ORCAParser:
     parser = ORCAParser(TDDFT_NBO_OUT)
+    parser.parse()
+    return parser
+
+
+@pytest.fixture(scope="session")
+def s1_excited_opt_parser() -> ORCAParser:
+    parser = ORCAParser(S1_OPT_OUT)
     parser.parse()
     return parser
 
@@ -276,6 +284,101 @@ def test_markdown_renders_natural_electron_configurations_and_cmo_character(
     assert "n(S17)" in text
     assert "pi*(C7-C8)" in text
     assert "CMO/NBO character" in text
+
+
+def test_excited_state_optimization_metadata_is_promoted(
+    s1_excited_opt_parser: ORCAParser,
+) -> None:
+    data = s1_excited_opt_parser.data
+    meta = data["metadata"]
+    excopt = data["tddft"]["excited_state_optimization"]
+
+    assert meta["calculation_type"] == "Excited-State Geometry Optimization"
+    assert meta["excited_state_optimization"]["target_state_label"] == "S1"
+    assert excopt["input_block"] == "tddft"
+    assert excopt["input_nroots"] == 9
+    assert excopt["target_root"] == 1
+    assert excopt["target_multiplicity"] == "singlet"
+    assert excopt["target_state_label"] == "S1"
+    assert excopt["followiroot"] is False
+    assert excopt["analytic_excited_state_gradients"] is True
+    assert excopt["gradient_block_count"] == 14
+    assert excopt["final_root"] == 1
+    assert excopt["final_state_of_interest"] == 1
+    assert excopt["input_electron_density"].endswith(".cispre.singlet.iroot1")
+    assert excopt["cispre_job_title"].endswith(".cispre.singlet.iroot1")
+
+    cycle_records = excopt["cycle_records"]
+    assert len(cycle_records) == 14
+    assert cycle_records[0]["optimization_cycle"] == 1
+    assert cycle_records[0]["state_of_interest"] == 1
+    assert cycle_records[0]["current_iroot"] == 1
+    assert cycle_records[-1]["optimization_cycle"] == 13
+
+
+def test_excited_state_optimization_markdown_and_comparison(
+    tmp_path: Path,
+    s1_excited_opt_parser: ORCAParser,
+) -> None:
+    markdown_path = tmp_path / "s1_opt.md"
+    comparison_path = tmp_path / "s1_opt_comparison.md"
+
+    s1_excited_opt_parser.to_markdown(markdown_path)
+    ORCAParser.compare([s1_excited_opt_parser], comparison_path)
+
+    text = markdown_path.read_text(encoding="utf-8")
+    comparison = comparison_path.read_text(encoding="utf-8")
+
+    assert "state=Excited-state optimization (S1)" in text
+    assert "## Excited-State Geometry Optimization" in text
+    assert "Target state" in text
+    assert "S1" in text
+    assert "Follow IRoot" in text
+    assert "Optimization Root History" in text
+    assert "iroot=1" in text
+    assert "followiroot=no" in text
+
+    assert "## Excited-State Optimization" in comparison
+    assert "Excited-state optimization (S1)" in comparison
+    assert "%tddft" in comparison
+
+
+def test_excited_state_optimization_csv_exports(
+    tmp_path: Path,
+    s1_excited_opt_parser: ORCAParser,
+) -> None:
+    out_dir = tmp_path / "s1_opt_csv"
+    s1_excited_opt_parser.to_csv(out_dir)
+
+    metadata_rows = _read_csv_rows(out_dir / "RDB_vinyl_a_S1_Diox_metadata.csv")
+    summary_rows = _read_csv_rows(out_dir / "RDB_vinyl_a_S1_Diox_excited_state_optimization.csv")
+    cycle_rows = _read_csv_rows(out_dir / "RDB_vinyl_a_S1_Diox_excited_state_optimization_cycles.csv")
+    total_energy_rows = _read_csv_rows(out_dir / "RDB_vinyl_a_S1_Diox_tddft_total_energy.csv")
+
+    assert metadata_rows[0]["calculation_type"] == "Excited-State Geometry Optimization"
+    assert metadata_rows[0]["electronic_state"] == "Excited-state optimization (S1)"
+    assert metadata_rows[0]["excited_state_target"] == "S1"
+    assert metadata_rows[0]["excited_state_input_block"] == "tddft"
+    assert metadata_rows[0]["excited_state_followiroot"] == "no"
+    assert metadata_rows[0]["excited_state_final_root"] == "1"
+
+    assert summary_rows[0]["target_state"] == "S1"
+    assert summary_rows[0]["target_root"] == "1"
+    assert summary_rows[0]["target_multiplicity"] == "singlet"
+    assert summary_rows[0]["analytic_excited_state_gradients"] == "yes"
+    assert summary_rows[0]["followiroot"] == "no"
+    assert summary_rows[0]["gradient_block_count"] == "14"
+
+    assert cycle_rows[0]["optimization_cycle"] == "1"
+    assert cycle_rows[0]["current_iroot"] == "1"
+    assert cycle_rows[0]["state_of_interest"] == "1"
+    assert cycle_rows[-1]["optimization_cycle"] == "13"
+
+    assert total_energy_rows[0]["optimization_cycle"] == "1"
+    assert total_energy_rows[0]["state_of_interest"] == "1"
+    assert total_energy_rows[0]["current_iroot"] == "1"
+    assert total_energy_rows[0]["followiroot_runtime"] == "no"
+    assert total_energy_rows[0]["input_electron_density"].endswith(".cispre.singlet.iroot1")
 
 
 def test_surface_scan_is_parsed_without_fake_geom_opt(

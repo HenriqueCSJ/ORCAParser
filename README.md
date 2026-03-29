@@ -4,11 +4,13 @@ A modular Python parser for [ORCA](https://orcaforum.kofo.mpg.de/) quantum chemi
 
 ## Features
 
-- **18 parser modules** covering SCF energies, orbital data, implicit-solvation settings (CPCM/SMD/ALPB/COSMO-RS), TDDFT/CIS excited states and spectra, 6 population analysis schemes (Mulliken, Loewdin, Mayer, Hirshfeld, MBIS, CHELPG), dipole moments, NBO analysis, EPR properties, and geometry optimizations
+- **19 parser modules** covering SCF energies, orbital data, implicit-solvation settings (CPCM/SMD/ALPB/COSMO-RS), TDDFT/CIS excited states and spectra, excited-state geometry optimizations, 6 population analysis schemes (Mulliken, Loewdin, Mayer, Hirshfeld, MBIS, CHELPG), dipole moments, NBO analysis, EPR properties, geometry optimizations, and relaxed surface scans
 - **4 output formats**: JSON (with optional gzip), CSV (one table per section), HDF5, and AI-readable Markdown
 - Handles both **RHF/RKS** and **UHF/UKS** calculations with spin-resolved data
 - **Geometry optimization** tracking: per-cycle energies, convergence criteria, trust radii, Kabsch-aligned RMSD (initial/final, step-to-step, mass-weighted)
+- **Relaxed surface scan** support: scan coordinate definitions (`B`, `A`, `D`), simultaneous vs. nested scans, per-step energies, optimized `*.xyz` files, and detected `relaxscan*.dat` / `allxyz` sidecars
 - **DeltaSCF** metadata extraction: ALPHACONF/BETACONF, IONIZEALPHA/IONIZEBETA, occupation vectors, MOM/IMOM settings, with explicit excited-state labeling in Markdown and CSV outputs
+- **TDDFT/CIS excited-state optimization** support: `%tddft` / `%cis` targets (`IRoot`, `IRootMult`), `FOLLOWIROOT` / FIR controls, analytic excited-state gradient detection, per-cycle target-state history, and explicit `Sx` / `Tx` labeling in Markdown and CSV outputs
 - **EPR/EPR properties**: Zero-Field Splitting, g-tensor (with atomic breakdown), hyperfine coupling, EFG, quadrupole
 - **UseSym / point-group symmetry** support: detected point group, reduced/orbital irrep group, irrep occupations, and symmetry-perfected geometries when ORCA prints them
 - **Case-insensitive** keyword and section matching (ORCA is case-insensitive, so is this parser)
@@ -60,6 +62,9 @@ orca_parser water.out --markdown
 # DeltaSCF excited-state job: markdown/CSV call this out explicitly
 orca_parser excited_state.out --markdown --csv
 
+# TDDFT/CIS excited-state optimization to S1 with root-follow metadata
+orca_parser excited_opt.out --sections tddft opt --markdown --csv
+
 # Compare multiple molecules
 orca_parser water.out ethanol.out benzene.out --compare --outdir results/
 
@@ -71,6 +76,9 @@ orca_parser water.out --summary
 
 # Parse geometry optimization (per-cycle energies, convergence, RMSD)
 orca_parser geom_opt.out --sections opt --summary
+
+# Parse a relaxed surface scan and export its scan table
+orca_parser relaxscan.out --sections scan --markdown --csv
 
 # Extract EPR data (ZFS, g-tensor, hyperfine coupling)
 orca_parser radical.out --sections epr
@@ -103,6 +111,13 @@ if opt:
     print(f"Final energy: {opt['final_energy_Eh']} Eh")
     print(f"RMSD initial→final: {opt['rmsd_initial_to_final_ang']} Å")
 
+# Relaxed surface scan data
+scan = data.get("surface_scan", {})
+if scan:
+    print(f"Scan mode: {scan['mode']}")
+    print(f"Scan coordinates: {len(scan['parameters'])}")
+    print(f"Scan steps: {len(scan['steps'])}")
+
 # Multi-molecule comparison
 p1, p2 = ORCAParser("mol1.out"), ORCAParser("mol2.out")
 p1.parse(); p2.parse()
@@ -115,7 +130,7 @@ ORCAParser.compare([p1, p2], "comparison.md")
 
 | Module | Data |
 |--------|------|
-| **metadata** | ORCA version, job name, functional, basis set, charge, multiplicity, calculation type, DeltaSCF detection (ALPHACONF/BETACONF, IONIZEALPHA/IONIZEBETA, occupation vectors, MOM/IMOM), symmetry metadata |
+| **metadata** | ORCA version, job name, functional, basis set, charge, multiplicity, calculation type, DeltaSCF detection (ALPHACONF/BETACONF, IONIZEALPHA/IONIZEBETA, occupation vectors, MOM/IMOM), excited-state optimization metadata (`IRoot`, `IRootMult`, `FOLLOWIROOT`, FIR controls), symmetry metadata |
 | **geometry** | Cartesian coordinates (Å and a.u.), internal coordinates, symmetry-perfected geometry when printed by ORCA |
 | **basis_set** | Basis set groups, atom mappings, shell count |
 | **scf** | Total energy, energy components, DFT data, convergence, spin expectation |
@@ -127,7 +142,8 @@ ORCAParser.compare([p1, p2], "comparison.md")
 | **orbital_energies** | HOMO/LUMO, orbital energies (RHF/UHF), irrep labels, occupied orbitals per irrep |
 | **qro** | Quasi-Restricted Orbitals — DOMO/SOMO/VMO classification (UHF only) |
 | **solvation** | Implicit-solvation detection, model/solvent summary, `%cpcm`/`%cosmors` inputs, CPCM/SMD, ALPB, and COSMO-RS output blocks |
-| **tddft** | TDDFT/CIS input settings, excited-state configurations, NTOs, absorption/CD spectra, CIS/TDDFT total-energy summary |
+| **tddft** | TDDFT/CIS input settings, excited-state configurations, NTOs, absorption/CD spectra, CIS/TDDFT total-energy summary, excited-state optimization target/root-follow metadata |
+| **surface_scan** | Relaxed scan definitions, scan mode, per-step coordinates, actual/SCF surface energies, optimized XYZ files, detected sidecar trajectory files |
 | **mulliken** | Mulliken charges, spin populations, reduced orbital charges |
 | **loewdin** | Loewdin charges, spin populations, reduced orbital charges |
 | **mayer** | Mayer bond orders, atomic valence data (NA, ZA, QA, VA, BVA, FA) |
@@ -145,7 +161,7 @@ Use aliases on the CLI to select groups of related sections:
 
 | Alias | Expands to |
 |-------|------------|
-| `all` | All 18 modules (default) |
+| `all` | All 19 modules (default) |
 | `charges` | mulliken, loewdin, hirshfeld, mbis, chelpg |
 | `population` | mulliken, loewdin, mayer |
 | `mos` | orbital_energies, qro |
@@ -157,6 +173,7 @@ Use aliases on the CLI to select groups of related sections:
 | `geometry` | geometry, basis_set |
 | `epr` | epr (ZFS, g-tensor, hyperfine/EFG) |
 | `opt` | geom_opt (optimization cycles, convergence, RMSD) |
+| `scan` | surface_scan (relaxed scan coordinates, per-step energies, XYZ/sidecar files) |
 
 ## Output Formats
 
@@ -183,6 +200,11 @@ New metadata-oriented CSV tables include:
 - `*_geometry_symmetry.csv` when a symmetry-perfected geometry is available
 - `*_deltascf.csv`
 - `*_deltascf_occupations.csv`
+- `*_excited_state_optimization.csv`
+- `*_excited_state_optimization_cycles.csv`
+- `*_surface_scan_summary.csv`
+- `*_surface_scan_parameters.csv`
+- `*_surface_scan.csv`
 
 ```bash
 orca_parser water.out             # Creates water_csv/ with tables
@@ -201,7 +223,7 @@ orca_parser water.out --hdf5 --h5-level 9          # Max gzip compression
 
 ### Markdown
 
-AI-readable reports optimized for LLM-assisted paper writing. Includes publication-ready tables, spin diagnostics, frontier orbital analysis, explicit DeltaSCF excited-state labeling, and dedicated symmetry sections for UseSym jobs.
+AI-readable reports optimized for LLM-assisted paper writing. Includes publication-ready tables, spin diagnostics, frontier orbital analysis, explicit DeltaSCF excited-state labeling, TDDFT/CIS excited-state optimization sections with root-history tables, dedicated symmetry sections for UseSym jobs, and relaxed surface-scan summaries with per-step tables.
 
 ```bash
 orca_parser water.out --markdown                   # Per-file report
@@ -252,7 +274,10 @@ Misc:
 - Recursive directory parsing skips those helper files automatically.
 - Passing one directly to the parser raises a validation error instead of silently treating it as a calculation.
 - DeltaSCF jobs are reported as excited-state SCF calculations, not ordinary single-point calculations.
+- `%tddft` / `%cis` geometry optimizations with analytic excited-state gradients are reported as excited-state optimizations, not ordinary ground-state geometry optimizations.
+- For excited-state optimizations the parser exports the target state (`S1`, `T2`, etc.), `IRoot`, `IRootMult`, `FOLLOWIROOT`, FIR controls, and the per-step root/state-of-interest history when ORCA prints it.
 - UseSym jobs report the detected point group and the reduced/orbital irrep group separately when ORCA prints both.
+- Relaxed surface scans are reported as scan jobs, not ordinary geometry optimizations; scan coordinates and per-step energy profiles are exported separately.
 
 ## License
 

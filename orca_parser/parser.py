@@ -206,6 +206,7 @@ class ORCAParser:
             except Exception as exc:  # noqa: BLE001
                 results[f"{key}_parse_error"] = str(exc)
 
+        self._postprocess_results(results)
         results["context"] = dict(self.context)
         self.data = results
         return results
@@ -386,3 +387,20 @@ class ORCAParser:
                 ctx["n_atoms"] = len(symbols)
 
         self.context = ctx
+
+    def _postprocess_results(self, results: Dict[str, Any]) -> None:
+        """Promote cross-module derived metadata after all modules finish."""
+        meta = results.get("metadata")
+        if not isinstance(meta, dict):
+            return
+
+        tddft = results.get("tddft")
+        excited_state_opt: Dict[str, Any] = {}
+        if isinstance(tddft, dict):
+            excited_state_opt = dict(tddft.get("excited_state_optimization") or {})
+
+        if excited_state_opt:
+            meta["excited_state_optimization"] = excited_state_opt
+            calc_type = str(meta.get("calculation_type", "")).strip().lower()
+            if calc_type == "geometry optimization":
+                meta["calculation_type"] = "Excited-State Geometry Optimization"
