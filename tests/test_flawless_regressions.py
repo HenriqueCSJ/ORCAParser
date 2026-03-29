@@ -13,6 +13,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 SP_SYM_OUT = REPO_ROOT / "sample_outs" / "N" / "SP_Sym" / "NC.out"
 SP_SYM_DELTA_OUT = REPO_ROOT / "sample_outs" / "N" / "SP_Sym_Delta" / "NC.out"
 TDDFT_SYM_OUT = REPO_ROOT / "sample_outs" / "R2SCAN-QIDH" / "F3CNO.out"
+TDDFT_NBO_OUT = REPO_ROOT / "sample_outs" / "Diox" / "TDDFT" / "RDB_vinyl_a_TDDFT_Diox.out"
 
 
 @pytest.fixture(scope="session")
@@ -32,6 +33,13 @@ def sp_sym_delta_parser() -> ORCAParser:
 @pytest.fixture(scope="session")
 def tddft_sym_parser() -> ORCAParser:
     parser = ORCAParser(TDDFT_SYM_OUT)
+    parser.parse()
+    return parser
+
+
+@pytest.fixture(scope="session")
+def tddft_nbo_parser() -> ORCAParser:
+    parser = ORCAParser(TDDFT_NBO_OUT)
     parser.parse()
     return parser
 
@@ -207,3 +215,56 @@ def test_tddft_symmetry_and_dominant_excitations_are_preserved(
     assert "### CD Spectrum (Electric Dipole)" in text
     assert "### CD Spectrum (Velocity Dipole)" in text
     assert "0-1A' -> 1-1A\"" in text
+
+
+def test_nbo_electron_configurations_and_cmo_indices_are_aligned(
+    tddft_nbo_parser: ORCAParser,
+) -> None:
+    data = tddft_nbo_parser.data
+    nbo = data["nbo"]
+
+    first_config = nbo["electron_configurations"][0]
+    assert first_config["symbol"] == "C"
+    assert first_config["index"] == 1
+    assert first_config["atom_nbo_index"] == 1
+    assert first_config["atom_orca_index"] == 0
+
+    cmo_lookup = {
+        entry["nbo_mo_index"]: entry
+        for entry in nbo["cmo_analysis"]
+    }
+    homo_like = cmo_lookup[110]
+    assert homo_like["orca_orbital_index"] == 109
+
+    lead_labels = [contribution.get("character_label") for contribution in homo_like["nbo_contributions"][:3]]
+    assert lead_labels[0] == "n(S17)"
+    assert lead_labels[1] == "pi(C7-C8)"
+    assert homo_like["nbo_contributions"][0]["approx_percent"] == pytest.approx(100.0 * 0.534 * 0.534)
+
+    lumo_like = cmo_lookup[111]
+    assert lumo_like["orca_orbital_index"] == 110
+    assert lumo_like["nbo_contributions"][0]["character_label"] == "pi*(C7-C8)"
+
+
+def test_markdown_renders_natural_electron_configurations_and_cmo_character(
+    tmp_path: Path,
+    tddft_nbo_parser: ORCAParser,
+) -> None:
+    markdown_path = tmp_path / "tddft_nbo.md"
+    tddft_nbo_parser.to_markdown(markdown_path)
+    text = markdown_path.read_text(encoding="utf-8")
+
+    assert "### Natural Electron Configuration" in text
+    assert "NBO prints atom numbers as 1-based" in text
+    assert "NBO atom #" in text
+    assert "ORCA atom idx" in text
+    assert "Configuration" in text
+    assert "### Canonical MO Character (NBO CMO)" in text
+    assert "CMO MO N corresponds to ORCA MO N-1" in text
+    assert "ORCA MO" in text
+    assert "CMO MO" in text
+    assert "Leading character" in text
+    assert "Top contributions" in text
+    assert "n(S17)" in text
+    assert "pi*(C7-C8)" in text
+    assert "CMO/NBO character" in text

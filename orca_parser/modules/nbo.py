@@ -37,6 +37,115 @@ def _find_nbo_start(lines: List[str]) -> int:
     return -1
 
 
+def _nbo_to_orca_index(index: Optional[int]) -> Optional[int]:
+    """Convert NBO's 1-based printed indices to ORCA's 0-based convention."""
+    if index is None:
+        return None
+    return int(index) - 1
+
+
+def _annotate_atom_index(entry: Dict[str, Any], source_key: str, prefix: str) -> None:
+    """Preserve the printed NBO atom index and add the ORCA-aligned zero-based index."""
+    index = entry.get(source_key)
+    if not isinstance(index, int):
+        return
+    entry[f"{prefix}_nbo_index"] = index
+    entry[f"{prefix}_orca_index"] = _nbo_to_orca_index(index)
+
+
+def _annotate_nbo_orbital_entry(entry: Dict[str, Any]) -> Dict[str, Any]:
+    """Attach atom-index metadata and a compact orbital-character label."""
+    _annotate_atom_index(entry, "atom1_index", "atom1")
+    _annotate_atom_index(entry, "atom2_index", "atom2")
+
+    type_number = entry.get("type_number")
+    if isinstance(type_number, str) and type_number.isdigit():
+        type_number = int(type_number)
+
+    entry["character_class"] = _classify_nbo_character(entry.get("type"), type_number)
+    entry["character_label"] = _format_nbo_character_label(entry)
+    return entry
+
+
+def _classify_nbo_character(nbo_type: Optional[str], type_number: Optional[int]) -> Optional[str]:
+    """Map NBO orbital kinds to a compact chemical character label."""
+    if not nbo_type:
+        return None
+    clean = nbo_type.strip().upper()
+    if clean == "LP":
+        return "n"
+    if clean == "LP*":
+        return "n*"
+    if clean == "BD":
+        return "sigma" if type_number == 1 else "pi"
+    if clean == "BD*":
+        return "sigma*" if type_number == 1 else "pi*"
+    if clean == "CR":
+        return "core"
+    if clean == "RY":
+        return "rydberg"
+    return clean.lower()
+
+
+def _format_nbo_character_label(parsed: Dict[str, Any]) -> Optional[str]:
+    """Build a compact human-readable NBO character label."""
+    character = parsed.get("character_class")
+    atom1_symbol = parsed.get("atom1_symbol")
+    atom1_nbo_index = parsed.get("atom1_nbo_index")
+    atom2_symbol = parsed.get("atom2_symbol")
+    atom2_nbo_index = parsed.get("atom2_nbo_index")
+
+    if not character:
+        return None
+    if atom1_symbol and atom1_nbo_index is not None and atom2_symbol and atom2_nbo_index is not None:
+        return f"{character}({atom1_symbol}{atom1_nbo_index}-{atom2_symbol}{atom2_nbo_index})"
+    if atom1_symbol and atom1_nbo_index is not None:
+        return f"{character}({atom1_symbol}{atom1_nbo_index})"
+    return character
+
+
+def _parse_nbo_descriptor(desc: str) -> Dict[str, Any]:
+    """Parse a compact NBO descriptor like 'BD*( 2) C 7- C 8*'."""
+    cleaned = re.sub(r"\s+", " ", desc.strip())
+    parsed: Dict[str, Any] = {"raw": desc.strip(), "normalized": cleaned}
+
+    header_match = re.match(
+        r"(?P<nbo_type>[A-Za-z]{1,3}\*?)\s*\(\s*(?P<type_number>\d+)\)\s*(?P<tail>.+)",
+        cleaned,
+    )
+    if not header_match:
+        return parsed
+
+    nbo_type = header_match.group("nbo_type")
+    type_number = int(header_match.group("type_number"))
+    parsed["nbo_type"] = nbo_type
+    parsed["type_number"] = type_number
+
+    tail = header_match.group("tail").strip()
+    atom_match = re.match(
+        r"(?P<atom1_symbol>[A-Za-z]{1,3})\s*(?P<atom1_index>\d+)"
+        r"(?:\s*-\s*(?P<atom2_symbol>[A-Za-z]{1,3})\s*(?P<atom2_index>\d+))?"
+        r"(?P<tag>\*|\([^)]+\))?\s*$",
+        tail,
+    )
+    if atom_match:
+        atom1_index = int(atom_match.group("atom1_index"))
+        parsed["atom1_symbol"] = atom_match.group("atom1_symbol")
+        parsed["atom1_nbo_index"] = atom1_index
+        parsed["atom1_orca_index"] = _nbo_to_orca_index(atom1_index)
+        if atom_match.group("atom2_symbol") and atom_match.group("atom2_index"):
+            atom2_index = int(atom_match.group("atom2_index"))
+            parsed["atom2_symbol"] = atom_match.group("atom2_symbol")
+            parsed["atom2_nbo_index"] = atom2_index
+            parsed["atom2_orca_index"] = _nbo_to_orca_index(atom2_index)
+        if atom_match.group("tag"):
+            parsed["tag"] = atom_match.group("tag")
+
+    parsed["character_class"] = _classify_nbo_character(nbo_type, type_number)
+    parsed["character_label"] = _format_nbo_character_label(parsed)
+    return parsed
+
+
 def _parse_matrix(lines: List[str], start: int, n_atoms: int) -> Optional[List[List[float]]]:
     """Parse a symmetric n_atoms × n_atoms matrix (e.g. Wiberg, Mayer)."""
     matrix = []
@@ -75,6 +184,7 @@ def _parse_npa_summary(lines: List[str], start: int, is_uhf: bool) -> Optional[D
             }
             if is_uhf and m.group(8):
                 entry["spin_density"] = float(m.group(8))
+            _annotate_atom_index(entry, "index", "atom")
             atoms.append(entry)
     return atoms if atoms else None
 
@@ -89,7 +199,7 @@ def _parse_nao_occupancies(lines: List[str], start: int, has_spin: bool) -> List
                 ln,
             )
             if m:
-                naos.append({
+                entry = {
                     "index": int(m.group(1)),
                     "symbol": m.group(2),
                     "atom_no": int(m.group(3)),
@@ -97,7 +207,9 @@ def _parse_nao_occupancies(lines: List[str], start: int, has_spin: bool) -> List
                     "type": m.group(5),
                     "occupancy": float(m.group(6)),
                     "spin": float(m.group(7)),
-                })
+                }
+                _annotate_atom_index(entry, "atom_no", "atom")
+                naos.append(entry)
                 continue
         else:
             m = re.match(
@@ -105,7 +217,7 @@ def _parse_nao_occupancies(lines: List[str], start: int, has_spin: bool) -> List
                 ln,
             )
             if m:
-                naos.append({
+                entry = {
                     "index": int(m.group(1)),
                     "symbol": m.group(2),
                     "atom_no": int(m.group(3)),
@@ -113,7 +225,9 @@ def _parse_nao_occupancies(lines: List[str], start: int, has_spin: bool) -> List
                     "type": m.group(5),
                     "occupancy": float(m.group(6)),
                     "energy_Eh": float(m.group(7)),
-                })
+                }
+                _annotate_atom_index(entry, "atom_no", "atom")
+                naos.append(entry)
                 continue
 
         if "Summary" in ln or "Wiberg" in ln:
@@ -134,7 +248,7 @@ def _parse_nao_occupancies_v2(lines: List[str], start: int) -> List[Dict]:
             ln,
         )
         if m:
-            naos.append({
+            entry = {
                 "index": int(m.group(1)),
                 "symbol": m.group(2),
                 "atom_no": int(m.group(3)),
@@ -142,7 +256,9 @@ def _parse_nao_occupancies_v2(lines: List[str], start: int) -> List[Dict]:
                 "type": m.group(5),
                 "occupancy": float(m.group(6)),
                 "energy_or_spin": float(m.group(7)),
-            })
+            }
+            _annotate_atom_index(entry, "atom_no", "atom")
+            naos.append(entry)
         elif naos and ("Summary" in ln or "Wiberg" in ln or "NBI" in ln):
             break
     return naos
@@ -233,6 +349,7 @@ def _parse_nbo_lewis(lines: List[str], start: int) -> List[Dict]:
             if m.group(7):  # bond: has second atom
                 current["atom2_symbol"] = m.group(8)
                 current["atom2_index"] = int(m.group(9))
+            _annotate_nbo_orbital_entry(current)
 
             # Hybridization on same line
             hyb = re.findall(r"([spdf])\s*\(([\d.]+)%\)", ln)
@@ -252,12 +369,14 @@ def _parse_nbo_lewis(lines: List[str], start: int) -> List[Dict]:
                 pol_key = f"polarization_atom{len(current.get('polarization', [])) + 1}"
                 if "polarization" not in current:
                     current["polarization"] = []
-                current["polarization"].append({
+                pol_entry = {
                     "percent": float(m_pol.group(1)),
                     "coefficient": float(m_pol.group(2)),
                     "symbol": m_pol.group(3),
                     "atom_index": int(m_pol.group(4)),
-                })
+                }
+                _annotate_atom_index(pol_entry, "atom_index", "atom")
+                current["polarization"].append(pol_entry)
 
     if current:
         nbos.append(current)
@@ -287,6 +406,7 @@ def _parse_nbo_summary(lines: List[str], start: int) -> List[Dict]:
             if m.group(6):
                 entry["atom2_symbol"] = m.group(6)
                 entry["atom2_index"] = int(m.group(7))
+            _annotate_nbo_orbital_entry(entry)
             entries.append(entry)
         elif "----" in ln and entries:
             break
@@ -427,12 +547,14 @@ def _parse_nlmo_hybridization(lines: List[str], start: int) -> List[Dict]:
             m2 = re.match(r"\s+([\d.]+)%\s+(\w+)\s+(\d+)\s+(.+)", ln)
             if m2:
                 hyb = re.findall(r"([spdf])\s*\(([\d.]+)%\)", m2.group(4))
-                current["contributions"].append({
+                contribution = {
                     "percent": float(m2.group(1)),
                     "symbol": m2.group(2),
                     "atom_index": int(m2.group(3)),
                     "hybridization": [{"orbital": h[0], "percent": float(h[1])} for h in hyb],
-                })
+                }
+                _annotate_atom_index(contribution, "atom_index", "atom")
+                current["contributions"].append(contribution)
 
         if "Atom I" in ln or "Linear NLMO" in ln or "NBO/NLMO STERIC" in ln:
             if current:
@@ -503,8 +625,11 @@ def _parse_cmo_analysis(lines: List[str], start: int) -> List[Dict]:
         if m:
             if current:
                 cmos.append(current)
+            mo_index = int(m.group(1))
             current = {
-                "mo_index": int(m.group(1)),
+                "mo_index": mo_index,
+                "nbo_mo_index": mo_index,
+                "orca_orbital_index": mo_index - 1,
                 "type": m.group(2),
                 "energy_au": float(m.group(3)),
                 "nbo_contributions": [],
@@ -515,11 +640,16 @@ def _parse_cmo_analysis(lines: List[str], start: int) -> List[Dict]:
             # Contribution: "               -1.000*[  1]: CR ( 1) O 1(cr)"
             m2 = re.match(r"\s+([-\d.]+)\*\[\s*(\d+)\]:\s+(.+)", ln)
             if m2:
-                current["nbo_contributions"].append({
-                    "coefficient": float(m2.group(1)),
+                coefficient = float(m2.group(1))
+                contribution = {
+                    "coefficient": coefficient,
+                    "weight": coefficient * coefficient,
+                    "approx_percent": 100.0 * coefficient * coefficient,
                     "nbo_index": int(m2.group(2)),
                     "nbo_desc": m2.group(3).strip(),
-                })
+                }
+                contribution.update(_parse_nbo_descriptor(contribution["nbo_desc"]))
+                current["nbo_contributions"].append(contribution)
 
         if "Molecular Orbital Atom-Atom Bonding" in ln or "SECOND ORDER PERTURBATION" in ln:
             if current:
@@ -535,8 +665,11 @@ def _parse_cmo_bonding_character(lines: List[str], start: int) -> List[Dict]:
     for ln in lines[start:]:
         m = re.match(r"\s+(\d+)\((o|v)\)\s+.*?(\d+\.\d+)\(b\)\s+(\d+\.\d+)\(n\)\s+(\d+\.\d+)\(a\)", ln)
         if m:
+            mo_index = int(m.group(1))
             entries.append({
-                "mo_index": int(m.group(1)),
+                "mo_index": mo_index,
+                "nbo_mo_index": mo_index,
+                "orca_orbital_index": mo_index - 1,
                 "type": "occ" if m.group(2).lower() == "o" else "vir",
                 "bonding_frac": float(m.group(3)),
                 "nonbonding_frac": float(m.group(4)),
@@ -568,6 +701,7 @@ def _parse_nho_directionality(lines: List[str], start: int) -> List[Dict]:
             if m.group(6):
                 entry["atom2_symbol"] = m.group(6)
                 entry["atom2_index"] = int(m.group(7))
+            _annotate_nbo_orbital_entry(entry)
             entries.append(entry)
         elif "NHO interhybrid" in ln or "CMO:" in ln:
             break
@@ -974,13 +1108,15 @@ class NBOModule(BaseModule):
         for ln in lines[start:]:
             m = re.match(r"\s+(\d+)\s+(\w+)\s+(\d+)\s+(\w+)\s+([-\d.]+)", ln)
             if m:
-                pops.append({
+                entry = {
                     "ao_index": int(m.group(1)),
                     "symbol": m.group(2),
                     "atom_no": int(m.group(3)),
                     "angular": m.group(4),
                     "population": float(m.group(5)),
-                })
+                }
+                _annotate_atom_index(entry, "atom_no", "atom")
+                pops.append(entry)
             elif "* Total *" in ln or "Mayer" in ln:
                 break
         return pops
@@ -991,11 +1127,13 @@ class NBOModule(BaseModule):
         for ln in lines[start:]:
             m = re.match(r"\s+(\d+)\.\s+(\w+)((?:\s+[\d.]+)+)", ln)
             if m:
-                matrix.append({
+                entry = {
                     "atom": int(m.group(1)),
                     "symbol": m.group(2),
                     "values": [float(v) for v in m.group(3).split()],
-                })
+                }
+                _annotate_atom_index(entry, "atom", "atom")
+                matrix.append(entry)
             elif matrix and ln.strip() == "":
                 break
         return matrix
@@ -1006,11 +1144,13 @@ class NBOModule(BaseModule):
         for ln in lines[start:]:
             m = re.match(r"\s+(\d+)\.\s+(\w+)\s+([\d.]+)", ln)
             if m:
-                vals.append({
+                entry = {
                     "atom": int(m.group(1)),
                     "symbol": m.group(2),
                     "valency": float(m.group(3)),
-                })
+                }
+                _annotate_atom_index(entry, "atom", "atom")
+                vals.append(entry)
             elif vals and ln.strip() == "":
                 break
         return vals
@@ -1021,11 +1161,13 @@ class NBOModule(BaseModule):
         for ln in lines[start:]:
             m = re.match(r"\s+(\w+)\s+(\d+)\s+(.+)", ln)
             if m:
-                configs.append({
+                entry = {
                     "symbol": m.group(1),
                     "index": int(m.group(2)),
                     "configuration": m.group(3).strip(),
-                })
+                }
+                _annotate_atom_index(entry, "index", "atom")
+                configs.append(entry)
             elif ln.strip() == "" and configs:
                 break
         return configs
@@ -1039,7 +1181,7 @@ class NBOModule(BaseModule):
                 ln,
             )
             if m:
-                atoms.append({
+                entry = {
                     "symbol": m.group(1), "index": int(m.group(2)),
                     "natural_charge": float(m.group(3)),
                     "core_pop": float(m.group(4)),
@@ -1047,7 +1189,9 @@ class NBOModule(BaseModule):
                     "rydberg_pop": float(m.group(6)),
                     "total_pop": float(m.group(7)),
                     "spin_density": float(m.group(8)),
-                })
+                }
+                _annotate_atom_index(entry, "index", "atom")
+                atoms.append(entry)
             elif "====" in ln:
                 break
         return atoms
@@ -1061,13 +1205,15 @@ class NBOModule(BaseModule):
                 ln,
             )
             if m:
-                naos.append({
+                entry = {
                     "index": int(m.group(1)), "symbol": m.group(2),
                     "atom_no": int(m.group(3)), "angular": m.group(4),
                     "type": m.group(5),
                     "occupancy": float(m.group(6)),
                     "spin": float(m.group(7)),
-                })
+                }
+                _annotate_atom_index(entry, "atom_no", "atom")
+                naos.append(entry)
             elif naos and ("Summary" in ln or "Wiberg" in ln or "Alpha spin" in ln):
                 break
         return naos
