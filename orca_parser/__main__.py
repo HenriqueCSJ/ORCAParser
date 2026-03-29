@@ -13,6 +13,12 @@ Notes
     during recursive discovery and rejected if passed directly.
   * Markdown and CSV exports explicitly distinguish DeltaSCF excited-state
     jobs from ordinary ground-state single-points.
+  * `%tddft` / `%cis` excited-state geometry optimizations are reported as
+    excited-state optimization jobs, including target-state and root-follow
+    metadata (`IRoot`, `IRootMult`, `FOLLOWIROOT`, FIR controls).
+  * Relaxed surface scans are parsed as scan jobs, not collapsed into a
+    single geometry optimization. Scan coordinates, per-step energies, and
+    discovered ``relaxscan*.dat`` / ``allxyz`` sidecars are exported.
   * For UseSym jobs, symmetry metadata includes the detected point group,
     reduced/orbital irrep group, irrep occupations, and symmetry-perfected
     geometry when ORCA prints it.
@@ -29,6 +35,7 @@ Section aliases
   geometry   geometry, basis_set
   epr        epr (ZFS, g-tensor, hyperfine/EFG)
   opt        geom_opt (optimization cycles, convergence, RMSD)
+  scan       surface_scan (relaxed scan coordinates, per-step energies)
 
   Plus any individual section name: scf, mulliken, mayer, chelpg, ...
   Core sections (metadata, geometry, basis_set, scf) are always included.
@@ -83,8 +90,14 @@ Examples
   # Parse geometry optimization data (per-cycle energies, convergence, RMSD)
   orca_parser geom_opt.out --sections opt --summary
 
+  # Parse a relaxed surface scan and export its scan table
+  orca_parser relaxscan.out --sections scan --markdown --csv
+
   # DeltaSCF excited-state jobs are called out explicitly in markdown/CSV
   orca_parser excited_state.out --markdown --csv
+
+  # TDDFT/CIS excited-state optimization (for example S1)
+  orca_parser excited_opt.out --sections tddft opt --markdown --csv
 """
 
 import argparse
@@ -101,7 +114,8 @@ def parse_args():
         description=(
             "Parse ORCA quantum chemistry output files into JSON, CSV, "
             "HDF5, and Markdown. Handles ground-state, DeltaSCF excited-state, "
-            "UseSym/symmetry-aware, EPR, TDDFT, and geometry-optimization jobs."
+            "TDDFT/CIS excited-state optimization, UseSym/symmetry-aware, "
+            "EPR, relaxed surface-scan, and geometry-optimization jobs."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
@@ -116,7 +130,7 @@ def parse_args():
     p.add_argument("--sections", nargs="+", metavar="SEC", default=None,
                    help="Sections / aliases to parse (default: all). "
                         "Examples: --sections charges mos dipole, "
-                        "--sections epr, --sections opt")
+                        "--sections epr, --sections opt, --sections scan")
 
     # ── Output format flags ─────────────────────────────────────────
     p.add_argument("--json",    dest="write_json", action="store_true",  default=True,
@@ -133,7 +147,9 @@ def parse_args():
                    help="Disable HDF5 output")
     p.add_argument("--markdown", dest="write_markdown", action="store_true",  default=False,
                    help="Write compact AI-readable markdown report (.md) "
-                        "with symmetry and DeltaSCF state labeling")
+                        "with symmetry, DeltaSCF / TDDFT excited-state "
+                        "labeling, root-follow summaries, and surface-scan "
+                        "summaries")
     p.add_argument("--no-markdown", dest="write_markdown", action="store_false",
                    help="Disable markdown output")
     p.add_argument("--compare",  dest="write_compare",  action="store_true",  default=False,
@@ -164,7 +180,8 @@ def parse_args():
                         "for directory/compare mode, the chosen output root)")
     p.add_argument("--summary", action="store_true",
                    help="Print a human-readable summary to stdout, including "
-                        "calculation type and basic symmetry/spin diagnostics")
+                        "calculation type, basic symmetry/spin diagnostics, "
+                        "and scan info when applicable")
     p.add_argument("--quiet", action="store_true",
                    help="Suppress progress messages")
 
@@ -211,6 +228,16 @@ def _print_summary(data: dict, path: Path) -> None:
     print(f"  Basis        : {meta.get('basis_set', 'N/A')}")
     print(f"  Charge/Mult  : {meta.get('charge', 'N/A')} / {meta.get('multiplicity', 'N/A')}")
     print(f"  Symmetry     : {'yes' if ctx.get('has_symmetry') else 'no'}")
+    excopt = meta.get("excited_state_optimization", {})
+    if excopt:
+        label = excopt.get("target_state_label") or excopt.get("target_root")
+        if label:
+            print(f"  Excited root : {label}")
+        if excopt.get("input_block"):
+            print(f"  ES method    : %{excopt['input_block']}")
+        if "followiroot" in excopt:
+            follow = "yes" if excopt.get("followiroot") else "no"
+            print(f"  Follow IRoot : {follow}")
 
     scf = data.get("scf", {})
     if scf:
@@ -247,6 +274,15 @@ def _print_summary(data: dict, path: Path) -> None:
             print(f"  Opt energy   : {gopt['final_energy_Eh']:.10f} Eh")
         if gopt.get("rmsd_initial_to_final_ang") is not None:
             print(f"  RMSD i→f     : {gopt['rmsd_initial_to_final_ang']:.6f} Å")
+
+    scan = data.get("surface_scan", {})
+    if scan:
+        mode = scan.get("mode", "N/A")
+        n_params = scan.get("n_parameters", 0)
+        n_steps = len(scan.get("steps", []))
+        print(f"  Scan mode    : {mode}  ({n_params} coordinate(s), {n_steps} step(s))")
+        if scan.get("energy_span_kcal_mol") is not None:
+            print(f"  Scan span    : {scan['energy_span_kcal_mol']:.4f} kcal/mol")
 
     for name, key in [("Mulliken", "mulliken"), ("Hirshfeld", "hirshfeld"),
                       ("MBIS", "mbis"), ("CHELPG", "chelpg")]:
