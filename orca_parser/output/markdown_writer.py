@@ -348,6 +348,14 @@ def _render_molecule(
                 rows.append(tuple(row))
             blocks.append(f"{H3} NPA Charges\n" + _table(rows))
 
+        electron_config_section = _render_natural_electron_configuration(nbo, is_uhf)
+        if electron_config_section:
+            blocks.append(f"{H3} Natural Electron Configuration\n" + electron_config_section)
+
+        cmo_section = _render_cmo_analysis_section(nbo, data)
+        if cmo_section:
+            blocks.append(f"{H3} Canonical MO Character (NBO CMO)\n" + cmo_section)
+
         # ── Alpha and Beta NPA (UHF) ─────────────────────────────────────
         if is_uhf:
             for spin_key, label in [("alpha_spin", "α"), ("beta_spin", "β")]:
@@ -811,6 +819,181 @@ def _format_transition_with_irreps(
     return f"{from_label} -> {to_label}".strip()
 
 
+def _build_cmo_lookup(data: Dict[str, Any]) -> Dict[int, Dict[str, Any]]:
+    """Build a lookup from ORCA orbital index to NBO CMO entry."""
+    lookup: Dict[int, Dict[str, Any]] = {}
+    nbo = data.get("nbo", {})
+    for cmo in nbo.get("cmo_analysis") or []:
+        index = cmo.get("orca_orbital_index")
+        if index is None and cmo.get("mo_index") is not None:
+            try:
+                index = int(cmo["mo_index"]) - 1
+            except (TypeError, ValueError):
+                index = None
+        if index is None:
+            continue
+        lookup[int(index)] = cmo
+    return lookup
+
+
+def _aggregate_cmo_character(entry: Dict[str, Any]) -> List[tuple[str, float]]:
+    """Aggregate NBO CMO contributions by compact orbital-character label."""
+    totals: Dict[str, float] = {}
+    for contribution in entry.get("nbo_contributions") or []:
+        label = contribution.get("character_label") or contribution.get("nbo_desc")
+        if not label:
+            continue
+        percent = contribution.get("approx_percent")
+        if percent is None:
+            coefficient = contribution.get("coefficient")
+            try:
+                percent = 100.0 * float(coefficient) * float(coefficient)
+            except (TypeError, ValueError):
+                percent = 0.0
+        totals[str(label)] = totals.get(str(label), 0.0) + float(percent)
+    return sorted(totals.items(), key=lambda item: item[1], reverse=True)
+
+
+def _summarize_cmo_character(
+    entry: Optional[Dict[str, Any]],
+    limit: int = 2,
+    with_percent: bool = False,
+) -> str:
+    """Summarize the dominant NBO character of a canonical MO."""
+    if not entry:
+        return "â€”"
+    ordered = _aggregate_cmo_character(entry)
+    if not ordered:
+        return "â€”"
+    pieces = []
+    for label, percent in ordered[:limit]:
+        if with_percent:
+            pieces.append(f"{label} {percent:.1f}%")
+        else:
+            pieces.append(label)
+    return "; ".join(pieces) if with_percent else " + ".join(pieces)
+
+
+def _collect_relevant_cmo_indices(
+    data: Dict[str, Any],
+    cmo_lookup: Dict[int, Dict[str, Any]],
+    state_limit: int = 10,
+    frontier_window: int = 8,
+) -> List[int]:
+    """Choose the most relevant canonical orbitals to display."""
+    indices: List[int] = []
+    seen: set[int] = set()
+
+    tddft = data.get("tddft", {})
+    final_block = tddft.get("final_excited_state_block")
+    if not final_block:
+        blocks = tddft.get("excited_state_blocks", [])
+        final_block = blocks[-1] if blocks else None
+
+    if final_block:
+        for state in (final_block.get("states") or [])[:state_limit]:
+            dominant = max(
+                state.get("transitions", []),
+                key=lambda item: item.get("weight", 0.0),
+                default={},
+            )
+            for key in ("from_index", "to_index"):
+                value = dominant.get(key)
+                if value is None:
+                    continue
+                try:
+                    index = int(value)
+                except (TypeError, ValueError):
+                    continue
+                if index in cmo_lookup and index not in seen:
+                    indices.append(index)
+                    seen.add(index)
+        if indices:
+            return sorted(indices)
+
+    occupied = sorted(index for index, cmo in cmo_lookup.items() if cmo.get("type") == "occ")
+    virtual = sorted(index for index, cmo in cmo_lookup.items() if cmo.get("type") == "vir")
+    fallback = occupied[-frontier_window:] + virtual[:frontier_window]
+    return [index for index in fallback if index in cmo_lookup]
+
+
+def _render_natural_electron_configuration(nbo: Dict[str, Any], is_uhf: bool) -> str:
+    """Render the Natural Electron Configuration table."""
+    configs = nbo.get("overall_electron_configurations") if is_uhf else nbo.get("electron_configurations")
+    if not configs:
+        configs = nbo.get("electron_configurations") or nbo.get("overall_electron_configurations") or []
+    if not configs:
+        return ""
+
+    rows = [("Atom", "NBO atom #", "ORCA atom idx", "Configuration")]
+    for entry in configs:
+        rows.append((
+            f"{entry.get('symbol', '?')}{entry.get('index', '')}",
+            str(entry.get("atom_nbo_index", entry.get("index", ""))),
+            str(entry.get("atom_orca_index", "â€”")),
+            str(entry.get("configuration", "")),
+        ))
+
+    note = "NBO prints atom numbers as 1-based; ORCA's internal atom indexing used in some sections is 0-based."
+    return f"{note}\n\n{_table(rows)}"
+
+
+def _render_cmo_analysis_section(nbo: Dict[str, Any], data: Dict[str, Any]) -> str:
+    """Render a compact CMO/NBO character table for TDDFT/frontier orbitals."""
+    cmo_lookup = _build_cmo_lookup(data)
+    if not cmo_lookup:
+        return ""
+
+    indices = _collect_relevant_cmo_indices(data, cmo_lookup)
+    if not indices:
+        return ""
+
+    rows = [("ORCA MO", "CMO MO", "Type", "E (Eh)", "Leading character", "Top contributions")]
+    for index in indices:
+        entry = cmo_lookup.get(index)
+        if not entry:
+            continue
+        rows.append((
+            str(index),
+            str(entry.get("nbo_mo_index", entry.get("mo_index", ""))),
+            str(entry.get("type", "")),
+            _f(entry.get("energy_au"), ".5f"),
+            _summarize_cmo_character(entry, limit=1, with_percent=False),
+            _summarize_cmo_character(entry, limit=3, with_percent=True),
+        ))
+
+    if len(rows) == 1:
+        return ""
+
+    tddft = data.get("tddft", {})
+    has_tddft = bool(tddft.get("final_excited_state_block") or tddft.get("excited_state_blocks"))
+    scope = (
+        "Shown for canonical orbitals referenced by the dominant TDDFT/CIS excitations."
+        if has_tddft
+        else "Shown for frontier-adjacent canonical orbitals."
+    )
+    note = "NBO CMO numbering is 1-based; ORCA orbital numbers are 0-based, so CMO MO N corresponds to ORCA MO N-1."
+    return f"{scope}\n{note}\n\n{_table(rows)}"
+
+
+def _format_transition_cmo_character(
+    transition: Dict[str, Any],
+    cmo_lookup: Dict[int, Dict[str, Any]],
+) -> str:
+    """Format a TDDFT transition in terms of dominant NBO CMO character."""
+    try:
+        from_index = int(transition.get("from_index"))
+        to_index = int(transition.get("to_index"))
+    except (TypeError, ValueError):
+        return "â€”"
+
+    donor = _summarize_cmo_character(cmo_lookup.get(from_index), limit=2, with_percent=False)
+    acceptor = _summarize_cmo_character(cmo_lookup.get(to_index), limit=2, with_percent=False)
+    if donor == "â€”" and acceptor == "â€”":
+        return "â€”"
+    return f"{donor} -> {acceptor}"
+
+
 def _frontier_region_label(offset: int, occupied: bool) -> str:
     """Return HOMO/LUMO-style labels for frontier windows."""
     if occupied:
@@ -1110,7 +1293,9 @@ def _render_tddft_section(tddft: Dict[str, Any], data: Optional[Dict[str, Any]] 
         return ""
 
     lines = []
-    irrep_lookup = _build_orbital_irrep_lookup(data or {})
+    render_data = data or {}
+    irrep_lookup = _build_orbital_irrep_lookup(render_data)
+    cmo_lookup = _build_cmo_lookup(render_data)
     summary = tddft.get("summary", {})
     meta_bits = []
     if summary.get("input_block"):
@@ -1141,10 +1326,15 @@ def _render_tddft_section(tddft: Dict[str, Any], data: Optional[Dict[str, Any]] 
             state.get("state_label") or state.get("symmetry") or state.get("irrep")
             for state in states
         )
+        state_has_cmo = bool(cmo_lookup)
         if state_has_symmetry:
-            rows = [("State", "Symmetry", "E (eV)", "lambda (nm)", "fosc", "dominant excitation", "weight")]
+            header = ["State", "Symmetry", "E (eV)", "lambda (nm)", "fosc", "dominant excitation"]
         else:
-            rows = [("State", "E (eV)", "lambda (nm)", "fosc", "dominant excitation", "weight")]
+            header = ["State", "E (eV)", "lambda (nm)", "fosc", "dominant excitation"]
+        if state_has_cmo:
+            header.append("CMO/NBO character")
+        header.append("weight")
+        rows = [tuple(header)]
         for state in states[:10]:
             dominant = max(
                 state.get("transitions", []),
@@ -1152,6 +1342,7 @@ def _render_tddft_section(tddft: Dict[str, Any], data: Optional[Dict[str, Any]] 
                 default={},
             )
             excitation = _format_transition_with_irreps(dominant, irrep_lookup) if dominant else "—"
+            cmo_character = _format_transition_cmo_character(dominant, cmo_lookup) if dominant else "—"
             state_row = [
                 str(state.get("state", "")),
             ]
@@ -1164,8 +1355,10 @@ def _render_tddft_section(tddft: Dict[str, Any], data: Optional[Dict[str, Any]] 
                 _f(state.get("wavelength_nm")),
                 _f(fosc_map.get(state.get("state"))),
                 excitation,
-                _f(dominant.get("weight"), ".3f") if dominant else "—",
             ])
+            if state_has_cmo:
+                state_row.append(cmo_character)
+            state_row.append(_f(dominant.get("weight"), ".3f") if dominant else "—")
             rows.append(tuple(state_row))
         lines.append(_table(rows))
 
