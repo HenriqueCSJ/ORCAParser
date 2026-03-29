@@ -36,6 +36,7 @@ from .modules import (
     NBOModule,
     EPRModule,
     GeomOptModule,
+    SurfaceScanModule,
 )
 
 # ─────────────────────────────────────────────────────────────────
@@ -60,6 +61,7 @@ MODULE_REGISTRY: List[tuple] = [
     ("tddft",            TDDFTModule),
     ("nbo",              NBOModule),
     ("epr",              EPRModule),
+    ("surface_scan",     SurfaceScanModule),
     ("geom_opt",         GeomOptModule),
 ]
 
@@ -79,6 +81,7 @@ SECTION_ALIASES: Dict[str, List[str]] = {
     "tddft":      ["tddft"],
     "geometry":   ["geometry", "basis_set"],
     "epr":        ["epr"],
+    "scan":       ["surface_scan"],
     "opt":        ["geom_opt"],
 }
 
@@ -330,10 +333,14 @@ class ORCAParser:
         ctx: Dict[str, Any] = {
             "is_uhf": False,
             "has_symmetry": False,
+            "is_surface_scan": False,
             "hf_type": "RHF",
             "multiplicity": 1,
             "n_atoms": 0,
             "atom_symbols": [],
+            "source_path": str(self.filepath),
+            "source_dir": str(self.filepath.parent),
+            "source_stem": self.filepath.stem,
         }
 
         for ln in self._lines:
@@ -351,6 +358,9 @@ class ORCAParser:
             # Symmetry detection: presence of irrep labels
             if "Number of irreps" in ln:
                 ctx["has_symmetry"] = True
+
+            if "Relaxed Surface Scan" in ln:
+                ctx["is_surface_scan"] = True
 
             # Number of atoms
             m = re.search(r"Number of atoms\s+\.\.\.\s+(\d+)", ln)

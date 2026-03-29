@@ -93,6 +93,11 @@ def _electronic_state_label(data: Dict[str, Any]) -> str:
     return "DeltaSCF excited-state" if _is_deltascf(data) else "Ground-state"
 
 
+def _is_surface_scan(data: Dict[str, Any]) -> bool:
+    """Whether this parsed job is a relaxed surface scan."""
+    return bool(data.get("surface_scan"))
+
+
 def _bool_to_label(value: Any) -> str:
     """Render bool-like values consistently for CSV exports."""
     if value is True:
@@ -183,6 +188,7 @@ def _write_metadata(data: Dict[str, Any], directory: Path, stem: str) -> List[Pa
     sym = _get_symmetry_data(data)
     deltascf = meta.get("deltascf") or {}
     geom = data.get("geometry", {})
+    surface_scan = data.get("surface_scan") or {}
     row = {
         "job_name": meta.get("job_name", ""),
         "source_file": data.get("source_file", ""),
@@ -204,6 +210,10 @@ def _write_metadata(data: Dict[str, Any], directory: Path, stem: str) -> List[Pa
         "initial_guess_irrep": sym.get("initial_guess_irrep", ""),
         "symmetry_perfected_point_group": geom.get("symmetry_perfected_point_group", ""),
         "symmetry_perfected_atoms": len(geom.get("symmetry_cartesian_angstrom") or []),
+        "is_surface_scan": _bool_to_label(_is_surface_scan(data)),
+        "scan_mode": surface_scan.get("mode", ""),
+        "scan_parameters": surface_scan.get("n_parameters", ""),
+        "scan_steps": surface_scan.get("n_constrained_optimizations", ""),
         "deltascf_target": _format_deltascf_target(deltascf),
         "deltascf_metric": deltascf.get("aufbau_metric", ""),
         "keep_initial_reference": _bool_to_label(deltascf.get("keep_initial_reference")),
@@ -1158,6 +1168,97 @@ def _write_geom_opt(data: Dict[str, Any], directory: Path, stem: str) -> List[Pa
     return [fn]
 
 
+def _write_surface_scan(data: Dict[str, Any], directory: Path, stem: str) -> List[Path]:
+    scan = data.get("surface_scan")
+    if not scan:
+        return []
+
+    files: List[Path] = []
+    parameters = scan.get("parameters") or []
+    steps = scan.get("steps") or []
+
+    if parameters:
+        rows: List[Dict[str, Any]] = []
+        for idx, parameter in enumerate(parameters, start=1):
+            row: Dict[str, Any] = {
+                "parameter_index": idx,
+                "label": parameter.get("label", ""),
+                "kind": parameter.get("kind", ""),
+                "coordinate_type": parameter.get("coordinate_type", ""),
+                "atoms": ",".join(str(atom) for atom in parameter.get("atoms") or []),
+                "unit": parameter.get("unit", ""),
+                "mode": parameter.get("mode", ""),
+                "start": parameter.get("start", ""),
+                "end": parameter.get("end", ""),
+                "steps": parameter.get("steps", ""),
+                "values": _format_simple_vector(parameter.get("values")),
+            }
+            rows.append(row)
+        files.append(_write_csv(
+            directory, f"{stem}_surface_scan_parameters.csv", rows,
+            [
+                "parameter_index", "label", "kind", "coordinate_type", "atoms",
+                "unit", "mode", "start", "end", "steps", "values",
+            ],
+        ))
+
+    if steps:
+        rows = []
+        max_coords = max(len(step.get("coordinate_values") or []) for step in steps)
+        for step in steps:
+            row: Dict[str, Any] = {
+                "step": step.get("step", ""),
+                "actual_energy_Eh": step.get("actual_energy_Eh", ""),
+                "relative_actual_energy_kcal_mol": step.get("relative_actual_energy_kcal_mol", ""),
+                "scf_energy_Eh": step.get("scf_energy_Eh", ""),
+                "relative_scf_energy_kcal_mol": step.get("relative_scf_energy_kcal_mol", ""),
+                "optimized_xyz_file": step.get("optimized_xyz_file", ""),
+            }
+            values = step.get("coordinate_values") or []
+            labels = step.get("coordinate_labels") or []
+            for idx in range(max_coords):
+                row[f"coord_{idx + 1}_label"] = labels[idx] if idx < len(labels) else ""
+                row[f"coord_{idx + 1}_value"] = values[idx] if idx < len(values) else ""
+            rows.append(row)
+        fields = [
+            "step",
+            *sum(
+                (
+                    [f"coord_{idx + 1}_label", f"coord_{idx + 1}_value"]
+                    for idx in range(max_coords)
+                ),
+                [],
+            ),
+            "actual_energy_Eh",
+            "relative_actual_energy_kcal_mol",
+            "scf_energy_Eh",
+            "relative_scf_energy_kcal_mol",
+            "optimized_xyz_file",
+        ]
+        files.append(_write_csv(
+            directory, f"{stem}_surface_scan.csv", rows, fields,
+        ))
+
+    sidecars = scan.get("sidecar_files") or {}
+    if sidecars:
+        row = {
+            "mode": scan.get("mode", ""),
+            "n_parameters": scan.get("n_parameters", ""),
+            "n_constrained_optimizations": scan.get("n_constrained_optimizations", ""),
+            "actual_surface_dat": sidecars.get("actual_surface_dat", ""),
+            "scf_surface_dat": sidecars.get("scf_surface_dat", ""),
+            "allxyz": sidecars.get("allxyz", ""),
+            "xyzall": sidecars.get("xyzall", ""),
+            "trajectory_xyz": sidecars.get("trajectory_xyz", ""),
+            "allxyz_frame_count": sidecars.get("allxyz_frame_count", ""),
+        }
+        files.append(_write_csv(
+            directory, f"{stem}_surface_scan_summary.csv", [row], list(row.keys()),
+        ))
+
+    return files
+
+
 # ─────────────────────────────────────────────────────────────────
 # Main entry point
 # ─────────────────────────────────────────────────────────────────
@@ -1206,6 +1307,7 @@ def write_csvs(data: Dict[str, Any], directory: Path) -> List[Path]:
         _write_nbo_nlmo_bo,
         _write_nbo_nlmo_steric,
         _write_epr,
+        _write_surface_scan,
         _write_geom_opt,
     ]
 
