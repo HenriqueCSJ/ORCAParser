@@ -254,6 +254,89 @@ def render_surface_scan_section(
     return "\n\n".join(lines)
 
 
+def render_goat_section(
+    goat: Dict[str, Any],
+    *,
+    format_number: FormatNumber,
+    make_table: MakeTable,
+) -> str:
+    """Compact GOAT conformer-search summary for markdown reports."""
+    lines: List[str] = []
+
+    bits: List[str] = []
+    if goat.get("global_minimum_found") is not None:
+        bits.append(
+            f"**Global minimum found:** {'yes' if goat.get('global_minimum_found') else 'no'}"
+        )
+    if goat.get("n_conformers") is not None:
+        bits.append(f"**Conformers:** {goat['n_conformers']}")
+    if goat.get("conformers_below_energy_window") is not None:
+        window = goat.get("conformer_energy_window_kcal_mol")
+        if window is not None:
+            bits.append(
+                f"**Below {format_number(window)} kcal/mol:** "
+                f"{goat['conformers_below_energy_window']}"
+            )
+    if goat.get("lowest_energy_conformer_Eh") is not None:
+        bits.append(
+            f"**Lowest conformer:** {format_number(goat['lowest_energy_conformer_Eh'], '.6f')} Eh"
+        )
+    if bits:
+        lines.append(" | ".join(bits))
+
+    thermo_bits: List[str] = []
+    if goat.get("temperature_K") is not None:
+        thermo_bits.append(f"**T:** {format_number(goat['temperature_K'], '.2f')} K")
+    if goat.get("sconf_cal_molK") is not None:
+        thermo_bits.append(
+            f"**Sconf:** {format_number(goat['sconf_cal_molK'], '.2f')} cal/(molK)"
+        )
+    if goat.get("gconf_kcal_mol") is not None:
+        thermo_bits.append(
+            f"**Gconf:** {format_number(goat['gconf_kcal_mol'], '.2f')} kcal/mol"
+        )
+    if thermo_bits:
+        lines.append(" | ".join(thermo_bits))
+
+    file_bits: List[str] = []
+    if goat.get("global_minimum_xyz_file"):
+        file_bits.append(f"global minimum xyz=`{Path(goat['global_minimum_xyz_file']).name}`")
+    if goat.get("final_ensemble_xyz_file"):
+        file_bits.append(f"final ensemble xyz=`{Path(goat['final_ensemble_xyz_file']).name}`")
+    if file_bits:
+        lines.append("**Output files:** " + "  ".join(file_bits))
+
+    ensemble = goat.get("ensemble") or []
+    if ensemble:
+        rows: List[tuple] = [
+            ("conformer", "dE (kcal/mol)", "deg.", "% total", "% cumul."),
+        ]
+        note = ""
+        display_rows: List[Optional[Dict[str, Any]]] = list(ensemble)
+        if len(display_rows) > 25:
+            display_rows = display_rows[:15] + [None] + display_rows[-5:]
+            note = f"*Showing first 15 and last 5 of {len(ensemble)} conformers. Full ensemble is in JSON/CSV.*"
+
+        for row in display_rows:
+            if row is None:
+                rows.append(("...", "...", "...", "...", "..."))
+                continue
+            rows.append((
+                str(row.get("conformer", "")),
+                format_number(row.get("relative_energy_kcal_mol")),
+                str(row.get("degeneracy", "")),
+                format_number(row.get("percent_total"), ".2f"),
+                format_number(row.get("percent_cumulative"), ".2f"),
+            ))
+
+        table = make_table(rows)
+        if note:
+            table += f"\n\n{note}"
+        lines.append("**Final Ensemble**\n" + table)
+
+    return "\n\n".join(lines)
+
+
 def render_geom_opt_section(
     geom_opt: Dict[str, Any],
     *,

@@ -48,6 +48,7 @@ from .csv_sections_basic import (
     write_dipole_section as _write_basic_dipole_section,
     write_geom_opt_section as _write_basic_geom_opt_section,
     write_geometry_section as _write_basic_geometry_section,
+    write_goat_section as _write_basic_goat_section,
     write_solvation_section as _write_basic_solvation_section,
     write_surface_scan_section as _write_basic_surface_scan_section,
 )
@@ -520,6 +521,15 @@ def _write_surface_scan(data: Dict[str, Any], directory: Path, stem: str) -> Lis
     )
 
 
+def _write_goat(data: Dict[str, Any], directory: Path, stem: str) -> List[Path]:
+    return _write_basic_goat_section(
+        data,
+        directory,
+        stem,
+        write_csv=_write_csv,
+    )
+
+
 # ─────────────────────────────────────────────────────────────────
 # Main entry point
 # ─────────────────────────────────────────────────────────────────
@@ -569,6 +579,7 @@ def write_csvs(data: Dict[str, Any], directory: Path) -> List[Path]:
         _write_nbo_nlmo_bo,
         _write_nbo_nlmo_steric,
         _write_epr,
+        _write_goat,
         _write_surface_scan,
         _write_geom_opt,
     ]

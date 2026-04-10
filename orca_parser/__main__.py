@@ -16,6 +16,9 @@ Notes
   * `%tddft` / `%cis` excited-state geometry optimizations are reported as
     excited-state optimization jobs, including target-state and root-follow
     metadata (`IRoot`, `IRootMult`, `FOLLOWIROOT`, FIR controls).
+  * GOAT conformer searches are parsed as dedicated GOAT jobs, including the
+    final ensemble table, global-minimum xyz, conformer window counts, and
+    ensemble thermochemistry.
   * Relaxed surface scans are parsed as scan jobs, not collapsed into a
     single geometry optimization. Scan coordinates, per-step energies, and
     discovered ``relaxscan*.dat`` / ``allxyz`` sidecars are exported.
@@ -34,6 +37,7 @@ Section aliases
   dipole     dipole
   geometry   geometry, basis_set
   epr        epr (ZFS, g-tensor, hyperfine/EFG)
+  goat       goat (GOAT final ensemble, minimum, Sconf/Gconf)
   opt        geom_opt (optimization cycles, convergence, RMSD)
   scan       surface_scan (relaxed scan coordinates, per-step energies)
 
@@ -93,6 +97,9 @@ Examples
   # Parse a relaxed surface scan and export its scan table
   orca_parser relaxscan.out --sections scan --markdown --csv
 
+  # Parse a GOAT conformer search and export the final ensemble
+  orca_parser conformers.out --sections goat --markdown --csv
+
   # DeltaSCF excited-state jobs are called out explicitly in markdown/CSV
   orca_parser excited_state.out --markdown --csv
 
@@ -114,8 +121,9 @@ def parse_args():
         description=(
             "Parse ORCA quantum chemistry output files into JSON, CSV, "
             "HDF5, and Markdown. Handles ground-state, DeltaSCF excited-state, "
-            "TDDFT/CIS excited-state optimization, UseSym/symmetry-aware, "
-            "EPR, relaxed surface-scan, and geometry-optimization jobs."
+            "TDDFT/CIS excited-state optimization, GOAT conformer-search, "
+            "UseSym/symmetry-aware, EPR, relaxed surface-scan, and "
+            "geometry-optimization jobs."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
@@ -130,7 +138,7 @@ def parse_args():
     p.add_argument("--sections", nargs="+", metavar="SEC", default=None,
                    help="Sections / aliases to parse (default: all). "
                         "Examples: --sections charges mos dipole, "
-                        "--sections epr, --sections opt, --sections scan")
+                        "--sections epr, --sections goat, --sections opt, --sections scan")
 
     # ── Output format flags ─────────────────────────────────────────
     p.add_argument("--json",    dest="write_json", action="store_true",  default=True,
@@ -148,8 +156,8 @@ def parse_args():
     p.add_argument("--markdown", dest="write_markdown", action="store_true",  default=False,
                    help="Write compact AI-readable markdown report (.md) "
                         "with symmetry, DeltaSCF / TDDFT excited-state "
-                        "labeling, root-follow summaries, and surface-scan "
-                        "summaries")
+                        "labeling, root-follow summaries, GOAT ensemble "
+                        "summaries, and surface-scan summaries")
     p.add_argument("--no-markdown", dest="write_markdown", action="store_false",
                    help="Disable markdown output")
     p.add_argument("--compare",  dest="write_compare",  action="store_true",  default=False,
@@ -283,6 +291,26 @@ def _print_summary(data: dict, path: Path) -> None:
         print(f"  Scan mode    : {mode}  ({n_params} coordinate(s), {n_steps} step(s))")
         if scan.get("energy_span_kcal_mol") is not None:
             print(f"  Scan span    : {scan['energy_span_kcal_mol']:.4f} kcal/mol")
+
+    goat = data.get("goat", {})
+    if goat:
+        n_confs = goat.get("n_conformers", 0)
+        print(f"  GOAT confs   : {n_confs}")
+        if goat.get("conformers_below_energy_window") is not None:
+            window = goat.get("conformer_energy_window_kcal_mol")
+            print(
+                f"  Below {window:.2f} kcal/mol: "
+                f"{goat['conformers_below_energy_window']}"
+            )
+        if goat.get("lowest_energy_conformer_Eh") is not None:
+            print(
+                "  GOAT minimum : "
+                f"{goat['lowest_energy_conformer_Eh']:.6f} Eh"
+            )
+        if goat.get("sconf_cal_molK") is not None:
+            print(f"  Sconf        : {goat['sconf_cal_molK']:.2f} cal/(molK)")
+        if goat.get("gconf_kcal_mol") is not None:
+            print(f"  Gconf        : {goat['gconf_kcal_mol']:.2f} kcal/mol")
 
     for name, key in [("Mulliken", "mulliken"), ("Hirshfeld", "hirshfeld"),
                       ("MBIS", "mbis"), ("CHELPG", "chelpg")]:

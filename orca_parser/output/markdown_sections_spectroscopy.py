@@ -9,9 +9,9 @@ FormatNumber = Callable[..., str]
 MakeTable = Callable[[List[tuple]], str]
 RenderMatrix = Callable[[Any, str], str]
 BuildOrbitalIrrepLookup = Callable[[Dict[str, Any]], Dict[str, Dict[int, str]]]
-BuildCMOLookup = Callable[[Dict[str, Any]], Dict[int, Dict[str, Any]]]
+BuildCMOLookup = Callable[[Dict[str, Any]], Dict[str, Dict[int, Dict[str, Any]]]]
 FormatTransitionWithIrreps = Callable[[Dict[str, Any], Dict[str, Dict[int, str]]], str]
-FormatTransitionCMOCharacter = Callable[[Dict[str, Any], Dict[int, Dict[str, Any]]], str]
+FormatTransitionCMOCharacter = Callable[[Dict[str, Any], Dict[str, Dict[int, Dict[str, Any]]]], str]
 YesNoUnknown = Callable[[Any], str]
 GetExcitedStateOptData = Callable[[Dict[str, Any]], Optional[Dict[str, Any]]]
 
@@ -129,6 +129,52 @@ def _render_tddft_spectra_section(
     return "\n\n".join(sections)
 
 
+def _significant_state_transitions(
+    state: Dict[str, Any],
+    *,
+    threshold: float = 0.10,
+) -> List[Dict[str, Any]]:
+    """Return all state contributions at or above the reporting threshold."""
+    transitions = list(state.get("transitions") or [])
+    if not transitions:
+        return []
+
+    significant = [
+        transition
+        for transition in transitions
+        if (transition.get("weight") or 0.0) >= threshold
+    ]
+    if significant:
+        return sorted(significant, key=lambda item: item.get("weight", 0.0), reverse=True)
+
+    dominant = max(transitions, key=lambda item: item.get("weight", 0.0), default={})
+    return [dominant] if dominant else []
+
+
+def _join_transition_summaries(
+    transitions: List[Dict[str, Any]],
+    formatter: Callable[[Dict[str, Any]], str],
+) -> str:
+    """Format multiple excitation summaries into a single compact table cell."""
+    pieces: List[str] = []
+    for transition in transitions:
+        label = formatter(transition)
+        if label and label != "—":
+            pieces.append(label)
+    return "; ".join(pieces) if pieces else "—"
+
+
+def _format_transition_weights(transitions: List[Dict[str, Any]]) -> str:
+    """Format excitation weights as percentages for markdown summaries."""
+    weights = []
+    for transition in transitions:
+        weight = transition.get("weight")
+        if weight is None:
+            continue
+        weights.append(f"{100.0 * float(weight):.1f}%")
+    return "; ".join(weights) if weights else "—"
+
+
 def render_tddft_section(
     tddft: Dict[str, Any],
     data: Optional[Dict[str, Any]] = None,
@@ -191,23 +237,25 @@ def render_tddft_section(
             state.get("state_label") or state.get("symmetry") or state.get("irrep")
             for state in states
         )
-        state_has_cmo = bool(cmo_lookup)
+        state_has_cmo = any(cmo_lookup.values())
         if state_has_symmetry:
-            header = ["State", "Symmetry", "E (eV)", "lambda (nm)", "fosc", "dominant excitation"]
+            header = ["State", "Symmetry", "E (eV)", "lambda (nm)", "fosc", "excitation(s) >= 10%"]
         else:
-            header = ["State", "E (eV)", "lambda (nm)", "fosc", "dominant excitation"]
+            header = ["State", "E (eV)", "lambda (nm)", "fosc", "excitation(s) >= 10%"]
         if state_has_cmo:
-            header.append("CMO/NBO character")
-        header.append("weight")
+            header.append("CMO/NBO character (>= 10%)")
+        header.append("weight(s)")
         rows = [tuple(header)]
-        for state in states[:10]:
-            dominant = max(
-                state.get("transitions", []),
-                key=lambda item: item.get("weight", 0.0),
-                default={},
+        for state in states:
+            significant = _significant_state_transitions(state)
+            excitation = _join_transition_summaries(
+                significant,
+                lambda transition: format_transition_with_irreps(transition, irrep_lookup),
             )
-            excitation = format_transition_with_irreps(dominant, irrep_lookup) if dominant else "—"
-            cmo_character = format_transition_cmo_character(dominant, cmo_lookup) if dominant else "—"
+            cmo_character = _join_transition_summaries(
+                significant,
+                lambda transition: format_transition_cmo_character(transition, cmo_lookup),
+            )
             state_row = [str(state.get("state", ""))]
             if state_has_symmetry:
                 state_row.append(
@@ -221,14 +269,14 @@ def render_tddft_section(
             ])
             if state_has_cmo:
                 state_row.append(cmo_character)
-            state_row.append(format_number(dominant.get("weight"), ".3f") if dominant else "—")
+            state_row.append(_format_transition_weights(significant))
             rows.append(tuple(state_row))
         lines.append(make_table(rows))
 
     nto_states = tddft.get("nto_states", [])
     if nto_states:
         rows = [("State", "leading NTO pair", "occ.")]
-        for nto_state in nto_states[:5]:
+        for nto_state in nto_states:
             lead = max(
                 nto_state.get("pairs", []),
                 key=lambda item: item.get("occupation", 0.0),

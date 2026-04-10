@@ -351,3 +351,62 @@ def write_surface_scan_section(
         ))
 
     return files
+
+
+def write_goat_section(
+    data: Dict[str, Any],
+    directory: Path,
+    stem: str,
+    *,
+    write_csv: WriteCSV,
+) -> List[Path]:
+    """Write GOAT conformer-search summary and full final ensemble."""
+    goat = data.get("goat")
+    if not goat:
+        return []
+
+    files: List[Path] = []
+    ensemble = goat.get("ensemble") or []
+
+    if ensemble:
+        rows: List[Dict[str, Any]] = []
+        for row in ensemble:
+            rows.append({
+                "conformer": row.get("conformer"),
+                "relative_energy_kcal_mol": row.get("relative_energy_kcal_mol"),
+                "degeneracy": row.get("degeneracy"),
+                "percent_total": row.get("percent_total"),
+                "percent_cumulative": row.get("percent_cumulative"),
+            })
+        files.append(write_csv(
+            directory, f"{stem}_goat_ensemble.csv", rows,
+            [
+                "conformer",
+                "relative_energy_kcal_mol",
+                "degeneracy",
+                "percent_total",
+                "percent_cumulative",
+            ],
+        ))
+
+    summary_row = {
+        "global_minimum_found": goat.get("global_minimum_found", ""),
+        "global_minimum_conformer": goat.get("global_minimum_conformer", ""),
+        "lowest_energy_conformer_Eh": goat.get("lowest_energy_conformer_Eh", ""),
+        "n_conformers": goat.get("n_conformers", ""),
+        "conformer_energy_window_kcal_mol": goat.get("conformer_energy_window_kcal_mol", ""),
+        "conformers_below_energy_window": goat.get("conformers_below_energy_window", ""),
+        "temperature_K": goat.get("temperature_K", ""),
+        "sconf_cal_molK": goat.get("sconf_cal_molK", ""),
+        "gconf_kcal_mol": goat.get("gconf_kcal_mol", ""),
+        "top_population_percent": goat.get("top_population_percent", ""),
+        "max_relative_energy_kcal_mol": goat.get("max_relative_energy_kcal_mol", ""),
+        "final_cumulative_percent": goat.get("final_cumulative_percent", ""),
+        "global_minimum_xyz_file": goat.get("global_minimum_xyz_file", ""),
+        "final_ensemble_xyz_file": goat.get("final_ensemble_xyz_file", ""),
+    }
+    files.append(write_csv(
+        directory, f"{stem}_goat_summary.csv", [summary_row], list(summary_row.keys()),
+    ))
+
+    return files

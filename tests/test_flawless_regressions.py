@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from orca_parser import ORCAParser
+from orca_parser.output.markdown_sections_analysis import build_cmo_lookup, format_transition_cmo_character
 from orca_parser.parser import is_auxiliary_orca_file
 
 
@@ -282,8 +283,74 @@ def test_markdown_renders_natural_electron_configurations_and_cmo_character(
     assert "Leading character" in text
     assert "Top contributions" in text
     assert "n(S17)" in text
-    assert "pi*(C7-C8)" in text
-    assert "CMO/NBO character" in text
+    assert "π*(C7-C8)" in text
+    assert "π(C7-C8)" in text
+    assert "CMO/NBO character (>= 10%)" in text
+    assert "| 11    |" in text
+    assert "| 100   |" in text
+    assert "107a -> 111a" in text
+    assert "109a -> 111a" in text
+    assert "38.4%" in text
+    assert "19.3%" in text
+
+
+def test_spin_resolved_cmo_lookup_handles_open_shell_tddft_transitions() -> None:
+    data = {
+        "nbo": {
+            "alpha_spin": {
+                "cmo_analysis": [
+                    {
+                        "orca_orbital_index": 139,
+                        "nbo_mo_index": 140,
+                        "nbo_contributions": [
+                            {"character_label": "pi(C7-C8)", "approx_percent": 82.0},
+                            {"character_label": "n(O25)", "approx_percent": 18.0},
+                        ],
+                    },
+                    {
+                        "orca_orbital_index": 141,
+                        "nbo_mo_index": 142,
+                        "nbo_contributions": [
+                            {"character_label": "pi*(C7-C8)", "approx_percent": 91.0},
+                        ],
+                    },
+                ]
+            },
+            "beta_spin": {
+                "cmo_analysis": [
+                    {
+                        "orca_orbital_index": 139,
+                        "nbo_mo_index": 140,
+                        "nbo_contributions": [
+                            {"character_label": "n(N9)", "approx_percent": 77.0},
+                            {"character_label": "pi(C2-C3)", "approx_percent": 23.0},
+                        ],
+                    },
+                    {
+                        "orca_orbital_index": 141,
+                        "nbo_mo_index": 142,
+                        "nbo_contributions": [
+                            {"character_label": "pi*(N9-O26)", "approx_percent": 88.0},
+                        ],
+                    },
+                ]
+            },
+        }
+    }
+
+    lookup = build_cmo_lookup(data)
+
+    alpha_character = format_transition_cmo_character(
+        {"from_index": 139, "from_spin": "a", "to_index": 141, "to_spin": "a"},
+        lookup,
+    )
+    beta_character = format_transition_cmo_character(
+        {"from_index": 139, "from_spin": "b", "to_index": 141, "to_spin": "b"},
+        lookup,
+    )
+
+    assert alpha_character == "π(C7-C8) + n(O25) -> π*(C7-C8)"
+    assert beta_character == "n(N9) + π(C2-C3) -> π*(N9-O26)"
 
 
 def test_excited_state_optimization_metadata_is_promoted(
