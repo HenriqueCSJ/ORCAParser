@@ -14,7 +14,8 @@ class MetadataModule(BaseModule):
     name = "metadata"
 
     def parse(self, lines):
-        data = {}
+        data: Dict[str, Any] = {}
+        self._apply_input_echo_metadata(data)
 
         # ORCA version
         for ln in lines:
@@ -27,7 +28,8 @@ class MetadataModule(BaseModule):
         for ln in lines:
             m = re.search(r"NAME\s*=\s*(\S+)", ln)
             if m:
-                data["job_name"] = m.group(1).replace(".inp", "")
+                data.setdefault("input_name", m.group(1))
+                data.setdefault("job_name", m.group(1).replace(".inp", ""))
                 break
 
         # Host, date, working directory
@@ -43,16 +45,17 @@ class MetadataModule(BaseModule):
                 data["working_dir"] = m.group(1).strip()
 
         # Calculation type
-        for ln in lines:
-            if "Single Point Calculation" in ln:
-                data["calculation_type"] = "Single Point"
-                break
-            elif "Geometry Optimization" in ln:
-                data["calculation_type"] = "Geometry Optimization"
-                break
-            elif "Frequency Calculation" in ln:
-                data["calculation_type"] = "Frequency"
-                break
+        if "calculation_type" not in data:
+            for ln in lines:
+                if "Single Point Calculation" in ln:
+                    data["calculation_type"] = "Single Point"
+                    break
+                elif "Geometry Optimization" in ln:
+                    data["calculation_type"] = "Geometry Optimization"
+                    break
+                elif "Frequency Calculation" in ln:
+                    data["calculation_type"] = "Frequency"
+                    break
 
         # SCF type (RHF/UHF)
         for ln in lines:
@@ -65,7 +68,9 @@ class MetadataModule(BaseModule):
         for ln in lines:
             m = re.search(r"Functional name\s+\.\.\.\.\s+(.+)", ln)
             if m:
-                data["functional"] = m.group(1).strip()
+                reported_functional = m.group(1).strip()
+                data["reported_functional"] = reported_functional
+                data.setdefault("functional", reported_functional)
                 break
 
         # Charge and multiplicity
@@ -84,7 +89,9 @@ class MetadataModule(BaseModule):
         for ln in lines:
             m = re.search(r"Your calculation utilizes the basis:\s+(.+)", ln)
             if m:
-                data["basis_set"] = m.group(1).strip()
+                reported_basis = m.group(1).strip()
+                data["reported_basis_set"] = reported_basis
+                data.setdefault("basis_set", reported_basis)
                 break
 
         # Basis dimension
@@ -102,7 +109,11 @@ class MetadataModule(BaseModule):
                 break
 
         symmetry = self._parse_symmetry(lines)
+        input_use_sym = data.get("input_use_sym")
         if symmetry:
+            if input_use_sym is not None and "use_sym" not in symmetry:
+                symmetry["use_sym"] = input_use_sym
+                symmetry["use_sym_label"] = "ON" if input_use_sym else "OFF"
             data["symmetry"] = symmetry
             if symmetry.get("point_group"):
                 data["point_group"] = symmetry["point_group"]
@@ -121,6 +132,12 @@ class MetadataModule(BaseModule):
                 self.context["point_group"] = symmetry["point_group"]
             if symmetry.get("orbital_irrep_group"):
                 self.context["orbital_irrep_group"] = symmetry["orbital_irrep_group"]
+        elif input_use_sym is not None:
+            data["symmetry"] = {
+                "use_sym": input_use_sym,
+                "use_sym_label": "ON" if input_use_sym else "OFF",
+            }
+            self.context["has_symmetry"] = bool(input_use_sym)
         elif "has_symmetry" not in self.context:
             self.context["has_symmetry"] = False
 
@@ -132,18 +149,11 @@ class MetadataModule(BaseModule):
                 break
 
         # ── Input keywords (from echoed input "! ..." lines) ─────────
-        input_keywords = []
-        for ln in lines:
-            m = re.match(r"^\|\s*\d+>\s*!\s*(.+)", ln)
-            if m:
-                input_keywords.extend(m.group(1).split())
-            if "****END OF INPUT****" in ln:
-                break
-        if input_keywords:
-            data["input_keywords"] = input_keywords
+        input_keywords = data.get("input_keywords") or []
         is_surface_scan = (
             any("Relaxed Surface Scan" in ln for ln in lines[:5000])
             or self._input_contains_geom_scan(lines)
+            or self._input_echo_contains_geom_scan()
         )
         if is_surface_scan:
             data["calculation_type"] = "Relaxed Surface Scan"
@@ -247,6 +257,301 @@ class MetadataModule(BaseModule):
         self.context["hf_type"] = hf_type
 
         return data if data else None
+
+    _METHOD_SKIP_TOKENS = {
+        "RHF",
+        "UHF",
+        "ROHF",
+        "RKS",
+        "UKS",
+        "ROKS",
+        "SP",
+        "OPT",
+        "OPTTS",
+        "FREQ",
+        "NUMFREQ",
+        "ANFREQ",
+        "GOAT",
+        "CHELPG",
+        "AIM",
+        "ALLPOP",
+        "KEEPDENS",
+        "FMOPOP",
+        "MULLIKEN",
+        "LOEWDIN",
+        "MAYER",
+        "REDUCEDPOP",
+        "PRINTBASIS",
+        "PRINTMOS",
+        "NBO",
+    }
+    _CALCULATION_KEYWORDS = {
+        "SP",
+        "OPT",
+        "OPTTS",
+        "GOAT",
+        "FREQ",
+        "NUMFREQ",
+        "ANFREQ",
+        "IRC",
+        "SCAN",
+    }
+    _BASIS_TOKEN_RE = re.compile(
+        r"(?i)^(?:"
+        r"(?:ma-)?def2-"
+        r"|x2c-"
+        r"|jora-"
+        r"|sarc"
+        r"|dhf-"
+        r"|cc-p"
+        r"|aug-cc"
+        r"|jun-cc"
+        r"|may-cc"
+        r"|pcseg"
+        r"|pc-"
+        r"|svp$"
+        r"|sv\(p\)$"
+        r"|tzvp"
+        r"|tzvpp"
+        r"|qzvp"
+        r"|qzvpp"
+        r"|6-31"
+        r"|6-311"
+        r"|sto-"
+        r"|minis"
+        r"|minix"
+        r"|lanl"
+        r"|sdd"
+        r"|ano"
+        r").*"
+    )
+
+    def _apply_input_echo_metadata(self, data: Dict[str, Any]) -> None:
+        """Promote reliable metadata from the echoed ORCA input block."""
+        input_echo = self.context.get("input_echo") or {}
+        data["job_id"] = self.context.get("job_id", "")
+
+        source_relpath = self.context.get("source_relpath")
+        if source_relpath:
+            data["source_relpath"] = source_relpath
+
+        if not input_echo:
+            return
+
+        input_name = input_echo.get("input_name")
+        if input_name:
+            data["input_name"] = input_name
+            data.setdefault("job_name", input_name.replace(".inp", ""))
+
+        bang_lines = input_echo.get("bang_lines") or []
+        if bang_lines:
+            data["input_lines"] = list(bang_lines)
+            data["input_line"] = " ".join(bang_lines)
+
+        bang_tokens = input_echo.get("bang_tokens") or []
+        if bang_tokens:
+            data["input_keywords"] = list(bang_tokens)
+
+        block_names = input_echo.get("block_names") or []
+        if block_names:
+            data["input_blocks"] = list(block_names)
+
+        structure_input = input_echo.get("structure_input") or {}
+        if structure_input:
+            if structure_input.get("charge") is not None:
+                data.setdefault("charge", structure_input["charge"])
+            if structure_input.get("multiplicity") is not None:
+                data.setdefault("multiplicity", structure_input["multiplicity"])
+            if structure_input.get("kind"):
+                data["input_structure_type"] = structure_input["kind"]
+            if structure_input.get("source"):
+                data["input_structure_source"] = structure_input["source"]
+
+        derived = self._derive_model_chemistry(input_echo)
+        for key, value in derived.items():
+            if value not in (None, "", []):
+                data[key] = value
+
+        input_use_sym = self._derive_input_symmetry_requested(input_echo)
+        if input_use_sym is not None:
+            data["input_use_sym"] = input_use_sym
+
+        calculation_type = self._derive_calculation_type_from_input(input_echo)
+        if calculation_type:
+            data["calculation_type"] = calculation_type
+
+        excited_state_input = self._derive_excited_state_input_metadata(input_echo)
+        if excited_state_input:
+            data["excited_state_optimization"] = excited_state_input
+
+    def _derive_model_chemistry(self, input_echo: Dict[str, Any]) -> Dict[str, Any]:
+        """Infer method, basis, and level labels from echoed ``!`` tokens."""
+        tokens = input_echo.get("bang_tokens") or []
+        if not tokens:
+            return {}
+
+        method = None
+        basis_set = None
+        aux_basis_set = None
+        solvent_model = None
+
+        for token in tokens:
+            if solvent_model is None and self._looks_like_solvent_model(token):
+                solvent_model = token
+                continue
+            if aux_basis_set is None and self._looks_like_aux_basis(token):
+                aux_basis_set = token
+                continue
+            if basis_set is None and self._looks_like_basis(token):
+                basis_set = token
+                continue
+            if method is None and not self._is_non_method_token(token):
+                method = token
+
+        level_of_theory = method or ""
+        if method and basis_set:
+            level_of_theory = f"{method}/{basis_set}"
+        elif basis_set:
+            level_of_theory = basis_set
+
+        derived: Dict[str, Any] = {}
+        if method:
+            derived["method"] = method
+            derived.setdefault("functional", method)
+        if basis_set:
+            derived["basis_set"] = basis_set
+        if aux_basis_set:
+            derived["aux_basis_set"] = aux_basis_set
+        if solvent_model:
+            derived["solvent_model"] = solvent_model
+        if level_of_theory:
+            derived["level_of_theory"] = level_of_theory
+        return derived
+
+    def _derive_calculation_type_from_input(self, input_echo: Dict[str, Any]) -> Optional[str]:
+        """Classify the run from the echoed input before output parsing drifts."""
+        tokens_upper = {token.upper() for token in input_echo.get("bang_tokens") or []}
+        blocks = {name.lower() for name in input_echo.get("block_names") or []}
+
+        if "GOAT" in tokens_upper or "goat" in blocks:
+            return "GOAT Conformer Search"
+        if self._input_echo_contains_geom_scan_dict(input_echo):
+            return "Relaxed Surface Scan"
+        if any(token in tokens_upper for token in {"OPT", "OPTTS"}):
+            if any(block in blocks for block in {"tddft", "cis"}):
+                return "Excited-State Geometry Optimization"
+            return "Geometry Optimization"
+        if any(token in tokens_upper for token in {"FREQ", "NUMFREQ", "ANFREQ"}):
+            return "Frequency"
+        return "Single Point"
+
+    def _derive_excited_state_input_metadata(
+        self,
+        input_echo: Dict[str, Any],
+    ) -> Optional[Dict[str, Any]]:
+        """Extract lightweight excited-state optimization metadata from input."""
+        tokens_upper = {token.upper() for token in input_echo.get("bang_tokens") or []}
+        if not any(token in tokens_upper for token in {"OPT", "OPTTS"}):
+            return None
+
+        blocks = input_echo.get("blocks") or {}
+        block_name = next((name for name in ("tddft", "cis") if name in blocks), None)
+        if block_name is None:
+            return None
+
+        settings = dict(blocks.get(block_name, {}).get("settings") or {})
+        excited_state: Dict[str, Any] = {"input_block": block_name}
+
+        target_root = settings.get("iroot")
+        if isinstance(target_root, int):
+            excited_state["target_root"] = target_root
+
+        irootmult = settings.get("irootmult")
+        if isinstance(irootmult, str) and irootmult:
+            excited_state["irootmult"] = irootmult.upper()
+
+        if "followiroot" in settings:
+            excited_state["followiroot"] = bool(settings["followiroot"])
+
+        if "firkeepfirstref" in settings:
+            excited_state["firkeepfirstref"] = bool(settings["firkeepfirstref"])
+
+        if "nroots" in settings:
+            excited_state["nroots"] = settings["nroots"]
+
+        if isinstance(target_root, int) and target_root >= 0:
+            mult_label = str(irootmult).strip().upper() if irootmult else ""
+            state_prefix = "T" if mult_label == "TRIPLET" else "S"
+            excited_state["target_state_label"] = f"{state_prefix}{target_root}"
+
+        return excited_state or None
+
+    def _derive_input_symmetry_requested(self, input_echo: Dict[str, Any]) -> Optional[bool]:
+        """Detect explicit symmetry enable/disable requests from the input."""
+        tokens_upper = {token.upper() for token in input_echo.get("bang_tokens") or []}
+        if "USESYM" in tokens_upper:
+            return True
+        if "NOUSESYM" in tokens_upper:
+            return False
+
+        sym_block = (input_echo.get("blocks") or {}).get("sym") or {}
+        for raw_line in sym_block.get("raw_lines") or []:
+            lowered = raw_line.lower()
+            if "usesym" not in lowered:
+                continue
+            if "false" in lowered or "off" in lowered:
+                return False
+            if "true" in lowered or "on" in lowered:
+                return True
+        return None
+
+    def _input_echo_contains_geom_scan(self) -> bool:
+        """Detect ``%geom ... scan`` in the shared echoed-input payload."""
+        return self._input_echo_contains_geom_scan_dict(
+            self.context.get("input_echo") or {}
+        )
+
+    @classmethod
+    def _input_echo_contains_geom_scan_dict(cls, input_echo: Dict[str, Any]) -> bool:
+        geom_block = (input_echo.get("blocks") or {}).get("geom") or {}
+        for raw_line in geom_block.get("raw_lines") or []:
+            if raw_line.strip().lower() == "scan":
+                return True
+        return False
+
+    def _is_non_method_token(self, token: str) -> bool:
+        token_upper = token.upper()
+        if token_upper in self._METHOD_SKIP_TOKENS:
+            return True
+        if token_upper.startswith("PAL") and token_upper[3:].isdigit():
+            return True
+        if token_upper in self._CALCULATION_KEYWORDS:
+            return True
+        if self._looks_like_basis(token) or self._looks_like_aux_basis(token):
+            return True
+        if self._looks_like_solvent_model(token):
+            return True
+        return False
+
+    def _looks_like_basis(self, token: str) -> bool:
+        if self._looks_like_aux_basis(token):
+            return False
+        return bool(self._BASIS_TOKEN_RE.match(token))
+
+    @staticmethod
+    def _looks_like_aux_basis(token: str) -> bool:
+        token_upper = token.upper()
+        return (
+            token_upper.endswith("/C")
+            or token_upper.endswith("/J")
+            or token_upper.endswith("/JK")
+            or token_upper.endswith("JKFIT")
+        )
+
+    @staticmethod
+    def _looks_like_solvent_model(token: str) -> bool:
+        token_upper = token.upper()
+        return token_upper.startswith(("CPCM(", "SMD(", "ALPB(", "COSMO(", "DDCOSMO("))
 
     def _input_contains_geom_scan(self, lines: List[str]) -> bool:
         """Detect echoed ``%geom ... scan`` blocks in the ORCA input."""

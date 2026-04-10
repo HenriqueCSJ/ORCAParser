@@ -8,11 +8,13 @@ lookups stay in one place.
 
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 
 FormatNumber = Callable[[Any, str], str]
 MakeTable = Callable[[List[tuple]], str]
+CMOEntry = Dict[str, Any]
+CMOLookup = Dict[str, Dict[int, CMOEntry]]
 
 
 def build_orbital_irrep_lookup(data: Dict[str, Any]) -> Dict[str, Dict[int, str]]:
@@ -61,26 +63,62 @@ def format_transition_with_irreps(
     return f"{from_label} -> {to_label}".strip()
 
 
-def build_cmo_lookup(data: Dict[str, Any]) -> Dict[int, Dict[str, Any]]:
-    """Build a lookup from ORCA orbital index to NBO CMO entry."""
-    lookup: Dict[int, Dict[str, Any]] = {}
+def _normalize_spin_key(spin: Any) -> str:
+    """Normalize ORCA/NBO spin labels to the lookup keys used in markdown helpers."""
+    spin_key = str(spin or "").strip().lower()
+    return spin_key if spin_key in {"a", "b"} else ""
+
+
+def build_cmo_lookup(data: Dict[str, Any]) -> CMOLookup:
+    """Build a spin-aware lookup from ORCA orbital index to NBO CMO entry."""
+    lookup: CMOLookup = {}
     nbo = data.get("nbo", {})
-    for cmo in nbo.get("cmo_analysis") or []:
-        index = cmo.get("orca_orbital_index")
-        if index is None and cmo.get("mo_index") is not None:
-            try:
-                index = int(cmo["mo_index"]) - 1
-            except (TypeError, ValueError):
-                index = None
-        if index is None:
-            continue
-        lookup[int(index)] = cmo
+
+    spin_sources = (
+        ("", nbo.get("cmo_analysis") or []),
+        ("a", (nbo.get("alpha_spin") or {}).get("cmo_analysis") or []),
+        ("b", (nbo.get("beta_spin") or {}).get("cmo_analysis") or []),
+    )
+
+    for spin_key, entries in spin_sources:
+        for cmo in entries:
+            index = cmo.get("orca_orbital_index")
+            if index is None and cmo.get("mo_index") is not None:
+                try:
+                    index = int(cmo["mo_index"]) - 1
+                except (TypeError, ValueError):
+                    index = None
+            if index is None:
+                continue
+            lookup.setdefault(spin_key, {})[int(index)] = cmo
     return lookup
+
+
+def _resolve_cmo_entry(
+    cmo_lookup: CMOLookup,
+    index: int,
+    spin: Any = None,
+) -> Tuple[str, Optional[CMOEntry]]:
+    """Return the best-matching CMO entry for an orbital index/spin pair."""
+    spin_key = _normalize_spin_key(spin)
+
+    if spin_key and index in cmo_lookup.get(spin_key, {}):
+        return spin_key, cmo_lookup[spin_key][index]
+
+    if index in cmo_lookup.get("", {}):
+        return "", cmo_lookup[""][index]
+
+    if not spin_key:
+        for fallback_spin in ("a", "b"):
+            if index in cmo_lookup.get(fallback_spin, {}):
+                return fallback_spin, cmo_lookup[fallback_spin][index]
+
+    return "", None
 
 
 def format_transition_cmo_character(
     transition: Dict[str, Any],
-    cmo_lookup: Dict[int, Dict[str, Any]],
+    cmo_lookup: CMOLookup,
 ) -> str:
     """Format a TDDFT transition in terms of dominant NBO CMO character."""
     try:
@@ -89,8 +127,10 @@ def format_transition_cmo_character(
     except (TypeError, ValueError):
         return "—"
 
-    donor = _summarize_cmo_character(cmo_lookup.get(from_index), limit=2, with_percent=False)
-    acceptor = _summarize_cmo_character(cmo_lookup.get(to_index), limit=2, with_percent=False)
+    _, donor_entry = _resolve_cmo_entry(cmo_lookup, from_index, transition.get("from_spin"))
+    _, acceptor_entry = _resolve_cmo_entry(cmo_lookup, to_index, transition.get("to_spin"))
+    donor = _summarize_cmo_character(donor_entry, limit=2, with_percent=False)
+    acceptor = _summarize_cmo_character(acceptor_entry, limit=2, with_percent=False)
     if donor == "—" and acceptor == "—":
         return "—"
     return f"{donor} -> {acceptor}"
@@ -298,6 +338,7 @@ def _aggregate_cmo_character(entry: Dict[str, Any]) -> List[tuple[str, float]]:
         label = contribution.get("character_label") or contribution.get("nbo_desc")
         if not label:
             continue
+        label = _prettify_cmo_label(str(label))
         percent = contribution.get("approx_percent")
         if percent is None:
             coefficient = contribution.get("coefficient")
@@ -307,6 +348,17 @@ def _aggregate_cmo_character(entry: Dict[str, Any]) -> List[tuple[str, float]]:
                 percent = 0.0
         totals[str(label)] = totals.get(str(label), 0.0) + float(percent)
     return sorted(totals.items(), key=lambda item: item[1], reverse=True)
+
+
+def _prettify_cmo_label(label: str) -> str:
+    """Render compact orbital-character labels with Greek symbols for markdown."""
+    return (
+        label
+        .replace("sigma*", "σ*")
+        .replace("sigma(", "σ(")
+        .replace("pi*", "π*")
+        .replace("pi(", "π(")
+    )
 
 
 def _summarize_cmo_character(
@@ -332,14 +384,14 @@ def _summarize_cmo_character(
 
 def _collect_relevant_cmo_indices(
     data: Dict[str, Any],
-    cmo_lookup: Dict[int, Dict[str, Any]],
+    cmo_lookup: CMOLookup,
     *,
     state_limit: int = 10,
     frontier_window: int = 8,
-) -> List[int]:
+) -> List[Tuple[str, int]]:
     """Choose the most relevant canonical orbitals to display."""
-    indices: List[int] = []
-    seen: set[int] = set()
+    indices: List[Tuple[str, int]] = []
+    seen: set[Tuple[str, int]] = set()
 
     tddft = data.get("tddft", {})
     final_block = tddft.get("final_excited_state_block")
@@ -362,16 +414,33 @@ def _collect_relevant_cmo_indices(
                     index = int(value)
                 except (TypeError, ValueError):
                     continue
-                if index in cmo_lookup and index not in seen:
-                    indices.append(index)
-                    seen.add(index)
+                spin_value = dominant.get("from_spin") if key == "from_index" else dominant.get("to_spin")
+                spin_key, entry = _resolve_cmo_entry(cmo_lookup, index, spin_value)
+                if entry is None:
+                    continue
+                resolved = (spin_key, index)
+                if resolved not in seen:
+                    indices.append(resolved)
+                    seen.add(resolved)
         if indices:
-            return sorted(indices)
+            return sorted(indices, key=lambda item: (item[0], item[1]))
 
-    occupied = sorted(index for index, cmo in cmo_lookup.items() if cmo.get("type") == "occ")
-    virtual = sorted(index for index, cmo in cmo_lookup.items() if cmo.get("type") == "vir")
-    fallback = occupied[-frontier_window:] + virtual[:frontier_window]
-    return [index for index in fallback if index in cmo_lookup]
+    fallback: List[Tuple[str, int]] = []
+    for spin_key in ("", "a", "b"):
+        spin_entries = cmo_lookup.get(spin_key, {})
+        if not spin_entries:
+            continue
+        occupied = sorted(index for index, cmo in spin_entries.items() if cmo.get("type") == "occ")
+        virtual = sorted(index for index, cmo in spin_entries.items() if cmo.get("type") == "vir")
+        fallback.extend((spin_key, index) for index in occupied[-frontier_window:])
+        fallback.extend((spin_key, index) for index in virtual[:frontier_window])
+
+    deduped: List[Tuple[str, int]] = []
+    for item in fallback:
+        if item not in seen:
+            deduped.append(item)
+            seen.add(item)
+    return deduped
 
 
 def _render_natural_electron_configuration(
@@ -414,19 +483,28 @@ def _render_cmo_analysis_section(
     if not indices:
         return ""
 
-    rows = [("ORCA MO", "CMO MO", "Type", "E (Eh)", "Leading character", "Top contributions")]
-    for index in indices:
-        entry = cmo_lookup.get(index)
+    spin_specific = any(key in {"a", "b"} and values for key, values in cmo_lookup.items())
+    header = ["ORCA MO"]
+    if spin_specific:
+        header.append("Spin")
+    header.extend(["CMO MO", "Type", "E (Eh)", "Leading character", "Top contributions"])
+    rows = [tuple(header)]
+
+    for spin_key, index in indices:
+        entry = cmo_lookup.get(spin_key, {}).get(index)
         if not entry:
             continue
-        rows.append((
-            str(index),
+        row = [str(index)]
+        if spin_specific:
+            row.append({"a": "α", "b": "β"}.get(spin_key, "—"))
+        row.extend([
             str(entry.get("nbo_mo_index", entry.get("mo_index", ""))),
             str(entry.get("type", "")),
             _format_optional_float(entry.get("energy_au"), ".5f"),
             _summarize_cmo_character(entry, limit=1, with_percent=False),
             _summarize_cmo_character(entry, limit=3, with_percent=True),
-        ))
+        ])
+        rows.append(tuple(row))
 
     if len(rows) == 1:
         return ""

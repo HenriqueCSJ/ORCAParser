@@ -43,6 +43,7 @@ from .markdown_sections_basic import (
     render_basis_set_section as _render_basic_basis_set_section,
     render_dipole_section as _render_basic_dipole_section,
     render_geom_opt_section as _render_basic_geom_opt_section,
+    render_goat_section as _render_basic_goat_section,
     render_solvation_section as _render_basic_solvation_section,
     render_surface_scan_section as _render_basic_surface_scan_section,
 )
@@ -71,6 +72,25 @@ def _format_deltascf_vector(values: Any) -> str:
 def _deltascf_target_summary(deltascf: Dict[str, Any]) -> str:
     """Preserve markdown-friendly numeric formatting for DeltaSCF targets."""
     return _shared_deltascf_target_summary(deltascf, formatter=_f)
+
+
+def _method_header_label(meta: Dict[str, Any], ctx: Dict[str, Any]) -> str:
+    """Preferred single-line method label for molecule headers."""
+    if meta.get("level_of_theory"):
+        return str(meta["level_of_theory"])
+
+    func = meta.get("functional", "?")
+    basis = meta.get("basis_set", "?")
+    return f"{ctx.get('hf_type', '?')} {func}/{basis}"
+
+
+def _method_table_label(meta: Dict[str, Any], ctx: Dict[str, Any]) -> str:
+    """Preferred method label for comparison tables."""
+    if meta.get("method"):
+        return str(meta["method"])
+    if meta.get("functional"):
+        return str(meta["functional"])
+    return ctx.get("hf_type", "?")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -118,19 +138,17 @@ def _render_molecule(
 
     # ── Title ──────────────────────────────────────────────────────────────
     job   = display_label or meta.get("job_name", src_path.stem)
-    func  = meta.get("functional", "?")
-    basis = meta.get("basis_set",  "?")
-    hftyp = ctx.get("hf_type", "RHF")
     charge = meta.get("charge", 0)
     mult   = meta.get("multiplicity", 1)
     state_label = _electronic_state_label(data)
     sym_label = _symmetry_inline_label(data)
     state  = f"  state={state_label}" if state_label else ""
     sym    = f"  symmetry={sym_label}" if sym_label else ""
+    job_id = meta.get("job_id") or data.get("source_file", "")
     blocks.append(
         f"{H} {job}\n"
-        f"`{hftyp} {func}/{basis}` | charge={charge} mult={mult}{state}{sym}  \n"
-        f"source: `{src}`"
+        f"`{_method_header_label(meta, ctx)}` | charge={charge} mult={mult}{state}{sym}  \n"
+        f"source: `{src}` | id: `{job_id}`"
     )
 
     # ── SCF summary ────────────────────────────────────────────────────────
@@ -189,6 +207,12 @@ def _render_molecule(
         surface_scan_section = _render_surface_scan_section(surface_scan)
         if surface_scan_section:
             blocks.append(f"{H2} Relaxed Surface Scan\n{surface_scan_section}")
+
+    goat = data.get("goat")
+    if goat:
+        goat_section = _render_goat_section(goat)
+        if goat_section:
+            blocks.append(f"{H2} GOAT Conformer Search\n{goat_section}")
 
     # -- Geometry optimization summary -----------------------------------
     geom_opt = data.get("geom_opt")
@@ -361,8 +385,8 @@ def _render_comparison(datasets: List[Dict[str, Any]]) -> str:
         ctx  = d.get("context",  {})
         rows.append((
             lbl,
-            f"{ctx.get('hf_type','?')} {meta.get('functional','?')}",
-            meta.get("basis_set", "?"),
+            _method_table_label(meta, ctx),
+            meta.get("basis_set", "—") or "—",
             str(meta.get("charge", "?")),
             str(meta.get("multiplicity", "?")),
             _electronic_state_label(d) or "ground-state",
@@ -776,6 +800,15 @@ def _render_surface_scan_section(surface_scan: Dict[str, Any]) -> str:
     """Compact relaxed surface scan summary for markdown reports."""
     return _render_basic_surface_scan_section(
         surface_scan,
+        format_number=_f,
+        make_table=_table,
+    )
+
+
+def _render_goat_section(goat: Dict[str, Any]) -> str:
+    """Compact GOAT conformer-search summary for markdown reports."""
+    return _render_basic_goat_section(
+        goat,
         format_number=_f,
         make_table=_table,
     )
