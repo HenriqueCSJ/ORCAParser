@@ -43,6 +43,15 @@ def _find_exact_label(lines: List[str], label: str, start: int = 0) -> int:
     return -1
 
 
+def _find_last_exact_label(lines: List[str], label: str, start: int = 0) -> int:
+    """Return the index of the last line whose stripped uppercase text equals *label*."""
+    target = label.strip().upper()
+    for i in range(len(lines) - 1, start - 1, -1):
+        if lines[i].strip().upper() == target:
+            return i
+    return -1
+
+
 def _parse_reduced_orbital_charges(
     lines: List[str],
     start: int,
@@ -146,7 +155,7 @@ class MullikenModule(BaseModule):
         else:
             header = "MULLIKEN ATOMIC CHARGES"
 
-        idx = self.find_line(lines, header)
+        idx = _find_last_exact_label(lines, header)
         if idx == -1:
             return None
 
@@ -161,7 +170,7 @@ class MullikenModule(BaseModule):
                 data["sum_of_charges"] = float(m.group(1))
 
         # --- Reduced orbital charges ---
-        idx_red = self.find_line(lines, "MULLIKEN REDUCED ORBITAL CHARGES")
+        idx_red = _find_last_exact_label(lines, "MULLIKEN REDUCED ORBITAL CHARGES")
         if idx_red != -1:
             idx_charge = _find_exact_label(lines, "CHARGE", idx_red)
             charge_start = idx_charge + 1 if idx_charge != -1 else idx_red + 2
@@ -183,7 +192,7 @@ class MullikenModule(BaseModule):
                     data["reduced_orbital_charges"] = blocks
 
         # --- Frontier MO population analysis ---
-        idx_fmo = self.find_line(lines, "FRONTIER MOLECULAR ORBITAL POPULATION ANALYSIS")
+        idx_fmo = _find_last_exact_label(lines, "FRONTIER MOLECULAR ORBITAL POPULATION ANALYSIS")
         if idx_fmo != -1:
             fmo_data = []
             for ln in lines[idx_fmo + 5:]:
@@ -253,14 +262,14 @@ class LoewdinModule(BaseModule):
         is_uhf = self.context.get("is_uhf", False)
 
         header = "LOEWDIN ATOMIC CHARGES AND SPIN POPULATIONS" if is_uhf else "LOEWDIN ATOMIC CHARGES"
-        idx = self.find_line(lines, header)
+        idx = _find_last_exact_label(lines, header)
         if idx == -1:
             return None
 
         atoms = _parse_atomic_values(lines, idx + 2, n_cols=2 if is_uhf else 1)
         data["atomic_charges"] = atoms
 
-        idx_red = self.find_line(lines, "LOEWDIN REDUCED ORBITAL CHARGES")
+        idx_red = _find_last_exact_label(lines, "LOEWDIN REDUCED ORBITAL CHARGES")
         if idx_red != -1:
             idx_charge = _find_exact_label(lines, "CHARGE", idx_red)
             charge_start = idx_charge + 1 if idx_charge != -1 else idx_red + 2
@@ -298,7 +307,7 @@ class MayerModule(BaseModule):
     def parse(self, lines):
         data = {}
 
-        idx = self.find_line(lines, "MAYER POPULATION ANALYSIS")
+        idx = self.find_last_line(lines, "MAYER POPULATION ANALYSIS")
         if idx == -1:
             return None
 
@@ -362,7 +371,7 @@ class HirshfeldModule(BaseModule):
 
     def parse(self, lines):
         data = {}
-        idx = self.find_line(lines, "HIRSHFELD ANALYSIS")
+        idx = self.find_last_line(lines, "HIRSHFELD ANALYSIS")
         if idx == -1:
             return None
 
@@ -410,7 +419,7 @@ class MBISModule(BaseModule):
 
     def parse(self, lines):
         data = {}
-        idx = self.find_line(lines, "MBIS ANALYSIS")
+        idx = self.find_last_line(lines, "MBIS ANALYSIS")
         if idx == -1:
             return None
 
@@ -477,7 +486,7 @@ class CHELPGModule(BaseModule):
 
     def parse(self, lines):
         data = {}
-        idx = self.find_line(lines, "CHELPG CHARGES GENERATION")
+        idx = self.find_last_line(lines, "CHELPG CHARGES GENERATION")
         if idx == -1:
             return None
 

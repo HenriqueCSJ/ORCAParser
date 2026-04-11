@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import uuid
 from pathlib import Path
 
@@ -28,6 +29,133 @@ def _parse_with_sections(path: Path, sections: list[str]) -> ORCAParser:
     return parser
 
 
+def _read_lines(path: Path) -> list[str]:
+    return path.read_text(encoding="utf-8", errors="replace").splitlines()
+
+
+def _find_last_exact(lines: list[str], label: str) -> int:
+    target = label.strip().upper()
+    for i in range(len(lines) - 1, -1, -1):
+        if lines[i].strip().upper() == target:
+            return i
+    raise AssertionError(f"Could not find exact label: {label}")
+
+
+def _extract_last_cartesian_angstrom(lines: list[str]) -> list[dict[str, float | str]]:
+    idx = _find_last_exact(lines, "CARTESIAN COORDINATES (ANGSTROEM)")
+    atoms: list[dict[str, float | str]] = []
+    for line in lines[idx + 2:]:
+        match = re.match(r"\s+(\w+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)", line)
+        if match:
+            atoms.append(
+                {
+                    "symbol": match.group(1),
+                    "x_ang": float(match.group(2)),
+                    "y_ang": float(match.group(3)),
+                    "z_ang": float(match.group(4)),
+                }
+            )
+        elif atoms and not line.strip():
+            break
+    return atoms
+
+
+def _extract_last_orbital_summary(lines: list[str]) -> dict[str, float | int]:
+    idx = _find_last_exact(lines, "ORBITAL ENERGIES")
+    orbitals: list[dict[str, float | int]] = []
+    for line in lines[idx + 1:]:
+        match = re.match(
+            r"\s+(\d+)\s+([\d.]+)\s+([-\d.]+)\s+([-\d.]+)(?:\s+\S+)?",
+            line,
+        )
+        if match:
+            orbitals.append(
+                {
+                    "index": int(match.group(1)),
+                    "occupation": float(match.group(2)),
+                    "energy_Eh": float(match.group(3)),
+                    "energy_eV": float(match.group(4)),
+                }
+            )
+        elif orbitals and (not line.strip() or "MOLECULAR ORBITALS" in line or "---" in line):
+            break
+
+    homo = None
+    lumo = None
+    for orbital in orbitals:
+        if orbital["occupation"] > 0.5:
+            homo = orbital
+        elif homo is not None and lumo is None:
+            lumo = orbital
+            break
+
+    assert homo is not None
+    assert lumo is not None
+
+    return {
+        "HOMO_index": int(homo["index"]),
+        "HOMO_energy_Eh": float(homo["energy_Eh"]),
+        "HOMO_energy_eV": float(homo["energy_eV"]),
+        "LUMO_index": int(lumo["index"]),
+        "LUMO_energy_Eh": float(lumo["energy_Eh"]),
+        "LUMO_energy_eV": float(lumo["energy_eV"]),
+        "HOMO_LUMO_gap_eV": float(lumo["energy_eV"]) - float(homo["energy_eV"]),
+    }
+
+
+def _extract_last_mulliken_charge(lines: list[str], atom_index: int) -> float:
+    idx = _find_last_exact(lines, "MULLIKEN ATOMIC CHARGES")
+    charges: dict[int, float] = {}
+    for line in lines[idx + 2:]:
+        match = re.match(r"\s+(\d+)\s+(\w+)\s*:\s+([-\d.]+)", line)
+        if match:
+            charges[int(match.group(1))] = float(match.group(3))
+        elif charges and ("Sum of atomic charges" in line or not line.strip()):
+            break
+    return charges[atom_index]
+
+
+def _extract_last_mayer_bond_order(
+    lines: list[str],
+    atom_i: int,
+    atom_j: int,
+) -> float:
+    idx = max(i for i, line in enumerate(lines) if "MAYER POPULATION ANALYSIS" in line.upper())
+    idx_bo = next(
+        i for i in range(idx, len(lines))
+        if "Mayer bond orders larger than" in lines[i]
+    )
+    bond_orders: dict[tuple[int, int], float] = {}
+    for line in lines[idx_bo + 1:]:
+        found = False
+        for match in re.finditer(
+            r"B\(\s*(\d+)-(\w+)\s*,\s*(\d+)-(\w+)\s*\)\s*:\s*([-\d.]+)",
+            line,
+        ):
+            key = tuple(sorted((int(match.group(1)), int(match.group(3)))))
+            bond_orders[key] = float(match.group(5))
+            found = True
+        if bond_orders and not found and not line.strip():
+            break
+    return bond_orders[tuple(sorted((atom_i, atom_j)))]
+
+
+def _extract_last_total_dipole(lines: list[str]) -> dict[str, float]:
+    idx = _find_last_exact(lines, "DIPOLE MOMENT")
+    for line in lines[idx: idx + 40]:
+        match = re.search(
+            r"Total Dipole Moment\s+:\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)",
+            line,
+        )
+        if match:
+            return {
+                "x": float(match.group(1)),
+                "y": float(match.group(2)),
+                "z": float(match.group(3)),
+            }
+    raise AssertionError("Could not extract final dipole moment")
+
+
 @pytest.fixture(scope="module")
 def goat_parser() -> ORCAParser:
     return _parse_quick(GOAT_OUT)
@@ -51,6 +179,16 @@ def s1_parser() -> ORCAParser:
 @pytest.fixture(scope="module")
 def tddft_parser() -> ORCAParser:
     return _parse_quick(TDDFT_OUT)
+
+
+@pytest.fixture(scope="module")
+def s0_final_step_parser() -> ORCAParser:
+    return _parse_with_sections(S0_OUT, ["charges", "population", "mos", "dipole"])
+
+
+@pytest.fixture(scope="module")
+def s1_final_step_parser() -> ORCAParser:
+    return _parse_with_sections(S1_OUT, ["charges", "population", "mos", "dipole"])
 
 
 def test_rdb_lmmp_goat_uses_input_echo_for_method_energy_and_id(
@@ -176,3 +314,54 @@ def test_rdb_lmmp_markdown_and_comparison_use_input_driven_labels(
     assert "-2089.8906388712" in comparison_text
     assert "-2089.7379116584" in comparison_text
     assert "-2082.9741422716" in comparison_text
+
+
+def test_rdb_lmmp_s1_uses_final_geometry_step_for_geometry_dependent_properties(
+    s0_final_step_parser: ORCAParser,
+    s1_final_step_parser: ORCAParser,
+) -> None:
+    s1_lines = _read_lines(S1_OUT)
+    raw_s1_geometry = _extract_last_cartesian_angstrom(s1_lines)
+    raw_s1_orbitals = _extract_last_orbital_summary(s1_lines)
+    raw_s1_mulliken_c0 = _extract_last_mulliken_charge(s1_lines, 0)
+    raw_s1_mayer_01 = _extract_last_mayer_bond_order(s1_lines, 0, 1)
+    raw_s1_dipole = _extract_last_total_dipole(s1_lines)
+
+    s0_geometry = s0_final_step_parser.data["geometry"]["cartesian_angstrom"]
+    s1_geometry = s1_final_step_parser.data["geometry"]["cartesian_angstrom"]
+    s0_orbitals = s0_final_step_parser.data["orbital_energies"]
+    s1_orbitals = s1_final_step_parser.data["orbital_energies"]
+    s1_mulliken = s1_final_step_parser.data["mulliken"]["atomic_charges"]
+    s1_mayer = s1_final_step_parser.data["mayer"]["bond_orders"]
+    s1_dipole = s1_final_step_parser.data["dipole"]["total_dipole_au"]
+
+    assert len(raw_s1_geometry) == len(s1_geometry)
+    assert s1_geometry[0]["symbol"] == raw_s1_geometry[0]["symbol"] == "C"
+    assert s1_geometry[0]["x_ang"] == pytest.approx(raw_s1_geometry[0]["x_ang"])
+    assert s1_geometry[0]["y_ang"] == pytest.approx(raw_s1_geometry[0]["y_ang"])
+    assert s1_geometry[0]["z_ang"] == pytest.approx(raw_s1_geometry[0]["z_ang"])
+    assert s1_geometry[1]["x_ang"] == pytest.approx(raw_s1_geometry[1]["x_ang"])
+    assert s1_geometry[2]["z_ang"] == pytest.approx(raw_s1_geometry[2]["z_ang"])
+
+    assert s1_geometry[0]["x_ang"] != pytest.approx(s0_geometry[0]["x_ang"])
+    assert s1_geometry[0]["y_ang"] != pytest.approx(s0_geometry[0]["y_ang"])
+    assert s1_geometry[0]["z_ang"] != pytest.approx(s0_geometry[0]["z_ang"])
+
+    assert s1_orbitals["HOMO_index"] == raw_s1_orbitals["HOMO_index"]
+    assert s1_orbitals["LUMO_index"] == raw_s1_orbitals["LUMO_index"]
+    assert s1_orbitals["HOMO_energy_eV"] == pytest.approx(raw_s1_orbitals["HOMO_energy_eV"])
+    assert s1_orbitals["LUMO_energy_eV"] == pytest.approx(raw_s1_orbitals["LUMO_energy_eV"])
+    assert s1_orbitals["HOMO_LUMO_gap_eV"] == pytest.approx(raw_s1_orbitals["HOMO_LUMO_gap_eV"])
+
+    assert s1_orbitals["HOMO_energy_eV"] != pytest.approx(s0_orbitals["HOMO_energy_eV"])
+    assert s1_orbitals["LUMO_energy_eV"] != pytest.approx(s0_orbitals["LUMO_energy_eV"])
+
+    assert s1_mulliken[0]["charge"] == pytest.approx(raw_s1_mulliken_c0)
+    assert any(
+        tuple(sorted((bond["atom_i"], bond["atom_j"]))) == (0, 1)
+        and bond["bond_order"] == pytest.approx(raw_s1_mayer_01)
+        for bond in s1_mayer
+    )
+    assert s1_dipole["x"] == pytest.approx(raw_s1_dipole["x"])
+    assert s1_dipole["y"] == pytest.approx(raw_s1_dipole["y"])
+    assert s1_dipole["z"] == pytest.approx(raw_s1_dipole["z"])
