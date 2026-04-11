@@ -1,0 +1,2 @@
+block_index,excitation_method,root,optimization_cycle,state_of_interest,current_iroot,scf_energy_Eh,delta_energy_Eh,total_energy_Eh,maximum_memory_MB,followiroot_runtime,input_electron_density
+0,CIS,1,,,,-2083.150138371,0.175996099,-2082.974142272,6001.0,,
