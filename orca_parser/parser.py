@@ -422,14 +422,23 @@ class ORCAParser:
             compression_opts=compression_opts,
         )
 
-    def to_markdown(self, path: str | Path) -> Path:
+    def to_markdown(
+        self,
+        path: str | Path,
+        *,
+        goat_max_relative_energy_kcal_mol: Optional[float] = None,
+    ) -> Path:
         """Write a compact, AI-readable markdown report.
 
         Designed for feeding into LLMs for paper writing: maximum information
         density, publication-ready tables, spin diagnostics up front.
         """
         from .output.markdown_writer import write_markdown
-        return write_markdown(self.data, Path(path))
+        return write_markdown(
+            self.data,
+            Path(path),
+            goat_max_relative_energy_kcal_mol=goat_max_relative_energy_kcal_mol,
+        )
 
     # ---------------------------------------------------------------- #
     # Class-level utilities                                             #
@@ -440,6 +449,8 @@ class ORCAParser:
         cls,
         parsers: "list[ORCAParser]",
         path: str | Path,
+        *,
+        goat_max_relative_energy_kcal_mol: Optional[float] = 10.0,
     ) -> Path:
         """Write a multi-molecule comparison markdown document.
 
@@ -452,7 +463,11 @@ class ORCAParser:
         """
         from .output.markdown_writer import write_comparison
         datasets = [p.data for p in parsers]
-        return write_comparison(datasets, Path(path))
+        return write_comparison(
+            datasets,
+            Path(path),
+            goat_max_relative_energy_kcal_mol=goat_max_relative_energy_kcal_mol,
+        )
 
 
 

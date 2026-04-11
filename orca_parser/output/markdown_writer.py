@@ -97,19 +97,41 @@ def _method_table_label(meta: Dict[str, Any], ctx: Dict[str, Any]) -> str:
 # Public entry points
 # ─────────────────────────────────────────────────────────────────────────────
 
-def write_markdown(data: Dict[str, Any], path: Path) -> Path:
+def write_markdown(
+    data: Dict[str, Any],
+    path: Path,
+    *,
+    goat_max_relative_energy_kcal_mol: Optional[float] = None,
+) -> Path:
     """Write a single-molecule markdown report."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(_render_molecule(data), encoding="utf-8")
+    path.write_text(
+        _render_molecule(
+            data,
+            goat_max_relative_energy_kcal_mol=goat_max_relative_energy_kcal_mol,
+        ),
+        encoding="utf-8",
+    )
     return path
 
 
-def write_comparison(datasets: List[Dict[str, Any]], path: Path) -> Path:
+def write_comparison(
+    datasets: List[Dict[str, Any]],
+    path: Path,
+    *,
+    goat_max_relative_energy_kcal_mol: Optional[float] = 10.0,
+) -> Path:
     """Write a multi-molecule comparison markdown document."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(_render_comparison(datasets), encoding="utf-8")
+    path.write_text(
+        _render_comparison(
+            datasets,
+            goat_max_relative_energy_kcal_mol=goat_max_relative_energy_kcal_mol,
+        ),
+        encoding="utf-8",
+    )
     return path
 
 
@@ -122,6 +144,7 @@ def _render_molecule(
     heading_level: int = 1,
     display_label: Optional[str] = None,
     source_display: Optional[str] = None,
+    goat_max_relative_energy_kcal_mol: Optional[float] = None,
 ) -> str:
     """Full markdown report for one molecule."""
     H = "#" * heading_level
@@ -210,7 +233,10 @@ def _render_molecule(
 
     goat = data.get("goat")
     if goat:
-        goat_section = _render_goat_section(goat)
+        goat_section = _render_goat_section(
+            goat,
+            max_relative_energy_kcal_mol=goat_max_relative_energy_kcal_mol,
+        )
         if goat_section:
             blocks.append(f"{H2} GOAT Conformer Search\n{goat_section}")
 
@@ -369,7 +395,11 @@ def _render_molecule(
 # Multi-molecule comparison renderer
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _render_comparison(datasets: List[Dict[str, Any]]) -> str:
+def _render_comparison(
+    datasets: List[Dict[str, Any]],
+    *,
+    goat_max_relative_energy_kcal_mol: Optional[float] = 10.0,
+) -> str:
     """Comparison document: overview table + individual molecule sections."""
     if not datasets:
         return "# ORCA Comparison\n\n*No data provided.*\n"
@@ -621,6 +651,7 @@ def _render_comparison(datasets: List[Dict[str, Any]]) -> str:
             heading_level=2,
             display_label=lbl,
             source_display=lbl,
+            goat_max_relative_energy_kcal_mol=goat_max_relative_energy_kcal_mol,
         ))
 
     return "\n\n".join(blocks) + "\n"
@@ -805,12 +836,17 @@ def _render_surface_scan_section(surface_scan: Dict[str, Any]) -> str:
     )
 
 
-def _render_goat_section(goat: Dict[str, Any]) -> str:
+def _render_goat_section(
+    goat: Dict[str, Any],
+    *,
+    max_relative_energy_kcal_mol: Optional[float] = None,
+) -> str:
     """Compact GOAT conformer-search summary for markdown reports."""
     return _render_basic_goat_section(
         goat,
         format_number=_f,
         make_table=_table,
+        max_relative_energy_kcal_mol=max_relative_energy_kcal_mol,
     )
 
 

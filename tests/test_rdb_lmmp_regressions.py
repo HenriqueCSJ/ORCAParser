@@ -279,7 +279,7 @@ def test_rdb_lmmp_markdown_and_comparison_use_input_driven_labels(
 
     tddft_parser.to_markdown(markdown_path)
     ORCAParser.compare(
-        [goat_parser, s0_parser, s1_parser, tddft_parser],
+        [goat_full_parser, s0_parser, s1_parser, tddft_parser],
         comparison_path,
     )
 
@@ -300,7 +300,8 @@ def test_rdb_lmmp_markdown_and_comparison_use_input_driven_labels(
     assert "**Conformers:** 1147" in goat_markdown_text
     assert "**Sconf:** 9.95 cal/(molK)" in goat_markdown_text
     assert "RDB_LMMPa.globalminimum.xyz" in goat_markdown_text
-    assert "Showing first 15 and last 5 of 1147 conformers" in goat_markdown_text
+    assert "Showing all 1147 conformers." in goat_markdown_text
+    assert "| 100       | 2.1700" in goat_markdown_text
     assert "lowest_energy_conformer_Eh" in goat_summary_text
     assert "-134.77823" in goat_summary_text
     assert "conformer,relative_energy_kcal_mol,degeneracy,percent_total,percent_cumulative" in goat_ensemble_text
@@ -310,10 +311,36 @@ def test_rdb_lmmp_markdown_and_comparison_use_input_driven_labels(
     assert "| S0/RDB_LMMP_S0_CH2Cl2.out       | LibXC(wB97X-D4)" in comparison_text
     assert "| S1/RDB_LMMP_S1_CH2Cl2.out       | LibXC(wB97X-D4)" in comparison_text
     assert "| TDDFT/RDB_LMMP_TDDFT_CH2Cl2.out | SOS-wPBEPP86" in comparison_text
+    assert "Showing all 1147 conformers (all within dE <= 10.0000 kcal/mol)." in comparison_text
     assert "-134.7631015236" in comparison_text
     assert "-2089.8906388712" in comparison_text
     assert "-2089.7379116584" in comparison_text
     assert "-2082.9741422716" in comparison_text
+
+
+def test_goat_markdown_cutoff_can_be_overridden(goat_full_parser: ORCAParser) -> None:
+    tmp_dir = REPO_ROOT / ".pytest_tmp" / f"rdb_lmmp_goat_cutoff_{uuid.uuid4().hex}"
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+
+    limited_markdown_path = tmp_dir / "rdb_lmmp_goat_limited.md"
+    goat_full_parser.to_markdown(
+        limited_markdown_path,
+        goat_max_relative_energy_kcal_mol=3.0,
+    )
+    limited_markdown_text = limited_markdown_path.read_text(encoding="utf-8")
+
+    compare_full_path = tmp_dir / "comparison_full_goat.md"
+    ORCAParser.compare(
+        [goat_full_parser],
+        compare_full_path,
+        goat_max_relative_energy_kcal_mol=None,
+    )
+    compare_full_text = compare_full_path.read_text(encoding="utf-8")
+
+    assert "Showing 229 of 1147 conformers with dE <= 3.0000 kcal/mol." in limited_markdown_text
+    assert "| 228       | 2.9970" in limited_markdown_text
+    assert "| 229       | 3.0260" not in limited_markdown_text
+    assert "Showing all 1147 conformers." in compare_full_text
 
 
 def test_rdb_lmmp_s1_uses_final_geometry_step_for_geometry_dependent_properties(
