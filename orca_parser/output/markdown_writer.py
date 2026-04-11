@@ -19,19 +19,14 @@ from ..final_snapshot import (
     get_final_geometry as _get_final_geometry,
     get_final_orbital_energies as _get_final_orbital_energies,
 )
-from ..job_series import (
-    get_geom_opt_series as _get_geom_opt_series,
-    get_goat_series as _get_goat_series,
-    get_surface_scan_series as _get_surface_scan_series,
+from ..job_family_registry import (
+    get_calculation_family_plugin as _get_calculation_family_plugin,
+    iter_active_comparison_family_plugins as _iter_active_comparison_family_plugins,
 )
 from .job_state import (
-    deltascf_target_summary as _shared_deltascf_target_summary,
     electronic_state_label as _electronic_state_label,
-    excited_state_target_label as _excited_state_target_label,
     get_basis_set as _get_basis_set,
     get_charge as _get_charge,
-    format_deltascf_vector as _shared_format_deltascf_vector,
-    get_deltascf_data as _get_deltascf_data,
     get_excited_state_opt_data as _get_excited_state_opt_data,
     get_method_header_label as _get_method_header_label,
     get_method_table_label as _get_method_table_label,
@@ -41,8 +36,6 @@ from .job_state import (
     get_symmetry_data as _get_symmetry_data,
     has_symmetry as _has_symmetry,
     has_symmetry_setup as _has_symmetry_setup,
-    is_deltascf as _is_deltascf,
-    is_excited_state_opt as _is_excited_state_opt,
     symmetry_inline_label as _symmetry_inline_label,
     symmetry_on_off as _symmetry_on_off,
     yes_no_unknown as _yes_no_unknown,
@@ -59,10 +52,7 @@ from .markdown_sections_analysis import (
 from .markdown_sections_basic import (
     render_basis_set_section as _render_basic_basis_set_section,
     render_dipole_section as _render_basic_dipole_section,
-    render_geom_opt_section as _render_basic_geom_opt_section,
-    render_goat_section as _render_basic_goat_section,
     render_solvation_section as _render_basic_solvation_section,
-    render_surface_scan_section as _render_basic_surface_scan_section,
 )
 from .markdown_sections_spectroscopy import (
     epr_g_iso as _epr_g_iso,
@@ -71,24 +61,10 @@ from .markdown_sections_spectroscopy import (
     render_epr_section as _render_spectroscopy_epr_section,
     render_tddft_section as _render_spectroscopy_tddft_section,
 )
-from .markdown_sections_state import (
-    render_deltascf_section as _render_state_deltascf_section,
-    render_excited_state_opt_section as _render_state_excited_state_opt_section,
-    render_symmetry_section as _render_state_symmetry_section,
-)
+from .markdown_sections_state import render_symmetry_section as _render_state_symmetry_section
 
 
 AU_TO_DEBYE = 2.541746473
-
-
-def _format_deltascf_vector(values: Any) -> str:
-    """Preserve markdown-friendly numeric formatting for DeltaSCF vectors."""
-    return _shared_format_deltascf_vector(values, formatter=_f)
-
-
-def _deltascf_target_summary(deltascf: Dict[str, Any]) -> str:
-    """Preserve markdown-friendly numeric formatting for DeltaSCF targets."""
-    return _shared_deltascf_target_summary(deltascf, formatter=_f)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -215,35 +191,18 @@ def _render_molecule(
     if symmetry_section:
         blocks.append(f"{H2} Symmetry\n{symmetry_section}")
 
-    deltascf_section = _render_deltascf_section(data)
-    if deltascf_section:
-        blocks.append(f"{H2} DeltaSCF / Excited-State Target\n{deltascf_section}")
-
-    excited_state_opt_section = _render_excited_state_opt_section(data)
-    if excited_state_opt_section:
-        blocks.append(f"{H2} Excited-State Geometry Optimization\n{excited_state_opt_section}")
-
-    surface_scan = _get_surface_scan_series(data)
-    if surface_scan:
-        surface_scan_section = _render_surface_scan_section(surface_scan)
-        if surface_scan_section:
-            blocks.append(f"{H2} Relaxed Surface Scan\n{surface_scan_section}")
-
-    goat = _get_goat_series(data)
-    if goat:
-        goat_section = _render_goat_section(
-            goat,
-            max_relative_energy_kcal_mol=goat_max_relative_energy_kcal_mol,
-        )
-        if goat_section:
-            blocks.append(f"{H2} GOAT Conformer Search\n{goat_section}")
-
-    # -- Geometry optimization summary -----------------------------------
-    geom_opt = _get_geom_opt_series(data)
-    if geom_opt:
-        geom_opt_section = _render_geom_opt_section(geom_opt)
-        if geom_opt_section:
-            blocks.append(f"{H2} Geometry Optimization\n{geom_opt_section}")
+    family_plugin = _get_calculation_family_plugin(data)
+    if family_plugin.render_markdown_sections is not None:
+        # Family-specific sections are now owned by the family registry.
+        # That keeps new families out of this document assembler.
+        for heading, body in family_plugin.render_markdown_sections(
+            data,
+            _f,
+            _table,
+            goat_max_relative_energy_kcal_mol,
+        ):
+            if body:
+                blocks.append(f"{H2} {heading}\n{body}")
 
     # -- Solvation --------------------------------------------------------
     solvation = data.get("solvation")
@@ -420,33 +379,17 @@ def _render_comparison(
         ))
     blocks.append("## Methods\n" + _table(rows))
 
-    if any(_is_deltascf(d) for d in datasets):
-        rows = [("", "electronic state", "target", "metric", "keep ref")]
-        for lbl, d in zip(labels, datasets):
-            deltascf = _get_deltascf_data(d)
-            rows.append((
-                lbl,
-                _electronic_state_label(d) or "ground-state",
-                _deltascf_target_summary(deltascf) or "—",
-                deltascf.get("aufbau_metric") or "—",
-                _yes_no_unknown(deltascf.get("keep_initial_reference")),
-            ))
-        blocks.append("## DeltaSCF\n" + _table(rows))
-
-    if any(_is_excited_state_opt(d) for d in datasets):
-        rows = [("", "electronic state", "target", "input", "followiroot", "SOC grad", "final root")]
-        for lbl, d in zip(labels, datasets):
-            excopt = _get_excited_state_opt_data(d)
-            rows.append((
-                lbl,
-                _electronic_state_label(d) or "ground-state",
-                _excited_state_target_label(excopt) or "—",
-                f"%{excopt.get('input_block')}" if excopt.get("input_block") else "—",
-                _yes_no_unknown(excopt.get("followiroot")) if "followiroot" in excopt else "—",
-                _yes_no_unknown(excopt.get("socgrad")) if "socgrad" in excopt else "—",
-                str(excopt.get("final_root")) if excopt.get("final_root") is not None else "—",
-            ))
-        blocks.append("## Excited-State Optimization\n" + _table(rows))
+    family_plugins = _iter_active_comparison_family_plugins(datasets)
+    for family_plugin in [plugin for plugin in family_plugins if plugin.comparison_order < 50]:
+        for heading, body in family_plugin.render_comparison_sections(
+            datasets,
+            labels,
+            _f,
+            _table,
+            goat_max_relative_energy_kcal_mol,
+        ):
+            if body:
+                blocks.append(f"## {heading}\n{body}")
 
     if any(_has_symmetry(d) for d in datasets):
         rows = [("", "UseSym", "point group", "reduced", "orbital irreps", "n_irreps", "initial guess")]
@@ -503,28 +446,16 @@ def _render_comparison(
                     rows.append((lbl, _compact_irrep_counts(d)))
             blocks.append("## Symmetry Occupations\n" + _table(rows))
 
-    if any(d.get("surface_scan") for d in datasets):
-        rows = [("", "mode", "parameters", "steps", "coordinates", "span (kcal/mol)")]
-        for lbl, d in zip(labels, datasets):
-            scan = d.get("surface_scan") or {}
-            parameters = scan.get("parameters") or []
-            coord_summary = "; ".join(
-                f"{parameter.get('label', '?')} "
-                f"{_f(parameter.get('start'))}->{_f(parameter.get('end'))} "
-                f"({parameter.get('steps', '?')})"
-                if parameter.get("mode") != "values"
-                else f"{parameter.get('label', '?')} [{len(parameter.get('values') or [])} values]"
-                for parameter in parameters
-            ) or "—"
-            rows.append((
-                lbl,
-                scan.get("mode", "—"),
-                str(scan.get("n_parameters", "—")),
-                str(scan.get("n_constrained_optimizations", "—")),
-                coord_summary,
-                _f(scan.get("actual_energy_span_kcal_mol")),
-            ))
-        blocks.append("## Surface Scans\n" + _table(rows))
+    for family_plugin in [plugin for plugin in family_plugins if plugin.comparison_order >= 50]:
+        for heading, body in family_plugin.render_comparison_sections(
+            datasets,
+            labels,
+            _f,
+            _table,
+            goat_max_relative_energy_kcal_mol,
+        ):
+            if body:
+                blocks.append(f"## {heading}\n{body}")
 
     # ── Energy table ───────────────────────────────────────────────────────
     rows = [("", "E (Eh)", "⟨S²⟩", "ideal", "dipole (D)")]
@@ -823,38 +754,6 @@ def _render_basis_set_section(basis_set: Dict[str, Any]) -> str:
     )
 
 
-def _render_surface_scan_section(surface_scan: Dict[str, Any]) -> str:
-    """Compact relaxed surface scan summary for markdown reports."""
-    return _render_basic_surface_scan_section(
-        surface_scan,
-        format_number=_f,
-        make_table=_table,
-    )
-
-
-def _render_goat_section(
-    goat: Dict[str, Any],
-    *,
-    max_relative_energy_kcal_mol: Optional[float] = None,
-) -> str:
-    """Compact GOAT conformer-search summary for markdown reports."""
-    return _render_basic_goat_section(
-        goat,
-        format_number=_f,
-        make_table=_table,
-        max_relative_energy_kcal_mol=max_relative_energy_kcal_mol,
-    )
-
-
-def _render_geom_opt_section(geom_opt: Dict[str, Any]) -> str:
-    """Compact geometry-optimization summary for markdown reports."""
-    return _render_basic_geom_opt_section(
-        geom_opt,
-        format_number=_f,
-        make_table=_table,
-    )
-
-
 def _render_epr_section(epr: Dict[str, Any], heading_level: int = 3) -> str:
     """Compact EPR summary for markdown reports."""
     return _render_spectroscopy_epr_section(
@@ -963,30 +862,6 @@ def _render_symmetry_section(data: Dict[str, Any]) -> str:
         get_symmetry_data=_get_symmetry_data,
         symmetry_on_off=_symmetry_on_off,
         has_symmetry_setup=_has_symmetry_setup,
-        yes_no_unknown=_yes_no_unknown,
-        format_number=_f,
-        make_table=_table,
-    )
-
-
-def _render_deltascf_section(data: Dict[str, Any]) -> str:
-    """Render a dedicated DeltaSCF section for excited-state SCF jobs."""
-    return _render_state_deltascf_section(
-        data,
-        get_deltascf_data=_get_deltascf_data,
-        deltascf_target_summary=_deltascf_target_summary,
-        format_deltascf_vector=_format_deltascf_vector,
-        yes_no_unknown=_yes_no_unknown,
-        make_table=_table,
-    )
-
-
-def _render_excited_state_opt_section(data: Dict[str, Any]) -> str:
-    """Render CIS/TDDFT excited-state geometry-optimization metadata."""
-    return _render_state_excited_state_opt_section(
-        data,
-        get_excited_state_opt_data=_get_excited_state_opt_data,
-        excited_state_target_label=_excited_state_target_label,
         yes_no_unknown=_yes_no_unknown,
         format_number=_f,
         make_table=_table,
