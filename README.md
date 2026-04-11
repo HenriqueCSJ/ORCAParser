@@ -4,15 +4,17 @@ A modular Python parser for [ORCA](https://orcaforum.kofo.mpg.de/) quantum chemi
 
 ## Features
 
-- **19 parser modules** covering SCF energies, orbital data, implicit-solvation settings (CPCM/SMD/ALPB/COSMO-RS), TDDFT/CIS excited states and spectra, excited-state geometry optimizations, 6 population analysis schemes (Mulliken, Loewdin, Mayer, Hirshfeld, MBIS, CHELPG), dipole moments, NBO analysis, EPR properties, geometry optimizations, and relaxed surface scans
+- **20 parser modules** covering SCF energies, orbital data, implicit-solvation settings (CPCM/SMD/ALPB/COSMO-RS), TDDFT/CIS excited states and spectra, excited-state geometry optimizations, GOAT conformer searches, 6 population analysis schemes (Mulliken, Loewdin, Mayer, Hirshfeld, MBIS, CHELPG), dipole moments, NBO analysis, EPR properties, geometry optimizations, and relaxed surface scans
 - **4 output formats**: JSON (with optional gzip), CSV (one table per section), HDF5, and AI-readable Markdown
 - Handles both **RHF/RKS** and **UHF/UKS** calculations with spin-resolved data
 - **Geometry optimization** tracking: per-cycle energies, convergence criteria, trust radii, Kabsch-aligned RMSD (initial/final, step-to-step, mass-weighted)
+- **GOAT conformer-search** support: final ensemble tables, relative populations, energy windows, global-minimum/final-ensemble xyz files, and ensemble thermochemistry (`Sconf`, `Gconf`)
 - **Relaxed surface scan** support: scan coordinate definitions (`B`, `A`, `D`), simultaneous vs. nested scans, per-step energies, optimized `*.xyz` files, and detected `relaxscan*.dat` / `allxyz` sidecars
 - **DeltaSCF** metadata extraction: ALPHACONF/BETACONF, IONIZEALPHA/IONIZEBETA, occupation vectors, MOM/IMOM settings, with explicit excited-state labeling in Markdown and CSV outputs
 - **TDDFT/CIS excited-state optimization** support: `%tddft` / `%cis` targets (`IRoot`, `IRootMult`), `FOLLOWIROOT` / FIR controls, analytic excited-state gradient detection, per-cycle target-state history, and explicit `Sx` / `Tx` labeling in Markdown and CSV outputs
 - **EPR/EPR properties**: Zero-Field Splitting, g-tensor (with atomic breakdown), hyperfine coupling, EFG, quadrupole
 - **UseSym / point-group symmetry** support: detected point group, reduced/orbital irrep group, irrep occupations, and symmetry-perfected geometries when ORCA prints them
+- **Normalized parse-time views** for downstream development: `job_snapshot` (job identity/state/method labels), `job_series` (GOAT/optimization/scan histories), and `final_snapshot` (authoritative final-step geometry-dependent properties)
 - **Case-insensitive** keyword and section matching (ORCA is case-insensitive, so is this parser)
 - Selective section extraction via aliases (`charges`, `mos`, `bonds`, `opt`, `epr`, etc.)
 - Batch processing of multiple files with **multi-molecule comparison** reports
@@ -80,6 +82,12 @@ orca_parser geom_opt.out --sections opt --summary
 # Parse a relaxed surface scan and export its scan table
 orca_parser relaxscan.out --sections scan --markdown --csv
 
+# Parse a GOAT conformer search and export the final ensemble
+orca_parser conformers.out --sections goat --markdown --csv
+
+# Limit GOAT markdown to conformers within 3 kcal/mol
+orca_parser conformers.out --sections goat --markdown --goat-max-relative-energy-kcal 3
+
 # Extract EPR data (ZFS, g-tensor, hyperfine coupling)
 orca_parser radical.out --sections epr
 ```
@@ -118,6 +126,14 @@ if scan:
     print(f"Scan coordinates: {len(scan['parameters'])}")
     print(f"Scan steps: {len(scan['steps'])}")
 
+# Normalized parse-time views for downstream tooling
+job = data.get("job_snapshot", {})
+final = data.get("final_snapshot", {})
+series = data.get("job_series", {})
+print(job.get("calculation_family"))
+print(final.get("orbital_energies", {}).get("HOMO_energy_eV"))
+print(len(series.get("goat", {}).get("ensemble", [])))
+
 # Multi-molecule comparison
 p1, p2 = ORCAParser("mol1.out"), ORCAParser("mol2.out")
 p1.parse(); p2.parse()
@@ -143,6 +159,7 @@ ORCAParser.compare([p1, p2], "comparison.md")
 | **qro** | Quasi-Restricted Orbitals — DOMO/SOMO/VMO classification (UHF only) |
 | **solvation** | Implicit-solvation detection, model/solvent summary, `%cpcm`/`%cosmors` inputs, CPCM/SMD, ALPB, and COSMO-RS output blocks |
 | **tddft** | TDDFT/CIS input settings, excited-state configurations, NTOs, absorption/CD spectra, CIS/TDDFT total-energy summary, excited-state optimization target/root-follow metadata |
+| **goat** | GOAT global-minimum status, final ensemble, conformer populations, energy windows, and ensemble thermochemistry |
 | **surface_scan** | Relaxed scan definitions, scan mode, per-step coordinates, actual/SCF surface energies, optimized XYZ files, detected sidecar trajectory files |
 | **mulliken** | Mulliken charges, spin populations, reduced orbital charges |
 | **loewdin** | Loewdin charges, spin populations, reduced orbital charges |
@@ -161,7 +178,7 @@ Use aliases on the CLI to select groups of related sections:
 
 | Alias | Expands to |
 |-------|------------|
-| `all` | All 19 modules (default) |
+| `all` | All 20 modules (default) |
 | `charges` | mulliken, loewdin, hirshfeld, mbis, chelpg |
 | `population` | mulliken, loewdin, mayer |
 | `mos` | orbital_energies, qro |
@@ -172,6 +189,7 @@ Use aliases on the CLI to select groups of related sections:
 | `tddft` | tddft |
 | `geometry` | geometry, basis_set |
 | `epr` | epr (ZFS, g-tensor, hyperfine/EFG) |
+| `goat` | goat (GOAT final ensemble, minimum, Sconf/Gconf) |
 | `opt` | geom_opt (optimization cycles, convergence, RMSD) |
 | `scan` | surface_scan (relaxed scan coordinates, per-step energies, XYZ/sidecar files) |
 
@@ -202,6 +220,8 @@ New metadata-oriented CSV tables include:
 - `*_deltascf_occupations.csv`
 - `*_excited_state_optimization.csv`
 - `*_excited_state_optimization_cycles.csv`
+- `*_goat_summary.csv`
+- `*_goat_ensemble.csv`
 - `*_surface_scan_summary.csv`
 - `*_surface_scan_parameters.csv`
 - `*_surface_scan.csv`
@@ -223,12 +243,16 @@ orca_parser water.out --hdf5 --h5-level 9          # Max gzip compression
 
 ### Markdown
 
-AI-readable reports optimized for LLM-assisted paper writing. Includes publication-ready tables, spin diagnostics, frontier orbital analysis, explicit DeltaSCF excited-state labeling, TDDFT/CIS excited-state optimization sections with root-history tables, dedicated symmetry sections for UseSym jobs, and relaxed surface-scan summaries with per-step tables.
+AI-readable reports optimized for LLM-assisted paper writing. Includes publication-ready tables, spin diagnostics, frontier orbital analysis, explicit DeltaSCF excited-state labeling, TDDFT/CIS excited-state optimization sections with root-history tables, dedicated symmetry sections for UseSym jobs, GOAT ensemble tables, and relaxed surface-scan summaries with per-step tables.
 
 ```bash
 orca_parser water.out --markdown                   # Per-file report
 orca_parser *.out --compare --outdir results/      # Multi-molecule comparison
+orca_parser conformers.out --markdown --goat-max-relative-energy-kcal 3
+orca_parser conformers.out other.out --compare --goat-max-relative-energy-kcal all
 ```
+
+Standalone markdown prints the full GOAT ensemble by default. Comparison markdown truncates GOAT tables at `dE <= 10 kcal/mol` unless you override it with `--goat-max-relative-energy-kcal`.
 
 ## CLI Reference
 
@@ -243,14 +267,19 @@ Positional:
 
 Section Selection:
   --sections SEC [SEC ...]  Sections/aliases to parse (default: all)
+                           Common aliases: charges, mos, dipole, solvation,
+                           tddft, goat, opt, scan
 
 Output Formats:
   --json / --no-json      JSON output (default: on)
   --csv / --no-csv        CSV output (default: on)
   --hdf5 / --no-hdf5      HDF5 output (default: off)
   --markdown / --no-markdown  Markdown report (default: off)
+  --goat-max-relative-energy-kcal N|all
+                          Limit GOAT markdown tables by relative energy
   --compare               Multi-molecule comparison (implies --markdown)
-                          and supports directory inputs
+                          and supports directory inputs; defaults to
+                          dE <= 10 kcal/mol for GOAT tables
 
 JSON Options:
   --indent N              Indentation level (default: 2; 0 = compact)
@@ -264,9 +293,19 @@ HDF5 Options:
 
 Misc:
   --outdir DIR            Output directory (default: same as input)
-  --summary               Print human-readable summary to stdout
+  --summary               Print normalized job labels plus final-step summary
   --quiet                 Suppress progress messages
 ```
+
+## Development Notes
+
+For new output work, prefer the normalized parse-time views over the raw module payloads:
+
+- `data["job_snapshot"]`: canonical job ID, job family, display labels, symmetry summary, and excited-state/DeltaSCF metadata
+- `data["final_snapshot"]`: authoritative final-step geometry, frontier orbitals, dipole, charges, and bond orders
+- `data["job_series"]`: authoritative GOAT ensembles, geometry-optimization cycles, relaxed scan steps, and excited-state optimization cycle histories
+
+These layers exist specifically to prevent repeated "first block vs last block" bugs and to keep markdown, CSV, and CLI summaries aligned.
 
 ## Important ORCA-specific behavior
 
@@ -276,7 +315,9 @@ Misc:
 - DeltaSCF jobs are reported as excited-state SCF calculations, not ordinary single-point calculations.
 - `%tddft` / `%cis` geometry optimizations with analytic excited-state gradients are reported as excited-state optimizations, not ordinary ground-state geometry optimizations.
 - For excited-state optimizations the parser exports the target state (`S1`, `T2`, etc.), `IRoot`, `IRootMult`, `FOLLOWIROOT`, FIR controls, and the per-step root/state-of-interest history when ORCA prints it.
+- For multistep optimizations the final geometry-dependent properties come from the final converged block, not the first SCF/geometry block in the file.
 - UseSym jobs report the detected point group and the reduced/orbital irrep group separately when ORCA prints both.
+- GOAT jobs are reported separately from ordinary single points and geometry optimizations, with the final ensemble and thermochemistry exported explicitly.
 - Relaxed surface scans are reported as scan jobs, not ordinary geometry optimizations; scan coordinates and per-step energy profiles are exported separately.
 
 ## License
