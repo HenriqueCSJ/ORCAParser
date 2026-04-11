@@ -259,8 +259,9 @@ def render_goat_section(
     *,
     format_number: FormatNumber,
     make_table: MakeTable,
+    max_relative_energy_kcal_mol: Optional[float] = None,
 ) -> str:
-    """Compact GOAT conformer-search summary for markdown reports."""
+    """Render GOAT conformer-search summaries with optional display truncation."""
     lines: List[str] = []
 
     bits: List[str] = []
@@ -312,15 +313,32 @@ def render_goat_section(
             ("conformer", "dE (kcal/mol)", "deg.", "% total", "% cumul."),
         ]
         note = ""
-        display_rows: List[Optional[Dict[str, Any]]] = list(ensemble)
-        if len(display_rows) > 25:
-            display_rows = display_rows[:15] + [None] + display_rows[-5:]
-            note = f"*Showing first 15 and last 5 of {len(ensemble)} conformers. Full ensemble is in JSON/CSV.*"
+        if max_relative_energy_kcal_mol is None:
+            display_rows = list(ensemble)
+            note = f"*Showing all {len(display_rows)} conformers.*"
+        else:
+            display_rows = [
+                row
+                for row in ensemble
+                if (row.get("relative_energy_kcal_mol") is not None)
+                and float(row["relative_energy_kcal_mol"]) <= max_relative_energy_kcal_mol
+            ]
+            if not display_rows:
+                display_rows = list(ensemble[:1])
+
+            if len(display_rows) < len(ensemble):
+                note = (
+                    f"*Showing {len(display_rows)} of {len(ensemble)} conformers "
+                    f"with dE <= {format_number(max_relative_energy_kcal_mol)} kcal/mol. "
+                    "Full ensemble is in JSON/CSV.*"
+                )
+            else:
+                note = (
+                    f"*Showing all {len(display_rows)} conformers "
+                    f"(all within dE <= {format_number(max_relative_energy_kcal_mol)} kcal/mol).*"
+                )
 
         for row in display_rows:
-            if row is None:
-                rows.append(("...", "...", "...", "...", "..."))
-                continue
             rows.append((
                 str(row.get("conformer", "")),
                 format_number(row.get("relative_energy_kcal_mol")),

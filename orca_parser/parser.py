@@ -17,6 +17,7 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from .final_snapshot import build_final_snapshot
 from .modules import (
     MetadataModule,
     GeometryModule,
@@ -591,3 +592,7 @@ class ORCAParser:
             calc_type = str(meta.get("calculation_type", "")).strip().lower()
             if calc_type == "geometry optimization":
                 meta["calculation_type"] = "Excited-State Geometry Optimization"
+
+        final_snapshot = build_final_snapshot(results, context=self.context)
+        if final_snapshot is not None:
+            results["final_snapshot"] = final_snapshot.to_dict()

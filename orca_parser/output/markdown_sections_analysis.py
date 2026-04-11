@@ -10,6 +10,12 @@ from __future__ import annotations
 
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from ..final_snapshot import (
+    get_final_mayer_section,
+    get_final_orbital_energies,
+    get_final_population_section,
+)
+
 
 FormatNumber = Callable[[Any, str], str]
 MakeTable = Callable[[List[tuple]], str]
@@ -19,7 +25,7 @@ CMOLookup = Dict[str, Dict[int, CMOEntry]]
 
 def build_orbital_irrep_lookup(data: Dict[str, Any]) -> Dict[str, Dict[int, str]]:
     """Build a spin-aware lookup of orbital index -> irrep."""
-    orbitals = data.get("orbital_energies", {})
+    orbitals = get_final_orbital_energies(data)
     lookup: Dict[str, Dict[int, str]] = {"": {}, "a": {}, "b": {}}
 
     for spin_key, values in (
@@ -143,7 +149,7 @@ def get_atom_list(section: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 def get_charges(data: Dict[str, Any], scheme: str) -> Optional[List[float]]:
     """Return a flat list of charges for multi-molecule comparison rendering."""
-    section = data.get(scheme, {})
+    section = get_final_population_section(data, scheme)
     if not section:
         return None
     atoms = get_atom_list(section)
@@ -198,7 +204,7 @@ def render_analysis_sections(
     if reduced_orbital_section:
         blocks.append(f"{h2} Reduced Orbital Populations\n{reduced_orbital_section}")
 
-    mayer = data.get("mayer", {}) or {}
+    mayer = get_final_mayer_section(data)
     bond_orders = mayer.get("bond_orders", [])
     if bond_orders:
         rows = [("Bond", "Order")]
@@ -527,7 +533,7 @@ def _collect_charges(
     """Return dict of scheme -> {atom_index: charge} for all present schemes."""
     result: Dict[str, Dict[int, Any]] = {}
     for scheme in schemes:
-        section = data.get(scheme, {})
+        section = get_final_population_section(data, scheme)
         if not section:
             continue
         atoms = get_atom_list(section)
@@ -548,7 +554,7 @@ def _collect_spin(
     """Return dict of scheme -> {atom_index: spin_population} for UHF calculations."""
     result: Dict[str, Dict[int, Any]] = {}
     for scheme in schemes:
-        section = data.get(scheme, {})
+        section = get_final_population_section(data, scheme)
         if not section:
             continue
         atoms = get_atom_list(section)

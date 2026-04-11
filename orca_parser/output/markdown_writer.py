@@ -14,6 +14,11 @@ import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from ..final_snapshot import (
+    get_final_dipole as _get_final_dipole,
+    get_final_geometry as _get_final_geometry,
+    get_final_orbital_energies as _get_final_orbital_energies,
+)
 from .job_state import (
     deltascf_target_summary as _shared_deltascf_target_summary,
     electronic_state_label as _electronic_state_label,
@@ -188,7 +193,7 @@ def _render_molecule(
         warn   = "  ⚠️ *contamination > 0.01*" if contam and contam > 0.01 else ""
         scf_lines.append(f"**⟨S²⟩:** {s2:.6f} (ideal {s2_id}){warn}")
 
-    dip = data.get("dipole", {})
+    dip = _get_final_dipole(data)
     if dip.get("magnitude_Debye") is not None:
         vec = _get_dipole_vector(dip, "total_dipole", "Debye")
         xyz = ""
@@ -262,7 +267,7 @@ def _render_molecule(
             blocks.append(f"{H2} TDDFT Excited States\n{tddft_section}")
 
     # ── Orbital energies ───────────────────────────────────────────────────
-    oe = data.get("orbital_energies")
+    oe = _get_final_orbital_energies(data)
     if oe:
         blocks.append(f"{H2} Frontier Orbital Energies")
         if not ctx.get("is_uhf"):
@@ -375,7 +380,7 @@ def _render_molecule(
     )
 
     # ── Geometry ──────────────────────────────────────────────────────────
-    geom = data.get("geometry", {})
+    geom = _get_final_geometry(data)
     atoms = geom.get("symmetry_cartesian_angstrom") or geom.get("cartesian_angstrom", [])
     if atoms:
         heading = "Geometry (symmetry-perfected, Å)" if geom.get("symmetry_cartesian_angstrom") else "Geometry (Å)"
@@ -487,9 +492,9 @@ def _render_comparison(
             blocks.append("## Symmetry Setup\n" + _table(rows))
 
         if any(
-            d.get("orbital_energies", {}).get("alpha_occupied_per_irrep")
-            or d.get("orbital_energies", {}).get("beta_occupied_per_irrep")
-            or d.get("orbital_energies", {}).get("occupied_per_irrep")
+            _get_final_orbital_energies(d).get("alpha_occupied_per_irrep")
+            or _get_final_orbital_energies(d).get("beta_occupied_per_irrep")
+            or _get_final_orbital_energies(d).get("occupied_per_irrep")
             for d in datasets
         ):
             any_uhf = any(d.get("context", {}).get("is_uhf") for d in datasets)
@@ -537,7 +542,7 @@ def _render_comparison(
         rows = [("", "E (Eh)", "dipole (D)")]
     for lbl, d in zip(labels, datasets):
         scf = d.get("scf", {})
-        dip = d.get("dipole", {})
+        dip = _get_final_dipole(d)
         E   = scf.get("final_single_point_energy_Eh")
         s2  = scf.get("s_squared")
         s2i = scf.get("s_squared_ideal", "")
@@ -558,7 +563,7 @@ def _render_comparison(
     is_uhf_any = any(d.get("context", {}).get("is_uhf") for d in datasets)
     oe_blocks = []
     for lbl, d in zip(labels, datasets):
-        oe  = d.get("orbital_energies", {})
+        oe  = _get_final_orbital_energies(d)
         ctx = d.get("context", {})
         if not oe:
             continue
@@ -776,7 +781,7 @@ def _render_orbital_window_table(orbitals: List[Dict[str, Any]], window: int = 1
 
 def _render_irrep_orbital_window(data: Dict[str, Any], window: int = 12) -> str:
     """Render irrep-resolved frontier windows for RHF/UHF orbital lists."""
-    oe = data.get("orbital_energies", {})
+    oe = _get_final_orbital_energies(data)
     ctx = data.get("context", {})
 
     if ctx.get("is_uhf"):
@@ -919,7 +924,7 @@ def _comparison_labels(datasets: List[Dict[str, Any]]) -> List[str]:
 
 def _compact_irrep_counts(data: Dict[str, Any], spin: str = "") -> str:
     """Compact formatter for occupied orbital counts per irrep."""
-    oe = data.get("orbital_energies", {})
+    oe = _get_final_orbital_energies(data)
     sym = _get_symmetry_data(data)
     spin_key = _normalize_spin_key(spin)
     if spin_key == "a":

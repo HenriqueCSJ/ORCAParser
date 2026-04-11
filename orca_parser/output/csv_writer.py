@@ -32,6 +32,11 @@ import csv
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from ..final_snapshot import (
+    get_final_mayer_section as _get_final_mayer_section,
+    get_final_orbital_energies as _get_final_orbital_energies,
+    get_final_population_section as _get_final_population_section,
+)
 from .job_state import (
     bool_to_label as _bool_to_label,
     electronic_state_label as _shared_electronic_state_label,
@@ -188,7 +193,7 @@ def _write_excited_state_optimization(
 
 
 def _write_orbital_energies(data, directory, stem) -> List[Path]:
-    oe = data.get("orbital_energies", {})
+    oe = _get_final_orbital_energies(data)
     files = []
 
     # RHF single set
@@ -247,9 +252,9 @@ def _write_qro(data, directory, stem) -> List[Path]:
 
 
 def _write_mulliken(data, directory, stem) -> List[Path]:
-    ml = data.get("mulliken", {})
+    ml = _get_final_population_section(data, "mulliken")
     files = []
-    atoms = ml.get("atomic_charges", [])
+    atoms = _get_pop_atoms(ml)
     if atoms:
         rows = [{
             "index": a.get("index"), "symbol": a.get("symbol"),
@@ -277,9 +282,9 @@ def _write_mulliken(data, directory, stem) -> List[Path]:
 
 
 def _write_loewdin(data, directory, stem) -> List[Path]:
-    lo = data.get("loewdin", {})
+    lo = _get_final_population_section(data, "loewdin")
     files = []
-    atoms = lo.get("atomic_charges", [])
+    atoms = _get_pop_atoms(lo)
     if atoms:
         rows = [{
             "index": a.get("index"), "symbol": a.get("symbol"),
@@ -305,7 +310,7 @@ def _write_loewdin(data, directory, stem) -> List[Path]:
 
 
 def _write_mayer(data, directory, stem) -> List[Path]:
-    ma = data.get("mayer", {})
+    ma = _get_final_mayer_section(data)
     files = []
     atoms = ma.get("atoms", [])
     if atoms:
@@ -334,7 +339,7 @@ def _get_pop_atoms(sec: dict) -> list:
 
 
 def _write_hirshfeld(data, directory, stem) -> List[Path]:
-    hi    = data.get("hirshfeld", {})
+    hi    = _get_final_population_section(data, "hirshfeld")
     atoms = _get_pop_atoms(hi)
     if not atoms:
         return []
@@ -351,7 +356,7 @@ def _write_hirshfeld(data, directory, stem) -> List[Path]:
 
 
 def _write_mbis(data, directory, stem) -> List[Path]:
-    mb    = data.get("mbis", {})
+    mb    = _get_final_population_section(data, "mbis")
     atoms = _get_pop_atoms(mb)
     files = []
     if atoms:
@@ -377,7 +382,7 @@ def _write_mbis(data, directory, stem) -> List[Path]:
 
 
 def _write_chelpg(data, directory, stem) -> List[Path]:
-    ch    = data.get("chelpg", {})
+    ch    = _get_final_population_section(data, "chelpg")
     atoms = _get_pop_atoms(ch)
     if not atoms:
         return []

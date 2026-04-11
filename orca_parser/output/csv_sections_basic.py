@@ -10,6 +10,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable, Dict, List
 
+from ..final_snapshot import (
+    get_final_dipole,
+    get_final_geometry,
+)
+
 
 WriteCSV = Callable[[Path, str, List[Dict], List[str]], Path]
 FormatSimpleVector = Callable[[Any], str]
@@ -23,7 +28,7 @@ def write_geometry_section(
     write_csv: WriteCSV,
 ) -> List[Path]:
     """Write standard and symmetry-perfected Cartesian coordinates."""
-    geometry = data.get("geometry", {})
+    geometry = get_final_geometry(data)
     files: List[Path] = []
 
     cartesian = geometry.get("cartesian_angstrom")
@@ -71,7 +76,7 @@ def write_dipole_section(
     write_csv: WriteCSV,
 ) -> List[Path]:
     """Write permanent dipole components and magnitudes."""
-    dipole = data.get("dipole")
+    dipole = get_final_dipole(data)
     if not dipole:
         return []
 
