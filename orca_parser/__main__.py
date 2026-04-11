@@ -21,6 +21,9 @@ Notes
   * `%tddft` / `%cis` excited-state geometry optimizations are reported as
     excited-state optimization jobs, including target-state and root-follow
     metadata (`IRoot`, `IRootMult`, `FOLLOWIROOT`, FIR controls).
+  * TDDFT/NTO output preserves ORCA root numbering exactly. When ORCA prints
+    roots out of energy order, markdown and CSV add an explicit ``E-rank``
+    field instead of silently renumbering the states.
   * GOAT conformer searches are parsed as dedicated GOAT jobs, including the
     final ensemble table, global-minimum xyz, conformer window counts, and
     ensemble thermochemistry.
@@ -118,6 +121,9 @@ Examples
 
   # TDDFT/CIS excited-state optimization (for example S1)
   orca_parser excited_opt.out --sections tddft opt --markdown --csv
+
+  # Show TDDFT roots with explicit energy ranking in markdown / CSV
+  orca_parser vertical_tddft.out --sections tddft --markdown --csv
 """
 
 import argparse
@@ -173,7 +179,9 @@ def parse_args():
             "TDDFT/CIS excited-state optimization, GOAT conformer-search, "
             "UseSym/symmetry-aware, EPR, relaxed surface-scan, and "
             "geometry-optimization jobs, using normalized final-state and "
-            "job-metadata summaries for downstream output."
+            "job-metadata summaries for downstream output. TDDFT output keeps "
+            "ORCA root numbering intact and adds explicit energy-rank "
+            "annotations when roots are not printed in ascending energy order."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
@@ -206,8 +214,9 @@ def parse_args():
     p.add_argument("--markdown", dest="write_markdown", action="store_true",  default=False,
                    help="Write compact AI-readable markdown report (.md) "
                         "with symmetry, DeltaSCF / TDDFT excited-state "
-                        "labeling, root-follow summaries, GOAT ensemble "
-                        "summaries, and surface-scan summaries")
+                        "labeling, TDDFT root/energy-rank summaries, "
+                        "root-follow summaries, GOAT ensemble summaries, "
+                        "and surface-scan summaries")
     p.add_argument("--no-markdown", dest="write_markdown", action="store_false",
                    help="Disable markdown output")
     p.add_argument("--compare",  dest="write_compare",  action="store_true",  default=False,
@@ -252,6 +261,7 @@ def parse_args():
                    help="Print a human-readable summary to stdout, including "
                         "normalized job labels, basic symmetry/spin "
                         "diagnostics, final frontier orbitals/dipole when "
+                        "available, TDDFT root-order diagnostics when "
                         "available, and scan info when applicable")
     p.add_argument("--quiet", action="store_true",
                    help="Suppress progress messages")

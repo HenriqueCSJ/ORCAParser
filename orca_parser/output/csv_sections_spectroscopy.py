@@ -128,6 +128,7 @@ def write_tddft_section(
                 "manifold": state.get("manifold", ""),
                 "order_in_block": state.get("order_in_block"),
                 "state": state.get("state"),
+                "energy_rank": state.get("energy_rank", ""),
                 "state_label": state.get("state_label", ""),
                 "symmetry": state.get("symmetry", ""),
                 "energy_au": state.get("energy_au"),
@@ -148,6 +149,7 @@ def write_tddft_section(
                     "method": state.get("method"),
                     "manifold": state.get("manifold", ""),
                     "state": state.get("state"),
+                    "energy_rank": state.get("energy_rank", ""),
                     "state_label": state.get("state_label", ""),
                     "from_orbital": transition.get("from_orbital"),
                     "from_index": transition.get("from_index", ""),
@@ -163,7 +165,7 @@ def write_tddft_section(
             directory, f"{stem}_tddft_states.csv", state_rows,
             [
                 "block_index", "method", "manifold", "order_in_block",
-                "state", "state_label", "symmetry", "energy_au", "energy_eV", "energy_cm1",
+                "state", "energy_rank", "state_label", "symmetry", "energy_au", "energy_eV", "energy_cm1",
                 "wavelength_nm", "s_squared", "multiplicity",
                 "dominant_from_orbital", "dominant_to_orbital",
                 "dominant_weight", "dominant_coefficient",
@@ -174,7 +176,7 @@ def write_tddft_section(
             files.append(write_csv(
                 directory, f"{stem}_tddft_transitions.csv", transition_rows,
                 [
-                    "block_index", "method", "manifold", "state", "state_label",
+                    "block_index", "method", "manifold", "state", "energy_rank", "state_label",
                     "from_orbital", "from_index", "from_spin",
                     "to_orbital", "to_index", "to_spin",
                     "weight", "coefficient",
@@ -188,12 +190,17 @@ def write_tddft_section(
             for pair in state.get("pairs", []):
                 nto_rows.append({
                     "state": state.get("state"),
+                    "energy_rank": state.get("energy_rank", ""),
                     "output_file": state.get("output_file", ""),
                     "print_threshold": state.get("print_threshold", ""),
                     "energy_au": state.get("energy_au", ""),
                     "energy_eV": state.get("energy_eV", ""),
                     "energy_cm1": state.get("energy_cm1", ""),
                     "wavelength_nm": state.get("wavelength_nm", ""),
+                    "energy_match_consistent": state.get("energy_match_consistent", ""),
+                    "energy_matched_state": state.get("energy_matched_state", ""),
+                    "energy_matched_rank": state.get("energy_matched_rank", ""),
+                    "energy_matched_delta_eV": state.get("energy_matched_delta_eV", ""),
                     "from_orbital": pair.get("from_orbital"),
                     "from_index": pair.get("from_index", ""),
                     "from_spin": pair.get("from_spin", ""),
@@ -206,8 +213,10 @@ def write_tddft_section(
             files.append(write_csv(
                 directory, f"{stem}_tddft_nto.csv", nto_rows,
                 [
-                    "state", "output_file", "print_threshold",
+                    "state", "energy_rank", "output_file", "print_threshold",
                     "energy_au", "energy_eV", "energy_cm1", "wavelength_nm",
+                    "energy_match_consistent", "energy_matched_state",
+                    "energy_matched_rank", "energy_matched_delta_eV",
                     "from_orbital", "from_index", "from_spin",
                     "to_orbital", "to_index", "to_spin", "occupation",
                 ],
