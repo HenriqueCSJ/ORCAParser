@@ -100,6 +100,12 @@ Examples
   # Parse a GOAT conformer search and export the final ensemble
   orca_parser conformers.out --sections goat --markdown --csv
 
+  # Limit GOAT markdown tables to conformers within 3 kcal/mol
+  orca_parser conformers.out --sections goat --markdown --goat-max-relative-energy-kcal 3
+
+  # Force the full GOAT ensemble even in comparison mode
+  orca_parser conformers.out other.out --compare --goat-max-relative-energy-kcal all
+
   # DeltaSCF excited-state jobs are called out explicitly in markdown/CSV
   orca_parser excited_state.out --markdown --csv
 
@@ -113,6 +119,27 @@ from pathlib import Path
 from typing import List
 
 from orca_parser.parser import is_auxiliary_orca_file
+
+
+_GOAT_CUTOFF_UNSET = object()
+
+
+def _parse_goat_markdown_cutoff(value: str):
+    """Parse a GOAT markdown cutoff argument."""
+    text = value.strip().lower()
+    if text in {"all", "full", "none"}:
+        return None
+    try:
+        cutoff = float(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(
+            "GOAT cutoff must be a non-negative number or 'all'."
+        ) from exc
+    if cutoff < 0:
+        raise argparse.ArgumentTypeError(
+            "GOAT cutoff must be a non-negative number or 'all'."
+        )
+    return cutoff
 
 
 def parse_args():
@@ -165,6 +192,18 @@ def parse_args():
                         "Implies --markdown. Accepts directories — searches "
                         "recursively for *.out and *.log files, skipping "
                         "auxiliary *_atomNN helper outputs.")
+    p.add_argument(
+        "--goat-max-relative-energy-kcal",
+        type=_parse_goat_markdown_cutoff,
+        default=_GOAT_CUTOFF_UNSET,
+        metavar="N|all",
+        help=(
+            "Limit GOAT ensemble tables in markdown to conformers with "
+            "dE <= N kcal/mol, or use 'all' to print the full ensemble. "
+            "By default, standalone markdown shows all conformers while "
+            "comparison markdown shows dE <= 10 kcal/mol."
+        ),
+    )
 
     # ── JSON options ─────────────────────────────────────────────────
     p.add_argument("--indent", type=int, default=2, metavar="N",
@@ -328,6 +367,7 @@ def main():
     from orca_parser import ORCAParser
 
     h5_compression = None if args.h5_compression.lower() == "none" else args.h5_compression
+    goat_cutoff = args.goat_max_relative_energy_kcal
     if args.write_compare:
         args.write_markdown = True
 
@@ -389,7 +429,13 @@ def main():
         # ── Markdown (per file) ──────────────────────────────────────
         if args.write_markdown:
             md_path = outdir / (fp.stem + ".md")
-            written = parser.to_markdown(md_path)
+            if goat_cutoff is _GOAT_CUTOFF_UNSET:
+                written = parser.to_markdown(md_path)
+            else:
+                written = parser.to_markdown(
+                    md_path,
+                    goat_max_relative_energy_kcal_mol=goat_cutoff,
+                )
             if not args.quiet:
                 size = written.stat().st_size
                 print(f"→ {written.name} ({size/1024:.1f} KB)", end="", flush=True)
@@ -404,7 +450,14 @@ def main():
     if args.write_compare and len(all_parsers) > 1:
         comp_outdir = Path(args.outdir) if args.outdir else resolved_files[0].parent
         comp_path   = comp_outdir / "comparison.md"
-        written     = ORCAParser.compare(all_parsers, comp_path)
+        if goat_cutoff is _GOAT_CUTOFF_UNSET:
+            written = ORCAParser.compare(all_parsers, comp_path)
+        else:
+            written = ORCAParser.compare(
+                all_parsers,
+                comp_path,
+                goat_max_relative_energy_kcal_mol=goat_cutoff,
+            )
         if not args.quiet:
             size = written.stat().st_size
             print(f"\n→ comparison: {written.name} ({size/1024:.1f} KB)")
