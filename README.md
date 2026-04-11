@@ -12,6 +12,7 @@ A modular Python parser for [ORCA](https://orcaforum.kofo.mpg.de/) quantum chemi
 - **Relaxed surface scan** support: scan coordinate definitions (`B`, `A`, `D`), simultaneous vs. nested scans, per-step energies, optimized `*.xyz` files, and detected `relaxscan*.dat` / `allxyz` sidecars
 - **DeltaSCF** metadata extraction: ALPHACONF/BETACONF, IONIZEALPHA/IONIZEBETA, occupation vectors, MOM/IMOM settings, with explicit excited-state labeling in Markdown and CSV outputs
 - **TDDFT/CIS excited-state optimization** support: `%tddft` / `%cis` targets (`IRoot`, `IRootMult`), `FOLLOWIROOT` / FIR controls, analytic excited-state gradient detection, per-cycle target-state history, and explicit `Sx` / `Tx` labeling in Markdown and CSV outputs
+- **TDDFT/NTO root-order diagnostics**: preserves ORCA's printed root numbers, adds explicit energy ranks when roots are not printed in ascending energy order, and records NTO-to-root energy consistency checks
 - **EPR/EPR properties**: Zero-Field Splitting, g-tensor (with atomic breakdown), hyperfine coupling, EFG, quadrupole
 - **UseSym / point-group symmetry** support: detected point group, reduced/orbital irrep group, irrep occupations, and symmetry-perfected geometries when ORCA prints them
 - **Normalized parse-time views** for downstream development: `job_snapshot` (job identity/state/method labels), `job_series` (GOAT/optimization/scan histories), and `final_snapshot` (authoritative final-step geometry-dependent properties)
@@ -66,6 +67,9 @@ orca_parser excited_state.out --markdown --csv
 
 # TDDFT/CIS excited-state optimization to S1 with root-follow metadata
 orca_parser excited_opt.out --sections tddft opt --markdown --csv
+
+# Vertical TDDFT with explicit ORCA root numbers and energy ranks
+orca_parser vertical_tddft.out --sections tddft --markdown --csv
 
 # Compare multiple molecules
 orca_parser water.out ethanol.out benzene.out --compare --outdir results/
@@ -158,7 +162,7 @@ ORCAParser.compare([p1, p2], "comparison.md")
 | **orbital_energies** | HOMO/LUMO, orbital energies (RHF/UHF), irrep labels, occupied orbitals per irrep |
 | **qro** | Quasi-Restricted Orbitals — DOMO/SOMO/VMO classification (UHF only) |
 | **solvation** | Implicit-solvation detection, model/solvent summary, `%cpcm`/`%cosmors` inputs, CPCM/SMD, ALPB, and COSMO-RS output blocks |
-| **tddft** | TDDFT/CIS input settings, excited-state configurations, NTOs, absorption/CD spectra, CIS/TDDFT total-energy summary, excited-state optimization target/root-follow metadata |
+| **tddft** | TDDFT/CIS input settings, excited-state configurations, NTOs, absorption/CD spectra, CIS/TDDFT total-energy summary, excited-state optimization target/root-follow metadata, and `energy_rank` annotations that keep ORCA root numbering separate from energy ordering |
 | **goat** | GOAT global-minimum status, final ensemble, conformer populations, energy windows, and ensemble thermochemistry |
 | **surface_scan** | Relaxed scan definitions, scan mode, per-step coordinates, actual/SCF surface energies, optimized XYZ files, detected sidecar trajectory files |
 | **mulliken** | Mulliken charges, spin populations, reduced orbital charges |
@@ -245,6 +249,8 @@ orca_parser water.out --hdf5 --h5-level 9          # Max gzip compression
 
 AI-readable reports optimized for LLM-assisted paper writing. Includes publication-ready tables, spin diagnostics, frontier orbital analysis, explicit DeltaSCF excited-state labeling, TDDFT/CIS excited-state optimization sections with root-history tables, dedicated symmetry sections for UseSym jobs, GOAT ensemble tables, and relaxed surface-scan summaries with per-step tables.
 
+For TDDFT/NTO jobs, markdown keeps ORCA's printed `STATE n` root labels and adds an `E-rank` column when the roots are not ordered by excitation energy. This avoids silently renumbering roots while still making the lowest-energy states obvious in the report.
+
 ```bash
 orca_parser water.out --markdown                   # Per-file report
 orca_parser *.out --compare --outdir results/      # Multi-molecule comparison
@@ -253,6 +259,8 @@ orca_parser conformers.out other.out --compare --goat-max-relative-energy-kcal a
 ```
 
 Standalone markdown prints the full GOAT ensemble by default. Comparison markdown truncates GOAT tables at `dE <= 10 kcal/mol` unless you override it with `--goat-max-relative-energy-kcal`.
+
+TDDFT CSV exports follow the same policy: `state` remains the ORCA root number, while `energy_rank` records the sorted-by-energy position. NTO CSV tables also expose energy-consistency fields (`energy_match_consistent`, `energy_matched_state`, `energy_matched_rank`, `energy_matched_delta_eV`) so downstream workflows can validate root assignments without inventing a new numbering scheme.
 
 ## CLI Reference
 

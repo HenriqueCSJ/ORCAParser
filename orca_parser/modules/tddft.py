@@ -19,6 +19,10 @@ from .base import BaseModule
 
 
 _HARTREE_TO_EV = 27.211386245988
+# Keep this tolerance intentionally small: it is meant to link the NTO block
+# back to the corresponding TDDFT root for the same printed state, not to
+# "fix" ORCA numbering by aggressively rematching nearby roots.
+_NTO_ENERGY_MATCH_TOLERANCE_EV = 0.005
 
 
 class TDDFTModule(BaseModule):
@@ -170,6 +174,8 @@ class TDDFTModule(BaseModule):
 
         excited_state_blocks = self._parse_excited_state_blocks(lines)
         if excited_state_blocks:
+            # Preserve ORCA root numbering and add a separate energy-based view.
+            self._annotate_excited_state_energy_ranks(excited_state_blocks)
             data["excited_state_blocks"] = excited_state_blocks
             data["excited_states"] = [
                 state
@@ -180,6 +186,15 @@ class TDDFTModule(BaseModule):
 
         nto_states = self._parse_nto_states(lines)
         if nto_states:
+            # NTO sections also carry ORCA root labels. Annotate them against the
+            # final excited-state block so downstream code can see both:
+            #   1. ORCA root identity (`state`)
+            #   2. energy ordering (`energy_rank`)
+            # plus a consistency diagnostic for suspicious files.
+            self._annotate_nto_state_matches(
+                nto_states,
+                excited_state_blocks[-1].get("states", []) if excited_state_blocks else [],
+            )
             data["nto_states"] = nto_states
 
         spectra, spectra_history = self._parse_spectra(lines)
@@ -392,6 +407,148 @@ class TDDFTModule(BaseModule):
             i = j
 
         return nto_states
+
+    def _annotate_excited_state_energy_ranks(
+        self,
+        excited_state_blocks: List[Dict[str, Any]],
+    ) -> None:
+        """Annotate each parsed state with its energy rank inside the block.
+
+        ORCA root numbers are authoritative and must remain unchanged. The extra
+        energy-rank field makes it explicit when `STATE 1` is not the lowest
+        excitation, which happens in real TDDFT outputs.
+        """
+        for block in excited_state_blocks:
+            states = block.get("states", [])
+            ranked_states = sorted(
+                states,
+                key=lambda state: (
+                    state.get("energy_eV", float("inf")),
+                    state.get("state", float("inf")),
+                    state.get("order_in_block", float("inf")),
+                ),
+            )
+            for energy_rank, state in enumerate(ranked_states, start=1):
+                state["energy_rank"] = energy_rank
+
+            if states:
+                block["energy_order_matches_root_order"] = all(
+                    state.get("state") == state.get("energy_rank")
+                    for state in states
+                )
+
+    def _annotate_nto_state_matches(
+        self,
+        nto_states: List[Dict[str, Any]],
+        reference_states: List[Dict[str, Any]],
+    ) -> None:
+        """Attach energy-rank and energy-consistency metadata to NTO states.
+
+        We keep the ORCA root index from the NTO header as-is, then add:
+          - `energy_rank` inherited from the matching TDDFT root
+          - root-to-root energy delta
+          - nearest-by-energy TDDFT root within a small tolerance
+
+        This preserves ORCA identity while making downstream validation easy.
+        The goal is to make energy ordering explicit, not to silently replace
+        the printed ORCA root numbering with a new numbering scheme.
+        """
+        if not reference_states:
+            return
+
+        states_by_root = {
+            state.get("state"): state
+            for state in reference_states
+            if state.get("state") is not None
+        }
+
+        for nto_state in nto_states:
+            root = nto_state.get("state")
+            root_state = states_by_root.get(root)
+            matching_states = self._states_within_energy_tolerance(
+                nto_state.get("energy_eV"),
+                reference_states,
+                _NTO_ENERGY_MATCH_TOLERANCE_EV,
+            )
+            if root_state is not None:
+                if root_state.get("energy_rank") is not None:
+                    nto_state["energy_rank"] = root_state.get("energy_rank")
+
+                root_delta = self._energy_delta_ev(
+                    nto_state.get("energy_eV"),
+                    root_state.get("energy_eV"),
+                )
+                if root_delta is not None:
+                    nto_state["root_energy_delta_eV"] = root_delta
+                    nto_state["root_energy_match_within_tolerance"] = (
+                        root_delta <= _NTO_ENERGY_MATCH_TOLERANCE_EV
+                    )
+
+            matched_state, matched_delta = self._nearest_state_by_energy(
+                nto_state.get("energy_eV"),
+                reference_states,
+            )
+            if matched_state is None or matched_delta is None:
+                continue
+
+            nto_state["energy_matched_state"] = matched_state.get("state")
+            nto_state["energy_matched_delta_eV"] = matched_delta
+            if matched_state.get("energy_rank") is not None:
+                nto_state["energy_matched_rank"] = matched_state.get("energy_rank")
+            nto_state["energy_match_within_tolerance"] = (
+                matched_delta <= _NTO_ENERGY_MATCH_TOLERANCE_EV
+            )
+            if root_state is not None:
+                # Near-degenerate roots can share the same energy window. Treat
+                # the NTO as internally consistent when its same-root TDDFT
+                # state is among the roots that match within tolerance.
+                nto_state["energy_match_consistent"] = (
+                    any(
+                        candidate.get("state") == root_state.get("state")
+                        for candidate in matching_states
+                    )
+                )
+
+    def _nearest_state_by_energy(
+        self,
+        energy_eV: Any,
+        reference_states: List[Dict[str, Any]],
+    ) -> Tuple[Optional[Dict[str, Any]], Optional[float]]:
+        """Return the TDDFT state closest in energy to the supplied value."""
+        if energy_eV is None:
+            return None, None
+
+        best_state: Optional[Dict[str, Any]] = None
+        best_delta: Optional[float] = None
+        target = float(energy_eV)
+        for state in reference_states:
+            delta = self._energy_delta_ev(target, state.get("energy_eV"))
+            if delta is None:
+                continue
+            if best_delta is None or delta < best_delta:
+                best_state = state
+                best_delta = delta
+        return best_state, best_delta
+
+    def _states_within_energy_tolerance(
+        self,
+        energy_eV: Any,
+        reference_states: List[Dict[str, Any]],
+        tolerance_eV: float,
+    ) -> List[Dict[str, Any]]:
+        """Return all reference states with energies within the requested tolerance."""
+        matches: List[Dict[str, Any]] = []
+        for state in reference_states:
+            delta = self._energy_delta_ev(energy_eV, state.get("energy_eV"))
+            if delta is not None and delta <= tolerance_eV:
+                matches.append(state)
+        return matches
+
+    def _energy_delta_ev(self, left: Any, right: Any) -> Optional[float]:
+        """Safely compute an absolute energy difference in eV."""
+        if left is None or right is None:
+            return None
+        return abs(float(left) - float(right))
 
     def _parse_spectra(
         self, lines: List[str]
@@ -659,9 +816,21 @@ class TDDFTModule(BaseModule):
             if final_block.get("manifold") is not None:
                 summary["final_manifold"] = final_block.get("manifold")
             summary["final_state_count"] = len(final_block.get("states", []))
+            # Surface the ordering diagnostic in the summary so markdown, CSV,
+            # and CLI code do not need to recompute it.
+            summary["final_state_order_matches_root_order"] = final_block.get(
+                "energy_order_matches_root_order"
+            )
 
         if nto_states:
             summary["nto_state_count"] = len(nto_states)
+            summary["nto_energy_match_tolerance_eV"] = _NTO_ENERGY_MATCH_TOLERANCE_EV
+            # All NTOs should link back to the same-root TDDFT state within the
+            # accepted tolerance; if not, the file is worth a closer look.
+            summary["nto_root_alignment_consistent"] = all(
+                nto_state.get("energy_match_consistent", True)
+                for nto_state in nto_states
+            )
 
         if spectra:
             summary["spectrum_tables"] = sorted(spectra)

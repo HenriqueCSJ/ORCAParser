@@ -233,15 +233,20 @@ def render_tddft_section(
             if root is not None:
                 oscillator_strengths[root] = transition.get("oscillator_strength")
 
+        if any(state.get("energy_rank") not in (None, state.get("state")) for state in states):
+            lines.append(
+                "Roots follow ORCA's printed numbering. `E-rank` shows the same roots sorted by excitation energy."
+            )
+
         state_has_symmetry = any(
             state.get("state_label") or state.get("symmetry") or state.get("irrep")
             for state in states
         )
         state_has_cmo = any(cmo_lookup.values())
         if state_has_symmetry:
-            header = ["State", "Symmetry", "E (eV)", "lambda (nm)", "fosc", "excitation(s) >= 10%"]
+            header = ["Root", "E-rank", "Symmetry", "E (eV)", "lambda (nm)", "fosc", "excitation(s) >= 10%"]
         else:
-            header = ["State", "E (eV)", "lambda (nm)", "fosc", "excitation(s) >= 10%"]
+            header = ["Root", "E-rank", "E (eV)", "lambda (nm)", "fosc", "excitation(s) >= 10%"]
         if state_has_cmo:
             header.append("CMO/NBO character (>= 10%)")
         header.append("weight(s)")
@@ -256,7 +261,10 @@ def render_tddft_section(
                 significant,
                 lambda transition: format_transition_cmo_character(transition, cmo_lookup),
             )
-            state_row = [str(state.get("state", ""))]
+            state_row = [
+                str(state.get("state", "")),
+                str(state.get("energy_rank", "-") or "-"),
+            ]
             if state_has_symmetry:
                 state_row.append(
                     str(state.get("state_label") or state.get("symmetry") or state.get("irrep") or "—")
@@ -275,7 +283,7 @@ def render_tddft_section(
 
     nto_states = tddft.get("nto_states", [])
     if nto_states:
-        rows = [("State", "leading NTO pair", "occ.")]
+        rows = [("Root", "E-rank", "leading NTO pair", "occ.")]
         for nto_state in nto_states:
             lead = max(
                 nto_state.get("pairs", []),
@@ -286,6 +294,7 @@ def render_tddft_section(
                 continue
             rows.append((
                 str(nto_state.get("state", "")),
+                str(nto_state.get("energy_rank", "-") or "-"),
                 format_transition_with_irreps(lead, irrep_lookup),
                 format_number(lead.get("occupation")),
             ))

@@ -20,6 +20,12 @@ GOAT_OUT = RDB_LMMP_ROOT / "GOAT" / "RDB_LMMPa.out"
 S0_OUT = RDB_LMMP_ROOT / "S0" / "RDB_LMMP_S0_CH2Cl2.out"
 S1_OUT = RDB_LMMP_ROOT / "S1" / "RDB_LMMP_S1_CH2Cl2.out"
 TDDFT_OUT = RDB_LMMP_ROOT / "TDDFT" / "RDB_LMMP_TDDFT_CH2Cl2.out"
+TDDFT_C_ETOH_OUT = (
+    REPO_ROOT / "sample_outs" / "RDB_LMMP" / "c" / "EtOH" / "TDDFT" / "RDB_LMMP_TDDFT_EtOH.out"
+)
+TDDFT_D_CH2CL2_OUT = (
+    REPO_ROOT / "sample_outs" / "RDB_LMMP" / "d" / "CH2Cl2" / "TDDFT" / "RDB_LMMP_TDDFT_CH2Cl2.out"
+)
 
 
 def _parse_quick(path: Path) -> ORCAParser:
@@ -187,6 +193,11 @@ def tddft_parser() -> ORCAParser:
 
 
 @pytest.fixture(scope="module")
+def tddft_full_parser() -> ORCAParser:
+    return _parse_with_sections(TDDFT_OUT, ["tddft"])
+
+
+@pytest.fixture(scope="module")
 def s0_final_step_parser() -> ORCAParser:
     return _parse_with_sections(S0_OUT, ["charges", "population", "mos", "dipole"])
 
@@ -265,6 +276,66 @@ def test_rdb_lmmp_tddft_prefers_input_model_chemistry_and_last_final_energy(
         "sample_outs/RDB_LMMP/a/CH2Cl2/TDDFT/RDB_LMMP_TDDFT_CH2Cl2.out"
     )
     assert scf["final_single_point_energy_Eh"] == pytest.approx(-2082.974142271619)
+
+
+def test_tddft_nto_keeps_orca_root_numbers_but_adds_energy_ranks() -> None:
+    c_etoh_tddft = _parse_with_sections(TDDFT_C_ETOH_OUT, ["tddft"]).data["tddft"]
+    d_ch2cl2_tddft = _parse_with_sections(TDDFT_D_CH2CL2_OUT, ["tddft"]).data["tddft"]
+
+    c_states = c_etoh_tddft["excited_states"][:3]
+    c_ntos = c_etoh_tddft["nto_states"][:3]
+    assert [state["state"] for state in c_states] == [1, 2, 3]
+    assert c_states[0]["energy_eV"] == pytest.approx(4.749)
+    assert c_states[1]["energy_eV"] == pytest.approx(4.635)
+    assert c_states[2]["energy_eV"] == pytest.approx(4.460)
+    assert [state["energy_rank"] for state in c_states] == [3, 2, 1]
+    assert [state["energy_rank"] for state in c_ntos] == [3, 2, 1]
+    assert [state["energy_match_consistent"] for state in c_ntos] == [True, True, True]
+    assert [state["energy_matched_state"] for state in c_ntos] == [1, 2, 3]
+    assert all(state["energy_matched_delta_eV"] <= 0.005 for state in c_ntos)
+
+    d_states = d_ch2cl2_tddft["excited_states"][:3]
+    d_ntos = d_ch2cl2_tddft["nto_states"][:3]
+    assert [state["state"] for state in d_states] == [1, 2, 3]
+    assert d_states[0]["energy_eV"] == pytest.approx(4.800)
+    assert d_states[1]["energy_eV"] == pytest.approx(4.396)
+    assert d_states[2]["energy_eV"] == pytest.approx(4.752)
+    assert [state["energy_rank"] for state in d_states] == [4, 1, 2]
+    assert [state["energy_rank"] for state in d_ntos] == [4, 1, 2]
+    assert [state["energy_match_consistent"] for state in d_ntos] == [True, True, True]
+    assert [state["energy_matched_state"] for state in d_ntos] == [1, 2, 3]
+    assert all(state["energy_matched_delta_eV"] <= 0.005 for state in d_ntos)
+
+
+def test_tddft_outputs_expose_energy_rank_for_roots_and_ntos(
+    tddft_full_parser: ORCAParser,
+    tmp_path: Path,
+) -> None:
+    markdown_path = tmp_path / "tddft_energy_rank.md"
+    csv_dir = tmp_path / "tddft_energy_rank_csv"
+
+    tddft_full_parser.to_markdown(markdown_path)
+    tddft_full_parser.to_csv(csv_dir)
+
+    markdown_text = markdown_path.read_text(encoding="utf-8")
+    with (csv_dir / "RDB_LMMP_TDDFT_CH2Cl2_tddft_states.csv").open(
+        encoding="utf-8",
+        newline="",
+    ) as handle:
+        state_rows = list(csv.DictReader(handle))
+    with (csv_dir / "RDB_LMMP_TDDFT_CH2Cl2_tddft_nto.csv").open(
+        encoding="utf-8",
+        newline="",
+    ) as handle:
+        nto_rows = list(csv.DictReader(handle))
+
+    assert "Roots follow ORCA's printed numbering." in markdown_text
+    assert "| Root | E-rank |" in markdown_text
+    assert state_rows[0]["energy_rank"] == "2"
+    assert state_rows[1]["energy_rank"] == "1"
+    assert nto_rows[0]["energy_rank"] == "2"
+    assert nto_rows[0]["energy_match_consistent"] == "True"
+    assert nto_rows[0]["energy_matched_state"] == "1"
 
 
 def test_rdb_lmmp_excited_state_opt_is_identified_from_input(
