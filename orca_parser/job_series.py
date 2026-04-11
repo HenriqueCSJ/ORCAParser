@@ -192,6 +192,9 @@ def build_job_series(data: Dict[str, Any]) -> Optional[JobSeries]:
         excited_state_optimization=excited_state_optimization,
     )
 
+    # Only multistep jobs carry this snapshot. Ground-state single points stay
+    # lightweight while GOAT/opt/scan/ES-opt jobs gain one authoritative
+    # history payload for every downstream writer.
     if not any(
         (
             series.geom_opt,

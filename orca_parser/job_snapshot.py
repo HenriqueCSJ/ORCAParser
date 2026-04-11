@@ -27,6 +27,8 @@ def _get_symmetry_payload(
     context: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Normalize symmetry metadata to a stable shape."""
+    # ORCA spreads symmetry hints across multiple places. Merge them once here
+    # so every downstream renderer sees the same payload and label policy.
     context = context or {}
     geom = data.get("geometry") if isinstance(data.get("geometry"), dict) else {}
     sym = _copy_mapping(meta.get("symmetry"))
@@ -252,6 +254,8 @@ def build_job_snapshot(
 
     is_deltascf = bool(deltascf or str(meta.get("calculation_type", "")).strip().lower() == "deltascf")
     is_excited_state_optimization = bool(excopt)
+    # Keep the family small and stable. It is meant for routing output logic
+    # and regressions, not for preserving every free-form ORCA phrase.
     family = _calculation_family(
         meta,
         data,
@@ -278,6 +282,8 @@ def build_job_snapshot(
 
     calculation_type = str(meta.get("calculation_type") or _default_calculation_label(family))
 
+    # Snapshot-level labels deliberately live here so markdown, CSV, and CLI
+    # summaries do not re-derive presentation rules independently.
     return JobSnapshot(
         job_id=str(meta.get("job_id", context.get("job_id", ""))),
         job_name=str(meta.get("job_name", "")),

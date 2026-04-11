@@ -11,6 +11,11 @@ Notes
   * Directories are searched recursively for ``*.out`` and ``*.log`` files.
   * Auxiliary ORCA helper/ECP files such as ``*_atom83.out`` are skipped
     during recursive discovery and rejected if passed directly.
+  * Geometry-dependent final-state exports prefer the final converged block,
+    not the first block, for multi-step jobs such as geometry optimizations.
+  * Markdown, CSV, and CLI summaries prefer normalized parse-time views
+    (``job_snapshot``, ``job_series``, ``final_snapshot``) so job labels,
+    stepwise histories, and final-state values stay aligned.
   * Markdown and CSV exports explicitly distinguish DeltaSCF excited-state
     jobs from ordinary ground-state single-points.
   * `%tddft` / `%cis` excited-state geometry optimizations are reported as
@@ -35,6 +40,8 @@ Section aliases
   bonds      mayer, loewdin
   nbo        nbo
   dipole     dipole
+  solvation  solvation
+  tddft      tddft
   geometry   geometry, basis_set
   epr        epr (ZFS, g-tensor, hyperfine/EFG)
   goat       goat (GOAT final ensemble, minimum, Sconf/Gconf)
@@ -165,7 +172,8 @@ def parse_args():
             "HDF5, and Markdown. Handles ground-state, DeltaSCF excited-state, "
             "TDDFT/CIS excited-state optimization, GOAT conformer-search, "
             "UseSym/symmetry-aware, EPR, relaxed surface-scan, and "
-            "geometry-optimization jobs."
+            "geometry-optimization jobs, using normalized final-state and "
+            "job-metadata summaries for downstream output."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
@@ -242,8 +250,9 @@ def parse_args():
                         "for directory/compare mode, the chosen output root)")
     p.add_argument("--summary", action="store_true",
                    help="Print a human-readable summary to stdout, including "
-                        "calculation type, basic symmetry/spin diagnostics, "
-                        "and scan info when applicable")
+                        "normalized job labels, basic symmetry/spin "
+                        "diagnostics, final frontier orbitals/dipole when "
+                        "available, and scan info when applicable")
     p.add_argument("--quiet", action="store_true",
                    help="Suppress progress messages")
 
