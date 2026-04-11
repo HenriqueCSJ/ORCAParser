@@ -392,3 +392,73 @@ def test_rdb_lmmp_s1_uses_final_geometry_step_for_geometry_dependent_properties(
     assert s1_dipole["x"] == pytest.approx(raw_s1_dipole["x"])
     assert s1_dipole["y"] == pytest.approx(raw_s1_dipole["y"])
     assert s1_dipole["z"] == pytest.approx(raw_s1_dipole["z"])
+
+    snapshot = s1_final_step_parser.data["final_snapshot"]
+    snapshot_geometry = snapshot["geometry"]["cartesian_angstrom"]
+    snapshot_orbitals = snapshot["orbital_energies"]
+    snapshot_mulliken = snapshot["charges"]["mulliken"]["atoms"]
+    snapshot_mayer = snapshot["mayer"]["bond_orders"]
+    snapshot_dipole = snapshot["dipole"]["total_dipole_au"]
+
+    assert snapshot["selection"] == "last_reported_optimization_step"
+    assert snapshot_geometry[0]["x_ang"] == pytest.approx(raw_s1_geometry[0]["x_ang"])
+    assert snapshot_geometry[0]["y_ang"] == pytest.approx(raw_s1_geometry[0]["y_ang"])
+    assert snapshot_geometry[0]["z_ang"] == pytest.approx(raw_s1_geometry[0]["z_ang"])
+    assert snapshot_orbitals["HOMO_energy_eV"] == pytest.approx(raw_s1_orbitals["HOMO_energy_eV"])
+    assert snapshot_orbitals["LUMO_energy_eV"] == pytest.approx(raw_s1_orbitals["LUMO_energy_eV"])
+    assert snapshot_mulliken[0]["charge"] == pytest.approx(raw_s1_mulliken_c0)
+    assert any(
+        tuple(sorted((bond["atom_i"], bond["atom_j"]))) == (0, 1)
+        and bond["bond_order"] == pytest.approx(raw_s1_mayer_01)
+        for bond in snapshot_mayer
+    )
+    assert snapshot_dipole["x"] == pytest.approx(raw_s1_dipole["x"])
+    assert snapshot_dipole["y"] == pytest.approx(raw_s1_dipole["y"])
+    assert snapshot_dipole["z"] == pytest.approx(raw_s1_dipole["z"])
+
+
+def test_final_snapshot_remains_authoritative_for_markdown_and_csv() -> None:
+    parser = _parse_with_sections(S1_OUT, ["charges", "population", "mos", "dipole"])
+    snapshot = parser.data["final_snapshot"]
+
+    real_geom_x = snapshot["geometry"]["cartesian_angstrom"][0]["x_ang"]
+    real_homo = snapshot["orbital_energies"]["HOMO_energy_eV"]
+    real_dipole = snapshot["dipole"]["magnitude_Debye"]
+    real_charge = snapshot["charges"]["mulliken"]["atoms"][0]["charge"]
+    real_bond = next(
+        bond["bond_order"]
+        for bond in snapshot["mayer"]["bond_orders"]
+        if tuple(sorted((bond["atom_i"], bond["atom_j"]))) == (0, 1)
+    )
+
+    parser.data["geometry"]["cartesian_angstrom"][0]["x_ang"] = 999.0
+    parser.data["orbital_energies"]["HOMO_energy_eV"] = 999.0
+    parser.data["dipole"]["magnitude_Debye"] = 999.0
+    parser.data["mulliken"]["atomic_charges"][0]["charge"] = 999.0
+    parser.data["mayer"]["bond_orders"][0]["bond_order"] = 999.0
+
+    tmp_dir = REPO_ROOT / ".pytest_tmp" / f"rdb_lmmp_snapshot_{uuid.uuid4().hex}"
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+
+    markdown_path = tmp_dir / "s1_snapshot.md"
+    csv_dir = tmp_dir / "csv"
+    parser.to_markdown(markdown_path)
+    parser.to_csv(csv_dir)
+
+    markdown_text = markdown_path.read_text(encoding="utf-8")
+    geometry_csv = (csv_dir / "RDB_LMMP_S1_CH2Cl2_geometry.csv").read_text(encoding="utf-8")
+    dipole_csv = (csv_dir / "RDB_LMMP_S1_CH2Cl2_dipole.csv").read_text(encoding="utf-8")
+    mulliken_csv = (csv_dir / "RDB_LMMP_S1_CH2Cl2_mulliken_charges.csv").read_text(encoding="utf-8")
+    mayer_csv = (csv_dir / "RDB_LMMP_S1_CH2Cl2_mayer_bonds.csv").read_text(encoding="utf-8")
+
+    assert "999.0" not in markdown_text
+    assert "999.0" not in geometry_csv
+    assert "999.0" not in dipole_csv
+    assert "999.0" not in mulliken_csv
+    assert "999.0" not in mayer_csv
+
+    assert f"{real_geom_x:.6f}" in markdown_text
+    assert f"{real_homo:.4f}" in markdown_text
+    assert f"{real_dipole}" in dipole_csv
+    assert f"{real_charge}" in mulliken_csv
+    assert f"{real_bond}" in mayer_csv
