@@ -8,6 +8,9 @@ from pathlib import Path
 import pytest
 
 from orca_parser import ORCAParser
+import orca_parser.job_family_registry as family_registry
+from orca_parser.job_family_registry import CalculationFamilyPlugin
+from orca_parser.job_snapshot import build_job_snapshot
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -578,6 +581,83 @@ def test_rdb_lmmp_markdown_and_comparison_use_input_driven_labels(
     assert "| GOAT/RDB_LMMPa.out              | XTB2" in comparison_text
     assert "| S0/RDB_LMMP_S0_CH2Cl2.out       | LibXC(wB97X-D4)" in comparison_text
     assert "| S1/RDB_LMMP_S1_CH2Cl2.out       | LibXC(wB97X-D4)" in comparison_text
+
+
+def test_calculation_family_registry_allows_plugin_style_family_extensions(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    parser = _parse_quick(TDDFT_OUT)
+
+    original_plugins = list(family_registry.get_registered_calculation_family_plugins())
+    monkeypatch.setattr(
+        family_registry,
+        "_CALCULATION_FAMILY_PLUGINS",
+        list(original_plugins),
+    )
+
+    def _render_registry_markdown(_data, _format_number, _make_table, _cutoff):
+        return [("Registry Plugin Section", "registry-markdown-sentinel")]
+
+    def _render_registry_comparison(_datasets, _labels, _format_number, _make_table, _cutoff):
+        return [("Registry Plugin Comparison", "registry-comparison-sentinel")]
+
+    def _write_registry_csv(_data, directory, stem, write_csv):
+        return [
+            write_csv(
+                directory,
+                f"{stem}_plugin_registry.csv",
+                [{"source": "registry", "family": "single_point"}],
+                ["source", "family"],
+            )
+        ]
+
+    family_registry.register_calculation_family_plugin(
+        CalculationFamilyPlugin(
+            family="single_point",
+            default_calculation_label="Single Point (Registry Plugin)",
+            matcher=lambda meta, *_args: (
+                str(meta.get("calculation_type", "")).strip().lower() == "single point"
+            ),
+            render_markdown_sections=_render_registry_markdown,
+            render_comparison_sections=_render_registry_comparison,
+            csv_writers=(_write_registry_csv,),
+            comparison_order=5,
+        ),
+        replace=True,
+    )
+
+    parser.data["job_snapshot"] = build_job_snapshot(
+        parser.data,
+        context=parser.context,
+    ).to_dict()
+
+    markdown_path = tmp_path / "plugin_family.md"
+    comparison_path = tmp_path / "plugin_family_comparison.md"
+    csv_dir = tmp_path / "plugin_family_csv"
+
+    parser.to_markdown(markdown_path)
+    parser.to_csv(csv_dir)
+    ORCAParser.compare([parser], comparison_path)
+
+    markdown_text = markdown_path.read_text(encoding="utf-8")
+    comparison_text = comparison_path.read_text(encoding="utf-8")
+    metadata_csv_path = csv_dir / "RDB_LMMP_TDDFT_CH2Cl2_metadata.csv"
+    plugin_csv_path = csv_dir / "RDB_LMMP_TDDFT_CH2Cl2_plugin_registry.csv"
+
+    with metadata_csv_path.open(encoding="utf-8", newline="") as handle:
+        metadata_row = next(csv.DictReader(handle))
+    with plugin_csv_path.open(encoding="utf-8", newline="") as handle:
+        plugin_row = next(csv.DictReader(handle))
+
+    assert parser.data["job_snapshot"]["calculation_type"] == "Single Point (Registry Plugin)"
+    assert "## Registry Plugin Section" in markdown_text
+    assert "registry-markdown-sentinel" in markdown_text
+    assert "## Registry Plugin Comparison" in comparison_text
+    assert "registry-comparison-sentinel" in comparison_text
+    assert metadata_row["calculation_type"] == "Single Point (Registry Plugin)"
+    assert plugin_row["source"] == "registry"
+    assert plugin_row["family"] == "single_point"
     assert "| TDDFT/RDB_LMMP_TDDFT_CH2Cl2.out | SOS-wPBEPP86" in comparison_text
     assert "Showing all 1147 conformers (all within dE <= 10.0000 kcal/mol)." in comparison_text
     assert "-134.7631015236" in comparison_text

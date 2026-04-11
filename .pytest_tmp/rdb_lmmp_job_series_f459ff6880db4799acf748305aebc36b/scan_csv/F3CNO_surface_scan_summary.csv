@@ -1,0 +1,2 @@
+mode,n_parameters,n_constrained_optimizations,actual_surface_dat,scf_surface_dat,allxyz,xyzall,trajectory_xyz,allxyz_frame_count
+single,1,37,C:\Users\henri\OneDrive\Documents\GitHub\ORCAParser2\sample_outs\Scan\F3CNO.relaxscanact.dat,C:\Users\henri\OneDrive\Documents\GitHub\ORCAParser2\sample_outs\Scan\F3CNO.relaxscanscf.dat,C:\Users\henri\OneDrive\Documents\GitHub\ORCAParser2\sample_outs\Scan\F3CNO.allxyz,,C:\Users\henri\OneDrive\Documents\GitHub\ORCAParser2\sample_outs\Scan\F3CNO_trj.xyz,37

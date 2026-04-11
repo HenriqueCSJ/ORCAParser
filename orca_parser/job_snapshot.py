@@ -13,6 +13,8 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
+from .job_family_registry import match_calculation_family_plugin
+
 
 def _copy_mapping(value: Any) -> Dict[str, Any]:
     """Return a deep-copied dict or an empty mapping."""
@@ -90,19 +92,6 @@ def _get_excited_state_opt_payload(meta: Dict[str, Any], data: Dict[str, Any]) -
     return {}
 
 
-def _excited_state_target_label(excopt: Dict[str, Any]) -> str:
-    """Short target label such as S1/T2/root 3."""
-    label = str(excopt.get("target_state_label") or "").strip()
-    if label:
-        return label
-    root = excopt.get("target_root")
-    if root is None:
-        root = excopt.get("final_root")
-    if root is None:
-        return ""
-    return f"root {root}"
-
-
 def _method_header_label(meta: Dict[str, Any], context: Dict[str, Any]) -> str:
     """Preferred single-line method label for molecule headers."""
     if meta.get("level_of_theory"):
@@ -132,47 +121,6 @@ def _method_table_label(meta: Dict[str, Any], context: Dict[str, Any]) -> str:
     if meta.get("functional"):
         return str(meta["functional"])
     return str(context.get("hf_type", "?"))
-
-
-def _calculation_family(
-    meta: Dict[str, Any],
-    data: Dict[str, Any],
-    context: Dict[str, Any],
-    *,
-    is_deltascf: bool,
-    is_excited_state_optimization: bool,
-) -> str:
-    """Return a stable internal job-family identifier."""
-    calc_type = str(meta.get("calculation_type", "")).strip().lower()
-
-    if data.get("goat") or context.get("is_goat") or "goat" in calc_type:
-        return "goat"
-    if data.get("surface_scan") or context.get("is_surface_scan"):
-        return "surface_scan"
-    if is_deltascf:
-        return "deltascf"
-    if is_excited_state_optimization:
-        return "excited_state_optimization"
-    if "geometry optimization" in calc_type:
-        return "geometry_optimization"
-    if "single point" in calc_type:
-        return "single_point"
-    if calc_type:
-        return calc_type.replace(" ", "_").replace("-", "_")
-    return "unknown"
-
-
-def _default_calculation_label(family: str) -> str:
-    """Fallback display label for a normalized job family."""
-    labels = {
-        "goat": "GOAT Conformer Search",
-        "surface_scan": "Relaxed Surface Scan",
-        "deltascf": "DeltaSCF",
-        "excited_state_optimization": "Excited-State Geometry Optimization",
-        "geometry_optimization": "Geometry Optimization",
-        "single_point": "Single Point",
-    }
-    return labels.get(family, family.replace("_", " ").title())
 
 
 @dataclass
@@ -254,33 +202,37 @@ def build_job_snapshot(
 
     is_deltascf = bool(deltascf or str(meta.get("calculation_type", "")).strip().lower() == "deltascf")
     is_excited_state_optimization = bool(excopt)
-    # Keep the family small and stable. It is meant for routing output logic
-    # and regressions, not for preserving every free-form ORCA phrase.
-    family = _calculation_family(
+    # The registry owns family matching and labels.  Adding a new calculation
+    # family should now mean registering one plugin instead of expanding
+    # snapshot / markdown / CSV branching separately.
+    family_plugin = match_calculation_family_plugin(
         meta,
         data,
         context,
-        is_deltascf=is_deltascf,
-        is_excited_state_optimization=is_excited_state_optimization,
+        deltascf,
+        excopt,
+    )
+    family = family_plugin.family
+
+    electronic_state_kind = family_plugin.electronic_state_kind
+    special_electronic_state_label = family_plugin.special_electronic_state_label(
+        meta,
+        data,
+        deltascf,
+        excopt,
+    )
+    state_target_label = family_plugin.state_target_label(
+        meta,
+        data,
+        deltascf,
+        excopt,
     )
 
-    if is_deltascf:
-        electronic_state_kind = "deltascf_excited_state"
-        special_electronic_state_label = "DeltaSCF excited-state"
-        state_target_label = ""
-    elif is_excited_state_optimization:
-        electronic_state_kind = "excited_state_optimization"
-        state_target_label = _excited_state_target_label(excopt)
-        if state_target_label:
-            special_electronic_state_label = f"Excited-state optimization ({state_target_label})"
-        else:
-            special_electronic_state_label = "Excited-state optimization"
-    else:
-        electronic_state_kind = "ground_state"
-        special_electronic_state_label = ""
-        state_target_label = ""
-
-    calculation_type = str(meta.get("calculation_type") or _default_calculation_label(family))
+    # The family registry owns the normalized label that downstream renderers
+    # should use.  Raw metadata may still carry the original parser payload,
+    # but adding a new family should not require updating label logic in
+    # several modules.
+    calculation_type = str(family_plugin.default_calculation_label)
 
     # Snapshot-level labels deliberately live here so markdown, CSV, and CLI
     # summaries do not re-derive presentation rules independently.

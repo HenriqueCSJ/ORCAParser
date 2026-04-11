@@ -37,26 +37,22 @@ from ..final_snapshot import (
     get_final_orbital_energies as _get_final_orbital_energies,
     get_final_population_section as _get_final_population_section,
 )
+from ..job_family_registry import get_calculation_family_plugin as _get_calculation_family_plugin
 from ..job_snapshot import get_job_snapshot as _get_job_snapshot
 from .job_state import (
     bool_to_label as _bool_to_label,
     electronic_state_label as _shared_electronic_state_label,
     excited_state_target_label as _excited_state_target_label,
     format_deltascf_target as _format_deltascf_target,
-    format_simple_vector as _format_simple_vector,
     get_deltascf_data as _get_deltascf_data,
     get_excited_state_opt_data as _get_excited_state_opt_data,
     get_symmetry_data as _get_symmetry_data,
-    is_deltascf as _is_deltascf,
     is_surface_scan as _is_surface_scan,
 )
 from .csv_sections_basic import (
     write_dipole_section as _write_basic_dipole_section,
-    write_geom_opt_section as _write_basic_geom_opt_section,
     write_geometry_section as _write_basic_geometry_section,
-    write_goat_section as _write_basic_goat_section,
     write_solvation_section as _write_basic_solvation_section,
-    write_surface_scan_section as _write_basic_surface_scan_section,
 )
 from .csv_sections_nbo import (
     write_nbo_e2_section as _write_nbo_e2_section,
@@ -73,8 +69,6 @@ from .csv_sections_spectroscopy import (
     write_tddft_section as _write_spectroscopy_tddft_section,
 )
 from .csv_sections_state import (
-    write_deltascf_section as _write_state_deltascf_section,
-    write_excited_state_optimization_section as _write_state_excited_state_optimization_section,
     write_metadata_section as _write_state_metadata_section,
     write_symmetry_section as _write_state_symmetry_section,
 )
@@ -163,39 +157,6 @@ def _write_symmetry(data: Dict[str, Any], directory: Path, stem: str) -> List[Pa
         write_csv=_write_csv,
         get_symmetry_data=_get_symmetry_data,
         bool_to_label=_bool_to_label,
-    )
-
-
-def _write_deltascf(data: Dict[str, Any], directory: Path, stem: str) -> List[Path]:
-    """Write DeltaSCF excited-state target metadata when present."""
-    return _write_state_deltascf_section(
-        data,
-        directory,
-        stem,
-        write_csv=_write_csv,
-        electronic_state_label=_electronic_state_label,
-        get_deltascf_data=_get_deltascf_data,
-        is_deltascf=_is_deltascf,
-        format_deltascf_target=_format_deltascf_target,
-        format_simple_vector=_format_simple_vector,
-        bool_to_label=_bool_to_label,
-    )
-
-
-def _write_excited_state_optimization(
-    data: Dict[str, Any], directory: Path, stem: str
-) -> List[Path]:
-    """Write excited-state geometry-optimization metadata and cycle history."""
-    return _write_state_excited_state_optimization_section(
-        data,
-        directory,
-        stem,
-        write_csv=_write_csv,
-        electronic_state_label=_electronic_state_label,
-        get_excited_state_opt_data=_get_excited_state_opt_data,
-        excited_state_target_label=_excited_state_target_label,
-        bool_to_label=_bool_to_label,
-        format_simple_vector=_format_simple_vector,
     )
 
 
@@ -514,34 +475,6 @@ def _write_solvation(data, directory, stem) -> List[Path]:
     )
 
 
-def _write_geom_opt(data: Dict[str, Any], directory: Path, stem: str) -> List[Path]:
-    return _write_basic_geom_opt_section(
-        data,
-        directory,
-        stem,
-        write_csv=_write_csv,
-    )
-
-
-def _write_surface_scan(data: Dict[str, Any], directory: Path, stem: str) -> List[Path]:
-    return _write_basic_surface_scan_section(
-        data,
-        directory,
-        stem,
-        write_csv=_write_csv,
-        format_simple_vector=_format_simple_vector,
-    )
-
-
-def _write_goat(data: Dict[str, Any], directory: Path, stem: str) -> List[Path]:
-    return _write_basic_goat_section(
-        data,
-        directory,
-        stem,
-        write_csv=_write_csv,
-    )
-
-
 # ─────────────────────────────────────────────────────────────────
 # Main entry point
 # ─────────────────────────────────────────────────────────────────
@@ -570,8 +503,6 @@ def write_csvs(data: Dict[str, Any], directory: Path) -> List[Path]:
         _write_metadata,
         _write_geometry,
         _write_symmetry,
-        _write_deltascf,
-        _write_excited_state_optimization,
         _write_orbital_energies,
         _write_qro,
         _write_mulliken,
@@ -591,9 +522,6 @@ def write_csvs(data: Dict[str, Any], directory: Path) -> List[Path]:
         _write_nbo_nlmo_bo,
         _write_nbo_nlmo_steric,
         _write_epr,
-        _write_goat,
-        _write_surface_scan,
-        _write_geom_opt,
     ]
 
     for writer in writers:
@@ -602,6 +530,15 @@ def write_csvs(data: Dict[str, Any], directory: Path) -> List[Path]:
             written.extend(files)
         except Exception:  # noqa: BLE001
             pass  # Section absent or parse issue; continue silently
+
+    # Family-specific CSV exports are discovered through the registry so that
+    # adding a new calculation family does not require editing this writer.
+    family_plugin = _get_calculation_family_plugin(data)
+    for writer in family_plugin.csv_writers:
+        try:
+            written.extend(writer(data, directory, stem, _write_csv))
+        except Exception:  # noqa: BLE001
+            pass
 
     # Wiberg and NBI matrices
     try:
