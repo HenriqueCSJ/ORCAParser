@@ -702,8 +702,9 @@ class GeometryModule(BaseModule):
     def parse(self, lines):
         data = {}
 
-        # Cartesian in Angstrom
-        idx = self.find_line(lines, "CARTESIAN COORDINATES (ANGSTROEM)")
+        # Geometry optimizations print this block for every step; prefer the
+        # converged geometry instead of the input/start structure.
+        idx = self.find_last_line_exact(lines, "CARTESIAN COORDINATES (ANGSTROEM)")
         if idx != -1:
             atoms_ang = []
             for ln in lines[idx + 2:]:
@@ -720,7 +721,7 @@ class GeometryModule(BaseModule):
             data["cartesian_angstrom"] = atoms_ang
 
         # Cartesian in a.u. (includes Z, mass)
-        idx = self.find_line(lines, "CARTESIAN COORDINATES (A.U.)")
+        idx = self.find_last_line_exact(lines, "CARTESIAN COORDINATES (A.U.)")
         if idx != -1:
             atoms_au = []
             for ln in lines[idx + 3:]:
@@ -741,7 +742,7 @@ class GeometryModule(BaseModule):
             data["cartesian_au"] = atoms_au
 
         # Internal coordinates (Angstrom)
-        idx = self.find_line(lines, "INTERNAL COORDINATES (ANGSTROEM)")
+        idx = self.find_last_line_exact(lines, "INTERNAL COORDINATES (ANGSTROEM)")
         if idx != -1:
             internals = []
             for ln in lines[idx + 2:]:
