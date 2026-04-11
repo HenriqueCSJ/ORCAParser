@@ -118,6 +118,21 @@ import sys
 from pathlib import Path
 from typing import List
 
+from orca_parser.final_snapshot import (
+    get_final_dipole as _get_final_dipole,
+    get_final_orbital_energies as _get_final_orbital_energies,
+)
+from orca_parser.output.job_state import (
+    calculation_type_label as _calculation_type_label,
+    electronic_state_label as _electronic_state_label,
+    get_basis_set as _get_basis_set,
+    get_charge as _get_charge,
+    get_excited_state_opt_data as _get_excited_state_opt_data,
+    get_job_name as _get_job_name,
+    get_method_header_label as _get_method_header_label,
+    get_multiplicity as _get_multiplicity,
+    symmetry_inline_label as _symmetry_inline_label,
+)
 from orca_parser.parser import is_auxiliary_orca_file
 
 
@@ -267,15 +282,18 @@ def _print_summary(data: dict, path: Path) -> None:
 
     meta = data.get("metadata", {})
     ctx  = data.get("context",  {})
+    state_label = _electronic_state_label(data, ground_state_label="Ground-state")
+    symmetry_label = _symmetry_inline_label(data)
     print(f"  ORCA version : {meta.get('orca_version', 'N/A')}")
-    print(f"  Job          : {meta.get('job_name', 'N/A')}")
-    print(f"  Calc type    : {meta.get('calculation_type', 'N/A')}")
+    print(f"  Job          : {_get_job_name(data) or 'N/A'}")
+    print(f"  Calc type    : {_calculation_type_label(data) or 'N/A'}")
+    print(f"  State        : {state_label}")
     print(f"  HF type      : {ctx.get('hf_type', 'N/A')}")
-    print(f"  Functional   : {meta.get('functional', 'N/A')}")
-    print(f"  Basis        : {meta.get('basis_set', 'N/A')}")
-    print(f"  Charge/Mult  : {meta.get('charge', 'N/A')} / {meta.get('multiplicity', 'N/A')}")
-    print(f"  Symmetry     : {'yes' if ctx.get('has_symmetry') else 'no'}")
-    excopt = meta.get("excited_state_optimization", {})
+    print(f"  Method       : {_get_method_header_label(data)}")
+    print(f"  Basis        : {_get_basis_set(data) or 'N/A'}")
+    print(f"  Charge/Mult  : {_get_charge(data)} / {_get_multiplicity(data)}")
+    print(f"  Symmetry     : {symmetry_label or 'none'}")
+    excopt = _get_excited_state_opt_data(data)
     if excopt:
         label = excopt.get("target_state_label") or excopt.get("target_root")
         if label:
@@ -294,7 +312,7 @@ def _print_summary(data: dict, path: Path) -> None:
             print(f"  <S²>         : {scf['s_squared']:.6f}  "
                   f"(ideal {scf.get('s_squared_ideal', 'N/A')})")
 
-    oe = data.get("orbital_energies", {})
+    oe = _get_final_orbital_energies(data)
     if "HOMO_LUMO_gap_eV" in oe:
         print(f"  HOMO-LUMO (eV): {oe['HOMO_LUMO_gap_eV']:.4f}")
     for spin in ("alpha", "beta"):
@@ -302,7 +320,7 @@ def _print_summary(data: dict, path: Path) -> None:
         if key in oe:
             print(f"  {spin.capitalize()} gap (eV): {oe[key]:.4f}")
 
-    dip = data.get("dipole", {})
+    dip = _get_final_dipole(data)
     if dip:
         mag = dip.get('magnitude_Debye')
         print(f"  Dipole (D)   : {mag:.4f}" if mag is not None else "  Dipole (D)   : N/A")

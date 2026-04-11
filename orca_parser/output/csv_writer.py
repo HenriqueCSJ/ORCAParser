@@ -37,6 +37,7 @@ from ..final_snapshot import (
     get_final_orbital_energies as _get_final_orbital_energies,
     get_final_population_section as _get_final_population_section,
 )
+from ..job_snapshot import get_job_snapshot as _get_job_snapshot
 from .job_state import (
     bool_to_label as _bool_to_label,
     electronic_state_label as _shared_electronic_state_label,
@@ -85,6 +86,11 @@ from .csv_sections_state import (
 
 def _stem(data: Dict[str, Any]) -> str:
     """Job-name stem derived from the source file or metadata."""
+    snapshot = _get_job_snapshot(data)
+    jn = snapshot.get("job_name")
+    if jn:
+        return str(jn)
+
     meta = data.get("metadata", {})
     jn = meta.get("job_name")
     if jn:
@@ -144,6 +150,7 @@ def _write_metadata(data: Dict[str, Any], directory: Path, stem: str) -> List[Pa
         is_surface_scan=_is_surface_scan,
         format_deltascf_target=_format_deltascf_target,
         excited_state_target_label=_excited_state_target_label,
+        get_job_snapshot=_get_job_snapshot,
     )
 
 

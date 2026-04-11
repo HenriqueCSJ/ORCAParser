@@ -8,11 +8,20 @@ as new job types are added.
 
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Any, Dict, List, Optional
+
+from ..job_series import get_excited_state_optimization_series
+from ..job_snapshot import get_job_snapshot
 
 
 def get_deltascf_data(data: Dict[str, Any]) -> Dict[str, Any]:
     """Return DeltaSCF metadata if this is an excited-state DeltaSCF job."""
+    snapshot = get_job_snapshot(data)
+    deltascf = snapshot.get("deltascf")
+    if isinstance(deltascf, dict) and deltascf:
+        return dict(deltascf)
+
     meta = data.get("metadata", {})
     if str(meta.get("calculation_type", "")).lower() != "deltascf":
         return {}
@@ -21,12 +30,32 @@ def get_deltascf_data(data: Dict[str, Any]) -> Dict[str, Any]:
 
 def is_deltascf(data: Dict[str, Any]) -> bool:
     """Whether the parsed job is a DeltaSCF excited-state calculation."""
+    snapshot = get_job_snapshot(data)
+    if "is_deltascf" in snapshot:
+        return bool(snapshot.get("is_deltascf"))
+
     calculation_type = str(data.get("metadata", {}).get("calculation_type", "")).lower()
     return bool(get_deltascf_data(data) or calculation_type == "deltascf")
 
 
 def get_excited_state_opt_data(data: Dict[str, Any]) -> Dict[str, Any]:
     """Return excited-state geometry-optimization metadata when available."""
+    combined: Dict[str, Any] = {}
+    series = get_excited_state_optimization_series(data)
+    if isinstance(series, dict) and series:
+        combined.update(deepcopy(series))
+
+    snapshot = get_job_snapshot(data)
+    excopt = snapshot.get("excited_state_optimization")
+    if isinstance(excopt, dict) and excopt:
+        # The series carries cycle history; the job snapshot carries the
+        # normalized display metadata. Merge them so renderers read one shape.
+        for key, value in excopt.items():
+            if key not in combined or combined[key] in ("", None, [], {}):
+                combined[key] = deepcopy(value)
+    if combined:
+        return combined
+
     meta = data.get("metadata", {})
     excopt = meta.get("excited_state_optimization")
     if isinstance(excopt, dict) and excopt:
@@ -42,6 +71,9 @@ def get_excited_state_opt_data(data: Dict[str, Any]) -> Dict[str, Any]:
 
 def is_excited_state_opt(data: Dict[str, Any]) -> bool:
     """Whether the parsed job is an excited-state geometry optimization."""
+    snapshot = get_job_snapshot(data)
+    if "is_excited_state_optimization" in snapshot:
+        return bool(snapshot.get("is_excited_state_optimization"))
     return bool(get_excited_state_opt_data(data))
 
 
@@ -62,14 +94,10 @@ def excited_state_target_label(excopt: Dict[str, Any]) -> str:
 
 def electronic_state_label(data: Dict[str, Any], ground_state_label: str = "") -> str:
     """Return a short label describing the electronic state treatment."""
-    if is_deltascf(data):
-        return "DeltaSCF excited-state"
-    excopt = get_excited_state_opt_data(data)
-    if excopt:
-        target = excited_state_target_label(excopt)
-        if target:
-            return f"Excited-state optimization ({target})"
-        return "Excited-state optimization"
+    snapshot = get_job_snapshot(data)
+    special = snapshot.get("special_electronic_state_label")
+    if special:
+        return str(special)
     return ground_state_label
 
 
@@ -161,6 +189,11 @@ def deltascf_target_summary(deltascf: Dict[str, Any], formatter=None) -> str:
 
 def get_symmetry_data(data: Dict[str, Any]) -> Dict[str, Any]:
     """Return normalized symmetry metadata assembled from metadata/geometry."""
+    snapshot = get_job_snapshot(data)
+    symmetry = snapshot.get("symmetry")
+    if isinstance(symmetry, dict) and symmetry:
+        return dict(symmetry)
+
     meta = data.get("metadata", {})
     geom = data.get("geometry", {})
     sym = dict(meta.get("symmetry") or {})
@@ -181,8 +214,10 @@ def get_symmetry_data(data: Dict[str, Any]) -> Dict[str, Any]:
 
 def has_symmetry(data: Dict[str, Any]) -> bool:
     """Whether a parsed dataset carries symmetry information."""
-    if data.get("context", {}).get("has_symmetry"):
-        return True
+    snapshot = get_job_snapshot(data)
+    symmetry = snapshot.get("symmetry")
+    if isinstance(symmetry, dict) and "has_symmetry" in symmetry:
+        return bool(symmetry.get("has_symmetry"))
 
     sym = get_symmetry_data(data)
     return bool(
@@ -208,10 +243,12 @@ def symmetry_on_off(sym: Dict[str, Any]) -> str:
 
 def symmetry_inline_label(data: Dict[str, Any]) -> str:
     """Compact symmetry label, keeping full and reduced/orbital groups distinct."""
+    sym = get_symmetry_data(data)
+    if sym.get("symmetry_label"):
+        return str(sym["symmetry_label"])
     if not has_symmetry(data):
         return ""
 
-    sym = get_symmetry_data(data)
     point_group = (
         sym.get("point_group")
         or sym.get("auto_detected_point_group")
@@ -243,4 +280,92 @@ def has_symmetry_setup(sym: Dict[str, Any]) -> bool:
 
 def is_surface_scan(data: Dict[str, Any]) -> bool:
     """Whether this parsed job is a relaxed surface scan."""
+    snapshot = get_job_snapshot(data)
+    if "is_surface_scan" in snapshot:
+        return bool(snapshot.get("is_surface_scan"))
     return bool(data.get("surface_scan"))
+
+
+def calculation_type_label(data: Dict[str, Any]) -> str:
+    """Return the normalized display label for the job's calculation type."""
+    snapshot = get_job_snapshot(data)
+    if snapshot.get("calculation_type"):
+        return str(snapshot["calculation_type"])
+    return str(data.get("metadata", {}).get("calculation_type", ""))
+
+
+def get_job_name(data: Dict[str, Any]) -> str:
+    """Return the normalized job name for display and exports."""
+    snapshot = get_job_snapshot(data)
+    if snapshot.get("job_name"):
+        return str(snapshot["job_name"])
+    return str(data.get("metadata", {}).get("job_name", ""))
+
+
+def get_job_id(data: Dict[str, Any]) -> str:
+    """Return the normalized unique job identifier."""
+    snapshot = get_job_snapshot(data)
+    if snapshot.get("job_id"):
+        return str(snapshot["job_id"])
+    return str(data.get("metadata", {}).get("job_id", "") or data.get("source_file", ""))
+
+
+def get_basis_set(data: Dict[str, Any]) -> str:
+    """Return the normalized primary basis set label."""
+    snapshot = get_job_snapshot(data)
+    if snapshot.get("basis_set"):
+        return str(snapshot["basis_set"])
+    return str(data.get("metadata", {}).get("basis_set", ""))
+
+
+def get_aux_basis_set(data: Dict[str, Any]) -> str:
+    """Return the normalized auxiliary basis set label."""
+    snapshot = get_job_snapshot(data)
+    if snapshot.get("aux_basis_set"):
+        return str(snapshot["aux_basis_set"])
+    return str(data.get("metadata", {}).get("aux_basis_set", ""))
+
+
+def get_charge(data: Dict[str, Any]) -> Any:
+    """Return the normalized total charge."""
+    snapshot = get_job_snapshot(data)
+    if "charge" in snapshot:
+        return snapshot.get("charge")
+    return data.get("metadata", {}).get("charge", "")
+
+
+def get_multiplicity(data: Dict[str, Any]) -> Any:
+    """Return the normalized spin multiplicity."""
+    snapshot = get_job_snapshot(data)
+    if "multiplicity" in snapshot:
+        return snapshot.get("multiplicity")
+    return data.get("metadata", {}).get("multiplicity", "")
+
+
+def get_method_header_label(data: Dict[str, Any]) -> str:
+    """Preferred method label for per-molecule markdown headers."""
+    snapshot = get_job_snapshot(data)
+    if snapshot.get("method_header_label"):
+        return str(snapshot["method_header_label"])
+
+    meta = data.get("metadata", {})
+    context = data.get("context", {})
+    if meta.get("level_of_theory"):
+        return str(meta["level_of_theory"])
+    functional = meta.get("functional", "?")
+    basis = meta.get("basis_set", "?")
+    return f"{context.get('hf_type', '?')} {functional}/{basis}"
+
+
+def get_method_table_label(data: Dict[str, Any]) -> str:
+    """Preferred method label for comparison tables."""
+    snapshot = get_job_snapshot(data)
+    if snapshot.get("method_table_label"):
+        return str(snapshot["method_table_label"])
+
+    meta = data.get("metadata", {})
+    if meta.get("method"):
+        return str(meta["method"])
+    if meta.get("functional"):
+        return str(meta["functional"])
+    return str(data.get("context", {}).get("hf_type", "?"))

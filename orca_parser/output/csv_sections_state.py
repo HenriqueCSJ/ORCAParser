@@ -9,6 +9,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable, Dict, List
 
+from ..job_series import get_surface_scan_series
+
 
 WriteCSV = Callable[[Path, str, List[Dict], List[str]], Path]
 BoolToLabel = Callable[[Any], str]
@@ -21,6 +23,7 @@ IsSurfaceScan = Callable[[Dict[str, Any]], bool]
 FormatDeltaSCFTarget = Callable[[Dict[str, Any] | None], str]
 FormatSimpleVector = Callable[[Any], str]
 ExcitedStateTargetLabel = Callable[[Dict[str, Any] | None], str]
+GetJobSnapshot = Callable[[Dict[str, Any]], Dict[str, Any]]
 
 
 def write_metadata_section(
@@ -37,40 +40,47 @@ def write_metadata_section(
     is_surface_scan: IsSurfaceScan,
     format_deltascf_target: FormatDeltaSCFTarget,
     excited_state_target_label: ExcitedStateTargetLabel,
+    get_job_snapshot: GetJobSnapshot,
 ) -> List[Path]:
     """Write a one-row metadata summary for downstream filtering/grouping."""
     meta = data.get("metadata", {})
     if not meta:
         return []
 
+    snapshot = get_job_snapshot(data)
     sym = get_symmetry_data(data)
     deltascf = get_deltascf_data(data) or {}
     excopt = get_excited_state_opt_data(data) or {}
     geom = data.get("geometry", {})
-    surface_scan = data.get("surface_scan") or {}
+    surface_scan = get_surface_scan_series(data)
     row = {
-        "job_id": meta.get("job_id", ""),
-        "job_name": meta.get("job_name", ""),
+        "job_id": snapshot.get("job_id", meta.get("job_id", "")),
+        "job_name": snapshot.get("job_name", meta.get("job_name", "")),
         "source_file": data.get("source_file", ""),
-        "source_relpath": meta.get("source_relpath", ""),
+        "source_relpath": snapshot.get("source_relpath", meta.get("source_relpath", "")),
         "program_version": meta.get("program_version", ""),
         "run_date": meta.get("run_date", ""),
         "host": meta.get("host", ""),
-        "calculation_type": meta.get("calculation_type", ""),
+        "calculation_type": snapshot.get("calculation_type", meta.get("calculation_type", "")),
+        "calculation_family": snapshot.get("calculation_family", ""),
         "electronic_state": electronic_state_label(data),
-        "hf_type": meta.get("hf_type", ""),
-        "method": meta.get("method", ""),
-        "functional": meta.get("functional", ""),
-        "level_of_theory": meta.get("level_of_theory", ""),
-        "basis_set": meta.get("basis_set", ""),
-        "aux_basis_set": meta.get("aux_basis_set", ""),
-        "charge": meta.get("charge", ""),
-        "multiplicity": meta.get("multiplicity", ""),
+        "hf_type": snapshot.get("hf_type", meta.get("hf_type", "")),
+        "method": snapshot.get("method", meta.get("method", "")),
+        "functional": snapshot.get("functional", meta.get("functional", "")),
+        "level_of_theory": snapshot.get("level_of_theory", meta.get("level_of_theory", "")),
+        "method_header_label": snapshot.get("method_header_label", ""),
+        "method_table_label": snapshot.get("method_table_label", ""),
+        "basis_set": snapshot.get("basis_set", meta.get("basis_set", "")),
+        "aux_basis_set": snapshot.get("aux_basis_set", meta.get("aux_basis_set", "")),
+        "charge": snapshot.get("charge", meta.get("charge", "")),
+        "multiplicity": snapshot.get("multiplicity", meta.get("multiplicity", "")),
         "point_group": sym.get("point_group", ""),
         "reduced_point_group": sym.get("reduced_point_group", ""),
         "orbital_irrep_group": sym.get("orbital_irrep_group", ""),
+        "symmetry_label": sym.get("symmetry_label", ""),
+        "has_symmetry": bool_to_label(sym.get("has_symmetry")),
         "use_sym": bool_to_label(sym.get("use_sym")),
-        "input_use_sym": bool_to_label(meta.get("input_use_sym")),
+        "input_use_sym": bool_to_label(sym.get("input_use_sym", meta.get("input_use_sym"))),
         "n_irreps": sym.get("n_irreps", ""),
         "initial_guess_irrep": sym.get("initial_guess_irrep", ""),
         "symmetry_perfected_point_group": geom.get("symmetry_perfected_point_group", ""),

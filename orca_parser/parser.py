@@ -18,6 +18,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from .final_snapshot import build_final_snapshot
+from .job_series import build_job_series
+from .job_snapshot import build_job_snapshot
 from .modules import (
     MetadataModule,
     GeometryModule,
@@ -592,6 +594,18 @@ class ORCAParser:
             calc_type = str(meta.get("calculation_type", "")).strip().lower()
             if calc_type == "geometry optimization":
                 meta["calculation_type"] = "Excited-State Geometry Optimization"
+
+        # Freeze normalized job identity/state metadata once so downstream
+        # writers do not have to rediscover it from loosely shaped payloads.
+        job_snapshot = build_job_snapshot(results, context=self.context)
+        if job_snapshot is not None:
+            results["job_snapshot"] = job_snapshot.to_dict()
+
+        # Stepwise histories get the same treatment: GOAT/opt/scan/ES-opt
+        # should have one parse-time authority before any output code runs.
+        job_series = build_job_series(results)
+        if job_series is not None:
+            results["job_series"] = job_series.to_dict()
 
         final_snapshot = build_final_snapshot(results, context=self.context)
         if final_snapshot is not None:
