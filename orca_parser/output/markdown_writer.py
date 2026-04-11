@@ -19,13 +19,25 @@ from ..final_snapshot import (
     get_final_geometry as _get_final_geometry,
     get_final_orbital_energies as _get_final_orbital_energies,
 )
+from ..job_series import (
+    get_geom_opt_series as _get_geom_opt_series,
+    get_goat_series as _get_goat_series,
+    get_surface_scan_series as _get_surface_scan_series,
+)
 from .job_state import (
     deltascf_target_summary as _shared_deltascf_target_summary,
     electronic_state_label as _electronic_state_label,
     excited_state_target_label as _excited_state_target_label,
+    get_basis_set as _get_basis_set,
+    get_charge as _get_charge,
     format_deltascf_vector as _shared_format_deltascf_vector,
     get_deltascf_data as _get_deltascf_data,
     get_excited_state_opt_data as _get_excited_state_opt_data,
+    get_method_header_label as _get_method_header_label,
+    get_method_table_label as _get_method_table_label,
+    get_job_id as _get_job_id,
+    get_job_name as _get_job_name,
+    get_multiplicity as _get_multiplicity,
     get_symmetry_data as _get_symmetry_data,
     has_symmetry as _has_symmetry,
     has_symmetry_setup as _has_symmetry_setup,
@@ -77,25 +89,6 @@ def _format_deltascf_vector(values: Any) -> str:
 def _deltascf_target_summary(deltascf: Dict[str, Any]) -> str:
     """Preserve markdown-friendly numeric formatting for DeltaSCF targets."""
     return _shared_deltascf_target_summary(deltascf, formatter=_f)
-
-
-def _method_header_label(meta: Dict[str, Any], ctx: Dict[str, Any]) -> str:
-    """Preferred single-line method label for molecule headers."""
-    if meta.get("level_of_theory"):
-        return str(meta["level_of_theory"])
-
-    func = meta.get("functional", "?")
-    basis = meta.get("basis_set", "?")
-    return f"{ctx.get('hf_type', '?')} {func}/{basis}"
-
-
-def _method_table_label(meta: Dict[str, Any], ctx: Dict[str, Any]) -> str:
-    """Preferred method label for comparison tables."""
-    if meta.get("method"):
-        return str(meta["method"])
-    if meta.get("functional"):
-        return str(meta["functional"])
-    return ctx.get("hf_type", "?")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -165,17 +158,17 @@ def _render_molecule(
     src  = source_display or src_path.name
 
     # ── Title ──────────────────────────────────────────────────────────────
-    job   = display_label or meta.get("job_name", src_path.stem)
-    charge = meta.get("charge", 0)
-    mult   = meta.get("multiplicity", 1)
+    job = display_label or _get_job_name(data) or src_path.stem
+    charge = _get_charge(data)
+    mult = _get_multiplicity(data)
     state_label = _electronic_state_label(data)
     sym_label = _symmetry_inline_label(data)
     state  = f"  state={state_label}" if state_label else ""
     sym    = f"  symmetry={sym_label}" if sym_label else ""
-    job_id = meta.get("job_id") or data.get("source_file", "")
+    job_id = _get_job_id(data)
     blocks.append(
         f"{H} {job}\n"
-        f"`{_method_header_label(meta, ctx)}` | charge={charge} mult={mult}{state}{sym}  \n"
+        f"`{_get_method_header_label(data)}` | charge={charge} mult={mult}{state}{sym}  \n"
         f"source: `{src}` | id: `{job_id}`"
     )
 
@@ -230,13 +223,13 @@ def _render_molecule(
     if excited_state_opt_section:
         blocks.append(f"{H2} Excited-State Geometry Optimization\n{excited_state_opt_section}")
 
-    surface_scan = data.get("surface_scan")
+    surface_scan = _get_surface_scan_series(data)
     if surface_scan:
         surface_scan_section = _render_surface_scan_section(surface_scan)
         if surface_scan_section:
             blocks.append(f"{H2} Relaxed Surface Scan\n{surface_scan_section}")
 
-    goat = data.get("goat")
+    goat = _get_goat_series(data)
     if goat:
         goat_section = _render_goat_section(
             goat,
@@ -246,7 +239,7 @@ def _render_molecule(
             blocks.append(f"{H2} GOAT Conformer Search\n{goat_section}")
 
     # -- Geometry optimization summary -----------------------------------
-    geom_opt = data.get("geom_opt")
+    geom_opt = _get_geom_opt_series(data)
     if geom_opt:
         geom_opt_section = _render_geom_opt_section(geom_opt)
         if geom_opt_section:
@@ -416,14 +409,12 @@ def _render_comparison(
     # ── Method table ───────────────────────────────────────────────────────
     rows = [("", "method", "basis", "charge", "mult", "electronic state", "symmetry")]
     for lbl, d in zip(labels, datasets):
-        meta = d.get("metadata", {})
-        ctx  = d.get("context",  {})
         rows.append((
             lbl,
-            _method_table_label(meta, ctx),
-            meta.get("basis_set", "—") or "—",
-            str(meta.get("charge", "?")),
-            str(meta.get("multiplicity", "?")),
+            _get_method_table_label(d),
+            _get_basis_set(d) or "—",
+            str(_get_charge(d) if _get_charge(d) != "" else "?"),
+            str(_get_multiplicity(d) if _get_multiplicity(d) != "" else "?"),
             _electronic_state_label(d) or "ground-state",
             _symmetry_inline_label(d) or "C1",
         ))
@@ -886,8 +877,7 @@ def _render_solvation_section(solvation: Dict[str, Any]) -> str:
 
 def _mol_label(data: Dict[str, Any]) -> str:
     """Short identifier for a molecule/calculation."""
-    meta = data.get("metadata", {})
-    name = meta.get("job_name") or Path(data.get("source_file", "mol")).stem
+    name = _get_job_name(data) or Path(data.get("source_file", "mol")).stem
     return name
 
 

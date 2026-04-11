@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import re
 import uuid
 from pathlib import Path
@@ -11,6 +12,7 @@ from orca_parser import ORCAParser
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 RDB_LMMP_ROOT = REPO_ROOT / "sample_outs" / "RDB_LMMP" / "a" / "CH2Cl2"
+SCAN_OUT = REPO_ROOT / "sample_outs" / "Scan" / "F3CNO.out"
 GOAT_OUT = RDB_LMMP_ROOT / "GOAT" / "RDB_LMMPa.out"
 S0_OUT = RDB_LMMP_ROOT / "S0" / "RDB_LMMP_S0_CH2Cl2.out"
 S1_OUT = RDB_LMMP_ROOT / "S1" / "RDB_LMMP_S1_CH2Cl2.out"
@@ -191,6 +193,21 @@ def s1_final_step_parser() -> ORCAParser:
     return _parse_with_sections(S1_OUT, ["charges", "population", "mos", "dipole"])
 
 
+@pytest.fixture(scope="module")
+def scan_parser() -> ORCAParser:
+    return _parse_with_sections(SCAN_OUT, ["scan"])
+
+
+@pytest.fixture(scope="module")
+def s0_opt_parser() -> ORCAParser:
+    return _parse_with_sections(S0_OUT, ["opt"])
+
+
+@pytest.fixture(scope="module")
+def s1_excited_opt_parser() -> ORCAParser:
+    return _parse_with_sections(S1_OUT, ["tddft", "opt"])
+
+
 def test_rdb_lmmp_goat_uses_input_echo_for_method_energy_and_id(
     goat_parser: ORCAParser,
 ) -> None:
@@ -262,6 +279,257 @@ def test_rdb_lmmp_excited_state_opt_is_identified_from_input(
     assert excited["target_state_label"] == "S1"
     assert excited["followiroot"] is False
     assert scf["final_single_point_energy_Eh"] == pytest.approx(-2089.737911658443)
+
+
+def test_job_snapshot_normalizes_job_identity_and_state_labels(
+    goat_parser: ORCAParser,
+    s1_parser: ORCAParser,
+    tddft_parser: ORCAParser,
+) -> None:
+    goat_snapshot = goat_parser.data["job_snapshot"]
+    s1_snapshot = s1_parser.data["job_snapshot"]
+    tddft_snapshot = tddft_parser.data["job_snapshot"]
+
+    assert goat_snapshot["calculation_family"] == "goat"
+    assert goat_snapshot["method_header_label"] == "XTB2"
+    assert goat_snapshot["method_table_label"] == "XTB2"
+    assert goat_snapshot["is_goat"] is True
+    assert goat_snapshot["electronic_state_kind"] == "ground_state"
+    assert goat_snapshot["job_id"] == "sample_outs/RDB_LMMP/a/CH2Cl2/GOAT/RDB_LMMPa.out"
+
+    assert s1_snapshot["calculation_family"] == "excited_state_optimization"
+    assert s1_snapshot["method_header_label"] == "LibXC(wB97X-D4)/Def2-TZVP"
+    assert s1_snapshot["method_table_label"] == "LibXC(wB97X-D4)"
+    assert s1_snapshot["special_electronic_state_label"] == "Excited-state optimization (S1)"
+    assert s1_snapshot["state_target_label"] == "S1"
+    assert s1_snapshot["charge"] == 0
+    assert s1_snapshot["multiplicity"] == 1
+    assert s1_snapshot["is_excited_state_optimization"] is True
+
+    assert tddft_snapshot["calculation_family"] == "single_point"
+    assert tddft_snapshot["method_header_label"] == "SOS-wPBEPP86/Def2-TZVP"
+    assert tddft_snapshot["method_table_label"] == "SOS-wPBEPP86"
+    assert tddft_snapshot["special_electronic_state_label"] == ""
+    assert tddft_snapshot["basis_set"] == "Def2-TZVP"
+    assert tddft_snapshot["aux_basis_set"] == "Def2-TZVP/C"
+
+
+def test_job_snapshot_remains_authoritative_for_markdown_metadata_and_comparison() -> None:
+    s0_parser = _parse_quick(S0_OUT)
+    s1_parser = _parse_quick(S1_OUT)
+    snapshot = s1_parser.data["job_snapshot"]
+
+    s1_parser.data["metadata"]["job_name"] = "BROKEN_JOB"
+    s1_parser.data["metadata"]["job_id"] = "BROKEN/ID"
+    s1_parser.data["metadata"]["calculation_type"] = "BROKEN_TYPE"
+    s1_parser.data["metadata"]["method"] = "BROKEN_METHOD"
+    s1_parser.data["metadata"]["functional"] = "BROKEN_FUNCTIONAL"
+    s1_parser.data["metadata"]["level_of_theory"] = "BROKEN_LOT"
+    s1_parser.data["metadata"]["basis_set"] = "BROKEN_BASIS"
+    s1_parser.data["metadata"]["aux_basis_set"] = "BROKEN_AUX"
+    s1_parser.data["metadata"]["charge"] = 999
+    s1_parser.data["metadata"]["multiplicity"] = 999
+    s1_parser.data["metadata"]["input_use_sym"] = True
+    s1_parser.data["metadata"]["excited_state_optimization"] = {
+        "target_state_label": "BROKEN_STATE",
+        "target_root": 999,
+    }
+    s1_parser.data["metadata"]["symmetry"] = {
+        "point_group": "BROKEN_PG",
+        "orbital_irrep_group": "BROKEN_IRREP",
+        "input_use_sym": True,
+    }
+
+    tmp_dir = REPO_ROOT / ".pytest_tmp" / f"rdb_lmmp_job_snapshot_{uuid.uuid4().hex}"
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+
+    markdown_path = tmp_dir / "s1_job_snapshot.md"
+    comparison_path = tmp_dir / "comparison.md"
+    csv_dir = tmp_dir / "csv"
+
+    s1_parser.to_markdown(markdown_path)
+    s1_parser.to_csv(csv_dir)
+    ORCAParser.compare([s0_parser, s1_parser], comparison_path)
+
+    markdown_text = markdown_path.read_text(encoding="utf-8")
+    comparison_text = comparison_path.read_text(encoding="utf-8")
+
+    metadata_csv_path = csv_dir / "RDB_LMMP_S1_CH2Cl2_metadata.csv"
+    with metadata_csv_path.open(encoding="utf-8", newline="") as handle:
+        metadata_row = next(csv.DictReader(handle))
+
+    assert "BROKEN" not in markdown_text
+    assert "BROKEN" not in comparison_text
+    assert "`LibXC(wB97X-D4)/Def2-TZVP`" in markdown_text
+    assert "charge=0 mult=1" in markdown_text
+    assert "state=Excited-state optimization (S1)" in markdown_text
+    assert (
+        "id: `sample_outs/RDB_LMMP/a/CH2Cl2/S1/RDB_LMMP_S1_CH2Cl2.out`"
+        in markdown_text
+    )
+
+    assert "BROKEN" not in ",".join(metadata_row.values())
+    assert metadata_row["job_name"] == snapshot["job_name"]
+    assert metadata_row["job_id"] == snapshot["job_id"]
+    assert metadata_row["calculation_type"] == snapshot["calculation_type"]
+    assert metadata_row["calculation_family"] == snapshot["calculation_family"]
+    assert metadata_row["method"] == snapshot["method"]
+    assert metadata_row["functional"] == snapshot["functional"]
+    assert metadata_row["level_of_theory"] == snapshot["level_of_theory"]
+    assert metadata_row["method_header_label"] == snapshot["method_header_label"]
+    assert metadata_row["method_table_label"] == snapshot["method_table_label"]
+    assert metadata_row["basis_set"] == snapshot["basis_set"]
+    assert metadata_row["aux_basis_set"] == snapshot["aux_basis_set"]
+    assert metadata_row["charge"] == str(snapshot["charge"])
+    assert metadata_row["multiplicity"] == str(snapshot["multiplicity"])
+    assert metadata_row["electronic_state"] == snapshot["special_electronic_state_label"]
+
+    assert "S1/RDB_LMMP_S1_CH2Cl2.out" in comparison_text
+    assert "LibXC(wB97X-D4)" in comparison_text
+    assert "Def2-TZVP" in comparison_text
+    assert "Excited-state optimization (S1)" in comparison_text
+
+
+def test_job_series_normalizes_stepwise_job_histories(
+    goat_full_parser: ORCAParser,
+    scan_parser: ORCAParser,
+    s0_opt_parser: ORCAParser,
+    s1_excited_opt_parser: ORCAParser,
+) -> None:
+    goat_series = goat_full_parser.data["job_series"]["goat"]
+    scan_series = scan_parser.data["job_series"]["surface_scan"]
+    s0_series = s0_opt_parser.data["job_series"]["geom_opt"]
+    s1_series = s1_excited_opt_parser.data["job_series"]["excited_state_optimization"]
+
+    assert goat_series["n_conformers"] == 1147
+    assert len(goat_series["ensemble"]) == 1147
+    assert goat_series["lowest_energy_conformer_Eh"] == pytest.approx(-134.778230)
+
+    assert scan_series["n_parameters"] == 1
+    assert len(scan_series["steps"]) == 37
+    assert scan_series["mode"] == "single"
+
+    assert s0_series["converged"] is True
+    assert s0_series["n_cycles"] == 31
+    assert len(s0_series["cycles"]) == 31
+
+    assert s1_series["target_state_label"] == "S1"
+    assert s1_series["gradient_block_count"] == 44
+    assert len(s1_series["cycle_records"]) == 44
+
+
+def test_job_series_remains_authoritative_for_stepwise_markdown_and_csv_exports() -> None:
+    goat_parser = _parse_with_sections(GOAT_OUT, ["goat"])
+    scan_parser = _parse_with_sections(SCAN_OUT, ["scan"])
+    s0_parser = _parse_with_sections(S0_OUT, ["opt"])
+    s1_parser = _parse_with_sections(S1_OUT, ["tddft", "opt"])
+
+    goat_series = goat_parser.data["job_series"]["goat"]
+    scan_series = scan_parser.data["job_series"]["surface_scan"]
+    s0_series = s0_parser.data["job_series"]["geom_opt"]
+    s1_series = s1_parser.data["job_series"]["excited_state_optimization"]
+
+    goat_parser.data["goat"] = {
+        "n_conformers": 1,
+        "ensemble": [{"conformer": 9999, "relative_energy_kcal_mol": 999.0}],
+        "conformers_below_energy_window": 1,
+    }
+    scan_parser.data["surface_scan"] = {
+        "mode": "BROKEN_MODE",
+        "n_parameters": 999,
+        "n_constrained_optimizations": 1,
+        "parameters": [],
+        "steps": [{"step": 999, "actual_energy_Eh": 999.0}],
+    }
+    s0_parser.data["geom_opt"] = {
+        "converged": False,
+        "n_cycles": 1,
+        "cycles": [{"cycle": 999, "energy_Eh": 999.0}],
+    }
+    s1_parser.data.setdefault("tddft", {})["excited_state_optimization"] = {
+        "target_state_label": "BROKEN_STATE",
+        "gradient_block_count": 1,
+        "cycle_records": [{"optimization_cycle": 999, "total_energy_Eh": 999.0}],
+    }
+    s1_parser.data.setdefault("metadata", {})["excited_state_optimization"] = {
+        "target_state_label": "BROKEN_STATE",
+    }
+
+    tmp_dir = REPO_ROOT / ".pytest_tmp" / f"rdb_lmmp_job_series_{uuid.uuid4().hex}"
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+
+    goat_md = tmp_dir / "goat.md"
+    goat_csv = tmp_dir / "goat_csv"
+    goat_parser.to_markdown(goat_md)
+    goat_parser.to_csv(goat_csv)
+
+    scan_md = tmp_dir / "scan.md"
+    scan_csv = tmp_dir / "scan_csv"
+    scan_parser.to_markdown(scan_md)
+    scan_parser.to_csv(scan_csv)
+
+    s0_md = tmp_dir / "s0_opt.md"
+    s0_csv = tmp_dir / "s0_csv"
+    s0_parser.to_markdown(s0_md)
+    s0_parser.to_csv(s0_csv)
+
+    s1_csv = tmp_dir / "s1_csv"
+    s1_parser.to_csv(s1_csv)
+
+    goat_md_text = goat_md.read_text(encoding="utf-8")
+    scan_md_text = scan_md.read_text(encoding="utf-8")
+    s0_md_text = s0_md.read_text(encoding="utf-8")
+    with (goat_csv / "RDB_LMMPa_goat_summary.csv").open(encoding="utf-8", newline="") as handle:
+        goat_summary_row = next(csv.DictReader(handle))
+    with (goat_csv / "RDB_LMMPa_goat_ensemble.csv").open(encoding="utf-8", newline="") as handle:
+        goat_ensemble_rows = list(csv.DictReader(handle))
+    with (scan_csv / "F3CNO_surface_scan.csv").open(encoding="utf-8", newline="") as handle:
+        scan_rows = list(csv.DictReader(handle))
+    with (s0_csv / "RDB_LMMP_S0_CH2Cl2_geom_opt.csv").open(encoding="utf-8", newline="") as handle:
+        s0_opt_rows = list(csv.DictReader(handle))
+    with (
+        s1_csv / "RDB_LMMP_S1_CH2Cl2_excited_state_optimization_cycles.csv"
+    ).open(encoding="utf-8", newline="") as handle:
+        s1_excited_rows = list(csv.DictReader(handle))
+
+    assert "9999" not in goat_md_text
+    assert goat_summary_row["n_conformers"] == str(goat_series["n_conformers"])
+    assert goat_summary_row["conformers_below_energy_window"] == str(
+        goat_series["conformers_below_energy_window"]
+    )
+    assert len(goat_ensemble_rows) == len(goat_series["ensemble"])
+    assert goat_ensemble_rows[-1]["conformer"] == str(goat_series["ensemble"][-1]["conformer"])
+    assert float(goat_ensemble_rows[-1]["relative_energy_kcal_mol"]) == pytest.approx(
+        goat_series["ensemble"][-1]["relative_energy_kcal_mol"]
+    )
+    assert str(goat_series["n_conformers"]) in goat_md_text
+
+    assert "BROKEN_MODE" not in scan_md_text
+    assert scan_series["mode"] in scan_md_text
+    assert len(scan_rows) == len(scan_series["steps"])
+    assert scan_rows[0]["step"] == str(scan_series["steps"][0]["step"])
+    assert float(scan_rows[0]["actual_energy_Eh"]) == pytest.approx(
+        scan_series["steps"][0]["actual_energy_Eh"]
+    )
+    assert float(scan_rows[-1]["actual_energy_Eh"]) == pytest.approx(
+        scan_series["steps"][-1]["actual_energy_Eh"]
+    )
+
+    assert "999.0" not in s0_md_text
+    assert f"**Cycles:** {s0_series['n_cycles']}" in s0_md_text
+    assert len(s0_opt_rows) == len(s0_series["cycles"])
+    assert s0_opt_rows[0]["cycle"] == str(s0_series["cycles"][0]["cycle"])
+    assert float(s0_opt_rows[-1]["energy_Eh"]) == pytest.approx(
+        s0_series["cycles"][-1]["energy_Eh"]
+    )
+
+    assert len(s1_excited_rows) == len(s1_series["cycle_records"])
+    assert s1_excited_rows[0]["optimization_cycle"] == str(
+        s1_series["cycle_records"][0]["optimization_cycle"]
+    )
+    assert float(s1_excited_rows[-1]["total_energy_Eh"]) == pytest.approx(
+        s1_series["cycle_records"][-1]["total_energy_Eh"]
+    )
 
 
 def test_rdb_lmmp_markdown_and_comparison_use_input_driven_labels(

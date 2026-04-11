@@ -14,6 +14,11 @@ from ..final_snapshot import (
     get_final_dipole,
     get_final_geometry,
 )
+from ..job_series import (
+    get_geom_opt_series,
+    get_goat_series,
+    get_surface_scan_series,
+)
 
 
 WriteCSV = Callable[[Path, str, List[Dict], List[str]], Path]
@@ -220,7 +225,7 @@ def write_geom_opt_section(
     write_csv: WriteCSV,
 ) -> List[Path]:
     """Write per-cycle geometry optimization convergence history."""
-    geometry_optimization = data.get("geom_opt")
+    geometry_optimization = get_geom_opt_series(data)
     if not geometry_optimization:
         return []
 
@@ -269,7 +274,7 @@ def write_surface_scan_section(
     format_simple_vector: FormatSimpleVector,
 ) -> List[Path]:
     """Write relaxed-surface-scan definition, steps, and sidecar files."""
-    surface_scan = data.get("surface_scan")
+    surface_scan = get_surface_scan_series(data)
     if not surface_scan:
         return []
 
@@ -366,7 +371,7 @@ def write_goat_section(
     write_csv: WriteCSV,
 ) -> List[Path]:
     """Write GOAT conformer-search summary and full final ensemble."""
-    goat = data.get("goat")
+    goat = get_goat_series(data)
     if not goat:
         return []
 
