@@ -7,7 +7,7 @@ build/
 *.h5
 *.json.gz
 sample_outs/
-.codex_*/
+.codex_*
 
 # Local regression artifacts and private reference outputs.
 .pytest_tmp/
