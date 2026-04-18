@@ -20,6 +20,7 @@ from typing import Any, Dict, List, Optional
 from .final_snapshot import build_final_snapshot
 from .job_series import build_job_series
 from .job_snapshot import build_job_snapshot
+from .render_options import RENDER_OPTION_UNSET
 from .modules import (
     MetadataModule,
     GeometryModule,
@@ -429,7 +430,8 @@ class ORCAParser:
         self,
         path: str | Path,
         *,
-        goat_max_relative_energy_kcal_mol: Optional[float] = None,
+        goat_max_relative_energy_kcal_mol=RENDER_OPTION_UNSET,
+        detail_scope: str = "auto",
     ) -> Path:
         """Write a compact, AI-readable markdown report.
 
@@ -441,6 +443,7 @@ class ORCAParser:
             self.data,
             Path(path),
             goat_max_relative_energy_kcal_mol=goat_max_relative_energy_kcal_mol,
+            detail_scope=detail_scope,
         )
 
     # ---------------------------------------------------------------- #
@@ -453,7 +456,8 @@ class ORCAParser:
         parsers: "list[ORCAParser]",
         path: str | Path,
         *,
-        goat_max_relative_energy_kcal_mol: Optional[float] = 10.0,
+        goat_max_relative_energy_kcal_mol=RENDER_OPTION_UNSET,
+        detail_scope: str = "auto",
     ) -> Path:
         """Write a multi-molecule comparison markdown document.
 
@@ -470,6 +474,7 @@ class ORCAParser:
             datasets,
             Path(path),
             goat_max_relative_energy_kcal_mol=goat_max_relative_energy_kcal_mol,
+            detail_scope=detail_scope,
         )
 
 

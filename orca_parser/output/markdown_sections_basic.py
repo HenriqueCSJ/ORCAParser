@@ -360,6 +360,7 @@ def render_geom_opt_section(
     *,
     format_number: FormatNumber,
     make_table: MakeTable,
+    cycle_preview_count: Optional[int] = 6,
 ) -> str:
     """Compact geometry-optimization summary for markdown reports."""
     lines: List[str] = []
@@ -418,9 +419,16 @@ def render_geom_opt_section(
         ]]
         cycle_entries: List[Optional[Dict[str, Any]]] = list(cycles)
         note = ""
-        if len(cycle_entries) > 12:
-            cycle_entries = cycle_entries[:6] + [None] + cycle_entries[-6:]
-            note = f"*Showing first 6 and last 6 of {len(cycles)} cycles.*"
+        if cycle_preview_count is not None and len(cycle_entries) > 2 * cycle_preview_count:
+            cycle_entries = (
+                cycle_entries[:cycle_preview_count]
+                + [None]
+                + cycle_entries[-cycle_preview_count:]
+            )
+            note = (
+                f"*Showing first {cycle_preview_count} and last {cycle_preview_count} "
+                f"of {len(cycles)} cycles.*"
+            )
 
         for cyc in cycle_entries:
             if cyc is None:

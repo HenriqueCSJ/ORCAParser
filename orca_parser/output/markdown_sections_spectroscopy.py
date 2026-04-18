@@ -135,20 +135,42 @@ def _significant_state_transitions(
     threshold: float = 0.10,
 ) -> List[Dict[str, Any]]:
     """Return all state contributions at or above the reporting threshold."""
-    transitions = list(state.get("transitions") or [])
-    if not transitions:
-        return []
-
-    significant = [
-        transition
-        for transition in transitions
-        if (transition.get("weight") or 0.0) >= threshold
-    ]
+    significant = list(state.get("significant_transitions") or [])
     if significant:
-        return sorted(significant, key=lambda item: item.get("weight", 0.0), reverse=True)
+        return significant
 
-    dominant = max(transitions, key=lambda item: item.get("weight", 0.0), default={})
-    return [dominant] if dominant else []
+    transitions = list(state.get("transitions") or [])
+    return sorted(
+        [
+            transition
+            for transition in transitions
+            if (transition.get("weight") or 0.0) >= threshold
+        ],
+        key=lambda item: item.get("weight", 0.0),
+        reverse=True,
+    )
+
+
+def _significant_nto_pairs(
+    nto_state: Dict[str, Any],
+    *,
+    threshold: float = 0.10,
+) -> List[Dict[str, Any]]:
+    """Return all NTO pairs at or above the reporting threshold."""
+    significant = list(nto_state.get("significant_pairs") or [])
+    if significant:
+        return significant
+
+    pairs = list(nto_state.get("pairs") or [])
+    return sorted(
+        [
+            pair
+            for pair in pairs
+            if (pair.get("occupation") or 0.0) >= threshold
+        ],
+        key=lambda item: item.get("occupation", 0.0),
+        reverse=True,
+    )
 
 
 def _join_transition_summaries(
@@ -173,6 +195,17 @@ def _format_transition_weights(transitions: List[Dict[str, Any]]) -> str:
             continue
         weights.append(f"{100.0 * float(weight):.1f}%")
     return "; ".join(weights) if weights else "—"
+
+
+def _format_nto_occupations(pairs: List[Dict[str, Any]]) -> str:
+    """Format NTO occupations for compact markdown summaries."""
+    occupations = []
+    for pair in pairs:
+        occupation = pair.get("occupation")
+        if occupation is None:
+            continue
+        occupations.append(f"{float(occupation):.4f}")
+    return "; ".join(occupations) if occupations else "—"
 
 
 def render_tddft_section(
@@ -228,6 +261,12 @@ def render_tddft_section(
     if states:
         oscillator_strengths = {}
         spectrum = tddft.get("spectra", {}).get("absorption_electric_dipole", {})
+        # Writers should consume the parser-normalized significance thresholds
+        # so markdown, CSV, and downstream tooling stay chemically consistent.
+        significant_transition_threshold = (
+            summary.get("significant_transition_weight_threshold", 0.10) or 0.10
+        )
+        threshold_label = f"{100.0 * float(significant_transition_threshold):.0f}%"
         for transition in spectrum.get("transitions", []):
             root = transition.get("to_root")
             if root is not None:
@@ -244,15 +283,33 @@ def render_tddft_section(
         )
         state_has_cmo = any(cmo_lookup.values())
         if state_has_symmetry:
-            header = ["Root", "E-rank", "Symmetry", "E (eV)", "lambda (nm)", "fosc", "excitation(s) >= 10%"]
+            header = [
+                "Root",
+                "E-rank",
+                "Symmetry",
+                "E (eV)",
+                "lambda (nm)",
+                "fosc",
+                f"excitation(s) >= {threshold_label}",
+            ]
         else:
-            header = ["Root", "E-rank", "E (eV)", "lambda (nm)", "fosc", "excitation(s) >= 10%"]
+            header = [
+                "Root",
+                "E-rank",
+                "E (eV)",
+                "lambda (nm)",
+                "fosc",
+                f"excitation(s) >= {threshold_label}",
+            ]
         if state_has_cmo:
-            header.append("CMO/NBO character (>= 10%)")
+            header.append(f"CMO/NBO character (>= {threshold_label})")
         header.append("weight(s)")
         rows = [tuple(header)]
         for state in states:
-            significant = _significant_state_transitions(state)
+            significant = _significant_state_transitions(
+                state,
+                threshold=float(significant_transition_threshold),
+            )
             excitation = _join_transition_summaries(
                 significant,
                 lambda transition: format_transition_with_irreps(transition, irrep_lookup),
@@ -283,23 +340,33 @@ def render_tddft_section(
 
     nto_states = tddft.get("nto_states", [])
     if nto_states:
-        rows = [("Root", "E-rank", "leading NTO pair", "occ.")]
+        # NTO reporting follows the same normalized threshold contract as the
+        # state table: show every pair worth discussing, not only the leading one.
+        significant_nto_threshold = (
+            summary.get("significant_nto_occupation_threshold", 0.10) or 0.10
+        )
+        rows = [("Root", "E-rank", "NTO pair(s)", "occ.")]
         for nto_state in nto_states:
-            lead = max(
-                nto_state.get("pairs", []),
-                key=lambda item: item.get("occupation", 0.0),
-                default={},
+            significant_pairs = _significant_nto_pairs(
+                nto_state,
+                threshold=float(significant_nto_threshold),
             )
-            if not lead:
+            if not significant_pairs:
                 continue
             rows.append((
                 str(nto_state.get("state", "")),
                 str(nto_state.get("energy_rank", "-") or "-"),
-                format_transition_with_irreps(lead, irrep_lookup),
-                format_number(lead.get("occupation")),
+                _join_transition_summaries(
+                    significant_pairs,
+                    lambda pair: format_transition_with_irreps(pair, irrep_lookup),
+                ),
+                _format_nto_occupations(significant_pairs),
             ))
         if len(rows) > 1:
-            lines.append("**Leading NTO Pairs**\n" + make_table(rows))
+            lines.append(
+                f"**NTO Pairs (n >= {float(significant_nto_threshold):.2f})**\n"
+                + make_table(rows)
+            )
 
     spectra_section = _render_tddft_spectra_section(
         tddft,
@@ -421,13 +488,14 @@ def _render_hyperfine_summary_table(
     *,
     format_number: FormatNumber,
     make_table: MakeTable,
+    top_n: Optional[int] = 15,
 ) -> str:
     """Render the strongest hyperfine nuclei as a compact markdown table."""
     ranked = _rank_hyperfine_nuclei(nuclei)
     if not ranked:
         return ""
 
-    shown = ranked[:15]
+    shown = ranked if top_n is None else ranked[:top_n]
     rows = [("Nucleus", "A_iso (MHz)", "A_x", "A_y", "A_z", "e2qQ (MHz)", "eta")]
     for item in shown:
         values = item.get("values_MHz") or []
@@ -443,7 +511,7 @@ def _render_hyperfine_summary_table(
         ))
 
     table = "**Top Hyperfine Couplings**\n" + make_table(rows)
-    if len(ranked) > len(shown):
+    if top_n is not None and len(ranked) > len(shown):
         table += (
             f"\n\n*Showing top {len(shown)} of {len(ranked)} nuclei "
             "by |A_iso|.*"
@@ -458,6 +526,8 @@ def render_epr_section(
     format_number: FormatNumber,
     make_table: MakeTable,
     render_matrix: RenderMatrix,
+    top_hyperfine_nuclei: Optional[int] = 15,
+    top_atom_contributions: Optional[int] = 8,
 ) -> str:
     """Compact EPR summary for markdown reports."""
     heading = "#" * heading_level
@@ -540,7 +610,7 @@ def render_epr_section(
                 key=lambda item: abs(item.get("iso", 0.0)),
                 reverse=True,
             )
-            shown = top_atoms[:8]
+            shown = top_atoms if top_atom_contributions is None else top_atoms[:top_atom_contributions]
             rows = [("Atom", "g_x", "g_y", "g_z", "g_iso")]
             for atom in shown:
                 values = atom.get("values") or []
@@ -552,7 +622,7 @@ def render_epr_section(
                     format_number(atom.get("iso"), ".7g"),
                 ))
             atom_text = "**Top Atom Contributions**\n" + make_table(rows)
-            if len(top_atoms) > len(shown):
+            if top_atom_contributions is not None and len(top_atoms) > len(shown):
                 atom_text += (
                     f"\n\n*Showing top {len(shown)} of {len(top_atoms)} atoms "
                     "by |g_iso|.*"
@@ -578,6 +648,7 @@ def render_epr_section(
             hyperfine.get("nuclei") or [],
             format_number=format_number,
             make_table=make_table,
+            top_n=top_hyperfine_nuclei,
         )
         if hyperfine_table:
             lines.append(hyperfine_table)

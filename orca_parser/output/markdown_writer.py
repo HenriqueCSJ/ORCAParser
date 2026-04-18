@@ -40,6 +40,11 @@ from .job_state import (
     symmetry_on_off as _symmetry_on_off,
     yes_no_unknown as _yes_no_unknown,
 )
+from ..render_options import (
+    RENDER_OPTION_UNSET,
+    RenderOptions,
+    build_render_options as _build_render_options,
+)
 from .markdown_sections_analysis import (
     build_cmo_lookup as _build_cmo_lookup,
     build_orbital_irrep_lookup as _build_orbital_irrep_lookup,
@@ -75,15 +80,21 @@ def write_markdown(
     data: Dict[str, Any],
     path: Path,
     *,
-    goat_max_relative_energy_kcal_mol: Optional[float] = None,
+    goat_max_relative_energy_kcal_mol=RENDER_OPTION_UNSET,
+    detail_scope: str = "auto",
 ) -> Path:
     """Write a single-molecule markdown report."""
+    render_options = _build_render_options(
+        comparison=False,
+        detail_scope=detail_scope,
+        goat_max_relative_energy_kcal_mol=goat_max_relative_energy_kcal_mol,
+    )
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         _render_molecule(
             data,
-            goat_max_relative_energy_kcal_mol=goat_max_relative_energy_kcal_mol,
+            render_options=render_options,
         ),
         encoding="utf-8",
     )
@@ -94,15 +105,21 @@ def write_comparison(
     datasets: List[Dict[str, Any]],
     path: Path,
     *,
-    goat_max_relative_energy_kcal_mol: Optional[float] = 10.0,
+    goat_max_relative_energy_kcal_mol=RENDER_OPTION_UNSET,
+    detail_scope: str = "auto",
 ) -> Path:
     """Write a multi-molecule comparison markdown document."""
+    render_options = _build_render_options(
+        comparison=True,
+        detail_scope=detail_scope,
+        goat_max_relative_energy_kcal_mol=goat_max_relative_energy_kcal_mol,
+    )
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         _render_comparison(
             datasets,
-            goat_max_relative_energy_kcal_mol=goat_max_relative_energy_kcal_mol,
+            render_options=render_options,
         ),
         encoding="utf-8",
     )
@@ -118,9 +135,10 @@ def _render_molecule(
     heading_level: int = 1,
     display_label: Optional[str] = None,
     source_display: Optional[str] = None,
-    goat_max_relative_energy_kcal_mol: Optional[float] = None,
+    render_options: Optional[RenderOptions] = None,
 ) -> str:
     """Full markdown report for one molecule."""
+    render_options = render_options or _build_render_options(comparison=False)
     H = "#" * heading_level
     H2 = "#" * (heading_level + 1)
     H3 = "#" * (heading_level + 2)
@@ -199,7 +217,7 @@ def _render_molecule(
             data,
             _f,
             _table,
-            goat_max_relative_energy_kcal_mol,
+            render_options,
         ):
             if body:
                 blocks.append(f"{H2} {heading}\n{body}")
@@ -274,7 +292,10 @@ def _render_molecule(
                         ("occ",)   + tuple(occ.get(i, 0) for i in irrs)]
             blocks.append(_table(rows))
 
-        orbital_window = _render_irrep_orbital_window(data)
+        orbital_window = _render_irrep_orbital_window(
+            data,
+            window=render_options.orbital_window,
+        )
         if orbital_window:
             blocks.append(f"{H2} Irrep-Resolved Orbital Window\n{orbital_window}")
 
@@ -317,7 +338,11 @@ def _render_molecule(
     # ── Atomic charges — all schemes, aligned by atom index ──────────────
     epr = data.get("epr")
     if epr:
-        epr_section = _render_epr_section(epr, heading_level=heading_level + 2)
+        epr_section = _render_epr_section(
+            epr,
+            heading_level=heading_level + 2,
+            render_options=render_options,
+        )
         if epr_section:
             blocks.append(f"{H2} EPR / Magnetic Properties\n{epr_section}")
 
@@ -328,6 +353,7 @@ def _render_molecule(
             heading_level=heading_level,
             format_number=_f,
             make_table=_table,
+            render_options=render_options,
         )
     )
 
@@ -355,9 +381,10 @@ def _render_molecule(
 def _render_comparison(
     datasets: List[Dict[str, Any]],
     *,
-    goat_max_relative_energy_kcal_mol: Optional[float] = 10.0,
+    render_options: Optional[RenderOptions] = None,
 ) -> str:
     """Comparison document: overview table + individual molecule sections."""
+    render_options = render_options or _build_render_options(comparison=True)
     if not datasets:
         return "# ORCA Comparison\n\n*No data provided.*\n"
 
@@ -386,7 +413,7 @@ def _render_comparison(
             labels,
             _f,
             _table,
-            goat_max_relative_energy_kcal_mol,
+            render_options,
         ):
             if body:
                 blocks.append(f"## {heading}\n{body}")
@@ -452,7 +479,7 @@ def _render_comparison(
             labels,
             _f,
             _table,
-            goat_max_relative_energy_kcal_mol,
+            render_options,
         ):
             if body:
                 blocks.append(f"## {heading}\n{body}")
@@ -578,7 +605,7 @@ def _render_comparison(
             heading_level=2,
             display_label=lbl,
             source_display=lbl,
-            goat_max_relative_energy_kcal_mol=goat_max_relative_energy_kcal_mol,
+            render_options=render_options,
         ))
 
     return "\n\n".join(blocks) + "\n"
@@ -664,8 +691,11 @@ def _frontier_region_label(offset: int, occupied: bool) -> str:
     return "LUMO" if offset == 0 else f"LUMO+{offset}"
 
 
-def _render_orbital_window_table(orbitals: List[Dict[str, Any]], window: int = 12) -> str:
-    """Render a compact frontier orbital window with irrep labels."""
+def _render_orbital_window_table(
+    orbitals: List[Dict[str, Any]],
+    window: Optional[int] = 12,
+) -> str:
+    """Render a frontier window or the full irrep-resolved orbital list."""
     if not orbitals or not any(orbital.get("irrep") for orbital in orbitals):
         return ""
 
@@ -676,8 +706,9 @@ def _render_orbital_window_table(orbitals: List[Dict[str, Any]], window: int = 1
 
     rows = [("Region", "NO", "occ", "E (Eh)", "E (eV)", "irrep")]
 
-    start_occ = max(0, len(occupied) - window)
-    for idx, orbital in enumerate(occupied[start_occ:], start=start_occ):
+    occupied_window = occupied if window is None else occupied[max(0, len(occupied) - window):]
+    start_occ = 0 if window is None else max(0, len(occupied) - window)
+    for idx, orbital in enumerate(occupied_window, start=start_occ):
         offset = len(occupied) - 1 - idx
         rows.append((
             _frontier_region_label(offset, occupied=True),
@@ -688,7 +719,8 @@ def _render_orbital_window_table(orbitals: List[Dict[str, Any]], window: int = 1
             str(orbital.get("irrep", "") or "—"),
         ))
 
-    for offset, orbital in enumerate(virtual[:window]):
+    virtual_window = virtual if window is None else virtual[:window]
+    for offset, orbital in enumerate(virtual_window):
         rows.append((
             _frontier_region_label(offset, occupied=False),
             str(orbital.get("index", "")),
@@ -701,7 +733,10 @@ def _render_orbital_window_table(orbitals: List[Dict[str, Any]], window: int = 1
     return _table(rows)
 
 
-def _render_irrep_orbital_window(data: Dict[str, Any], window: int = 12) -> str:
+def _render_irrep_orbital_window(
+    data: Dict[str, Any],
+    window: Optional[int] = 12,
+) -> str:
     """Render irrep-resolved frontier windows for RHF/UHF orbital lists."""
     oe = _get_final_orbital_energies(data)
     ctx = data.get("context", {})
@@ -754,14 +789,22 @@ def _render_basis_set_section(basis_set: Dict[str, Any]) -> str:
     )
 
 
-def _render_epr_section(epr: Dict[str, Any], heading_level: int = 3) -> str:
+def _render_epr_section(
+    epr: Dict[str, Any],
+    heading_level: int = 3,
+    *,
+    render_options: Optional[RenderOptions] = None,
+) -> str:
     """Compact EPR summary for markdown reports."""
+    render_options = render_options or _build_render_options(comparison=False)
     return _render_spectroscopy_epr_section(
         epr,
         heading_level,
         format_number=_f,
         make_table=_table,
         render_matrix=_render_matrix,
+        top_hyperfine_nuclei=render_options.epr_top_hyperfine_nuclei,
+        top_atom_contributions=render_options.epr_top_atom_contributions,
     )
 
 
