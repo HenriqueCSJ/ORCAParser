@@ -323,7 +323,16 @@ def _render_molecule(
     source_display: Optional[str] = None,
     render_options: Optional[RenderOptions] = None,
 ) -> str:
-    """Full markdown report for one molecule."""
+    """Compatibility shim for the registry-driven standalone renderer."""
+    # Keep this name for older internal callers, but route immediately to the
+    # registry-backed implementation so there is only one live render path.
+    return _render_molecule_registry(
+        data,
+        heading_level=heading_level,
+        display_label=display_label,
+        source_display=source_display,
+        render_options=render_options,
+    )
     render_options = render_options or _build_render_options(comparison=False)
     H = "#" * heading_level
     H2 = "#" * (heading_level + 1)
@@ -569,7 +578,11 @@ def _render_comparison(
     *,
     render_options: Optional[RenderOptions] = None,
 ) -> str:
-    """Comparison document: overview table + individual molecule sections."""
+    """Compatibility shim for the registry-driven comparison renderer."""
+    return _render_comparison_registry(
+        datasets,
+        render_options=render_options,
+    )
     render_options = render_options or _build_render_options(comparison=True)
     if not datasets:
         return "# ORCA Comparison\n\n*No data provided.*\n"

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import re
+import textwrap
 import uuid
 from pathlib import Path
 
@@ -9,6 +10,7 @@ import pytest
 
 from orca_parser import ORCAParser
 import orca_parser.job_family_registry as family_registry
+import orca_parser.plugin_discovery as plugin_discovery
 import orca_parser.output.csv_section_registry as csv_section_registry
 import orca_parser.output.markdown_section_registry as markdown_section_registry
 import orca_parser.parser_section_registry as section_registry
@@ -952,6 +954,147 @@ def test_csv_section_registry_allows_plugin_style_section_extensions(
 
     assert plugin_row["source"] == "registry"
     assert plugin_row["kind"] == "common"
+
+
+def test_plugin_bundle_autodiscovery_registers_drop_in_module_capabilities(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    suffix = uuid.uuid4().hex
+    package_name = f"plugin_bundle_demo_{suffix}"
+    section_key = f"auto_demo_{suffix}"
+    alias_name = f"auto_alias_{suffix}"
+    option_dest = f"auto_option_{suffix}"
+    flag_name = f"--auto-option-{suffix}"
+    bundle_key = f"auto_bundle_{suffix}"
+
+    package_dir = tmp_path / package_name
+    package_dir.mkdir()
+    (package_dir / "__init__.py").write_text("", encoding="utf-8")
+    (package_dir / "demo_plugin.py").write_text(
+        textwrap.dedent(
+            f"""
+            from orca_parser.modules.base import BaseModule
+            from orca_parser.plugin_bundle import PluginBundle, PluginMetadata, PluginOption
+            from orca_parser.parser_section_registry import ParserSectionAlias, ParserSectionPlugin
+            from orca_parser.output.markdown_section_registry import MarkdownSectionPlugin
+            from orca_parser.output.csv_section_registry import CSVSectionPlugin
+
+
+            class AutoDiscoveredDemoModule(BaseModule):
+                name = "{section_key}"
+
+                def parse(self, lines):
+                    return {{
+                        "source": "autodiscovered",
+                        "option_value": self.context.get("plugin_options", {{}}).get("{option_dest}", "missing"),
+                        "terminated_normally": any("ORCA TERMINATED NORMALLY" in line for line in lines),
+                    }}
+
+
+            def _markdown_blocks(data, _helpers, _render_options):
+                payload = data.get("{section_key}", {{}})
+                return [
+                    "## Auto Plugin Section\\n"
+                    f"option={{payload.get('option_value', 'missing')}}"
+                ]
+
+
+            def _csv_files(data, directory, stem, write_csv):
+                payload = data.get("{section_key}", {{}})
+                return [
+                    write_csv(
+                        directory,
+                        f"{{stem}}_{section_key}.csv",
+                        [{{
+                            "source": payload.get("source", ""),
+                            "option_value": payload.get("option_value", ""),
+                        }}],
+                        ["source", "option_value"],
+                    )
+                ]
+
+
+            PLUGIN_BUNDLE = PluginBundle(
+                metadata=PluginMetadata(
+                    key="{bundle_key}",
+                    name="Auto Bundle Demo",
+                    short_help="Autodiscovered test plugin bundle.",
+                    docs_path="docs/auto_bundle_demo.md",
+                    examples=("{flag_name} enabled",),
+                ),
+                parser_sections=(
+                    ParserSectionPlugin(key="{section_key}", module_class=AutoDiscoveredDemoModule),
+                ),
+                parser_aliases=(
+                    ParserSectionAlias(name="{alias_name}", section_keys=("{section_key}",)),
+                ),
+                markdown_sections=(
+                    MarkdownSectionPlugin(
+                        key="{section_key}",
+                        order=17,
+                        render_molecule_blocks=_markdown_blocks,
+                    ),
+                ),
+                csv_sections=(
+                    CSVSectionPlugin(
+                        key="{section_key}",
+                        order=17,
+                        render_files=_csv_files,
+                    ),
+                ),
+                options=(
+                    PluginOption(
+                        dest="{option_dest}",
+                        flags=("{flag_name}",),
+                        help="Autodiscovered option for testing.",
+                        default="plugin-default",
+                        metavar="VALUE",
+                    ),
+                ),
+            )
+            """
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.syspath_prepend(str(tmp_path))
+
+    discovered = plugin_discovery.bootstrap_plugin_bundles([package_name])
+    parser = ORCAParser(
+        TDDFT_OUT,
+        plugin_options={option_dest: "plugin-enabled"},
+    )
+    data = parser.parse(sections=[alias_name])
+
+    markdown_path = tmp_path / "autodiscovered_plugin.md"
+    csv_dir = tmp_path / "autodiscovered_plugin_csv"
+    parser.to_markdown(markdown_path)
+    parser.to_csv(csv_dir)
+
+    markdown_text = markdown_path.read_text(encoding="utf-8")
+    with (csv_dir / f"RDB_LMMP_TDDFT_CH2Cl2_{section_key}.csv").open(
+        encoding="utf-8",
+        newline="",
+    ) as handle:
+        plugin_row = next(csv.DictReader(handle))
+
+    help_text = plugin_discovery.build_plugin_help_section()
+
+    assert [bundle.metadata.key for bundle in discovered] == [bundle_key]
+    assert data[section_key]["source"] == "autodiscovered"
+    assert data[section_key]["option_value"] == "plugin-enabled"
+    assert data[section_key]["terminated_normally"] is True
+    assert "## Auto Plugin Section" in markdown_text
+    assert "option=plugin-enabled" in markdown_text
+    assert plugin_row["source"] == "autodiscovered"
+    assert plugin_row["option_value"] == "plugin-enabled"
+    assert bundle_key in {bundle.metadata.key for bundle in plugin_discovery.get_registered_plugin_bundles()}
+    assert option_dest in {
+        option.dest for option in plugin_discovery.get_registered_plugin_options()
+    }
+    assert "Auto Bundle Demo" in help_text
+    assert flag_name in help_text
 
 
 def test_goat_markdown_cutoff_can_be_overridden(goat_full_parser: ORCAParser) -> None:
