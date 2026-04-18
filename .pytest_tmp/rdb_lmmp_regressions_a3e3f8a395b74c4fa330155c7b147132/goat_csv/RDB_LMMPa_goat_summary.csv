@@ -1,2 +1,0 @@
-global_minimum_found,global_minimum_conformer,lowest_energy_conformer_Eh,n_conformers,conformer_energy_window_kcal_mol,conformers_below_energy_window,temperature_K,sconf_cal_molK,gconf_kcal_mol,top_population_percent,max_relative_energy_kcal_mol,final_cumulative_percent,global_minimum_xyz_file,final_ensemble_xyz_file
-True,0,-134.77823,1147,3.0,229,298.15,9.95,-1.5,7.97,5.997,100.0,RDB_LMMPa.globalminimum.xyz,RDB_LMMPa.finalensemble.xyz

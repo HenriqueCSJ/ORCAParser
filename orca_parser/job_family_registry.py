@@ -26,7 +26,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence
+from typing import Any, Callable, Dict, Iterable, List, Sequence
+
+from .render_options import RenderOptions
 
 
 MarkdownSection = tuple[str, str]
@@ -43,11 +45,11 @@ FamilyStateLabelBuilder = Callable[
     str,
 ]
 FamilyMarkdownSectionBuilder = Callable[
-    [Dict[str, Any], FormatNumber, MakeTable, Optional[float]],
+    [Dict[str, Any], FormatNumber, MakeTable, RenderOptions],
     List[MarkdownSection],
 ]
 FamilyComparisonSectionBuilder = Callable[
-    [List[Dict[str, Any]], List[str], FormatNumber, MakeTable, Optional[float]],
+    [List[Dict[str, Any]], List[str], FormatNumber, MakeTable, RenderOptions],
     List[MarkdownSection],
 ]
 FamilyCSVWriter = Callable[
@@ -350,10 +352,10 @@ def _render_deltascf_markdown_sections(
     data: Dict[str, Any],
     format_number: FormatNumber,
     make_table: MakeTable,
-    goat_max_relative_energy_kcal_mol: Optional[float],
+    render_options: RenderOptions,
 ) -> List[MarkdownSection]:
     """Render DeltaSCF-specific markdown sections."""
-    del goat_max_relative_energy_kcal_mol
+    del render_options
 
     from .output import job_state as _job_state
     from .output.markdown_sections_state import render_deltascf_section
@@ -380,10 +382,9 @@ def _render_excited_state_optimization_markdown_sections(
     data: Dict[str, Any],
     format_number: FormatNumber,
     make_table: MakeTable,
-    goat_max_relative_energy_kcal_mol: Optional[float],
+    render_options: RenderOptions,
 ) -> List[MarkdownSection]:
     """Render excited-state optimization sections owned by that family."""
-    del goat_max_relative_energy_kcal_mol
 
     from .job_series import get_geom_opt_series
     from .output import job_state as _job_state
@@ -408,6 +409,7 @@ def _render_excited_state_optimization_markdown_sections(
         geom_opt,
         format_number=format_number,
         make_table=make_table,
+        cycle_preview_count=render_options.geom_opt_cycle_preview_count,
     ) if geom_opt else ""
     if geom_opt_body:
         sections.append(("Geometry Optimization", geom_opt_body))
@@ -419,10 +421,9 @@ def _render_geometry_optimization_markdown_sections(
     data: Dict[str, Any],
     format_number: FormatNumber,
     make_table: MakeTable,
-    goat_max_relative_energy_kcal_mol: Optional[float],
+    render_options: RenderOptions,
 ) -> List[MarkdownSection]:
     """Render geometry-optimization history for the plain optimization family."""
-    del goat_max_relative_energy_kcal_mol
 
     from .job_series import get_geom_opt_series
     from .output.markdown_sections_basic import render_geom_opt_section
@@ -435,6 +436,7 @@ def _render_geometry_optimization_markdown_sections(
         geom_opt,
         format_number=format_number,
         make_table=make_table,
+        cycle_preview_count=render_options.geom_opt_cycle_preview_count,
     )
     return [("Geometry Optimization", body)] if body else []
 
@@ -443,10 +445,10 @@ def _render_surface_scan_markdown_sections(
     data: Dict[str, Any],
     format_number: FormatNumber,
     make_table: MakeTable,
-    goat_max_relative_energy_kcal_mol: Optional[float],
+    render_options: RenderOptions,
 ) -> List[MarkdownSection]:
     """Render relaxed-scan history for the scan family."""
-    del goat_max_relative_energy_kcal_mol
+    del render_options
 
     from .job_series import get_surface_scan_series
     from .output.markdown_sections_basic import render_surface_scan_section
@@ -467,7 +469,7 @@ def _render_goat_markdown_sections(
     data: Dict[str, Any],
     format_number: FormatNumber,
     make_table: MakeTable,
-    goat_max_relative_energy_kcal_mol: Optional[float],
+    render_options: RenderOptions,
 ) -> List[MarkdownSection]:
     """Render GOAT ensemble sections for the GOAT family."""
     from .job_series import get_goat_series
@@ -481,7 +483,7 @@ def _render_goat_markdown_sections(
         goat,
         format_number=format_number,
         make_table=make_table,
-        max_relative_energy_kcal_mol=goat_max_relative_energy_kcal_mol,
+        max_relative_energy_kcal_mol=render_options.goat_max_relative_energy_kcal_mol,
     )
     return [("GOAT Conformer Search", body)] if body else []
 
@@ -491,10 +493,10 @@ def _render_deltascf_comparison_sections(
     labels: List[str],
     format_number: FormatNumber,
     make_table: MakeTable,
-    goat_max_relative_energy_kcal_mol: Optional[float],
+    render_options: RenderOptions,
 ) -> List[MarkdownSection]:
     """Render the comparison table for DeltaSCF families."""
-    del format_number, goat_max_relative_energy_kcal_mol
+    del format_number, render_options
 
     from .output import job_state as _job_state
 
@@ -522,10 +524,10 @@ def _render_excited_state_optimization_comparison_sections(
     labels: List[str],
     format_number: FormatNumber,
     make_table: MakeTable,
-    goat_max_relative_energy_kcal_mol: Optional[float],
+    render_options: RenderOptions,
 ) -> List[MarkdownSection]:
     """Render the comparison table for excited-state optimization families."""
-    del format_number, goat_max_relative_energy_kcal_mol
+    del format_number, render_options
 
     from .output import job_state as _job_state
 
@@ -574,10 +576,10 @@ def _render_surface_scan_comparison_sections(
     labels: List[str],
     format_number: FormatNumber,
     make_table: MakeTable,
-    goat_max_relative_energy_kcal_mol: Optional[float],
+    render_options: RenderOptions,
 ) -> List[MarkdownSection]:
     """Render the comparison table for relaxed surface scans."""
-    del goat_max_relative_energy_kcal_mol
+    del render_options
 
     from .job_series import get_surface_scan_series
 

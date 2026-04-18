@@ -15,6 +15,7 @@ from ..final_snapshot import (
     get_final_orbital_energies,
     get_final_population_section,
 )
+from ..render_options import RenderOptions
 
 
 FormatNumber = Callable[[Any, str], str]
@@ -164,6 +165,7 @@ def render_analysis_sections(
     heading_level: int,
     format_number: FormatNumber,
     make_table: MakeTable,
+    render_options: RenderOptions,
 ) -> List[str]:
     """Render the dense analysis-heavy sections for a single report."""
     h2 = "#" * (heading_level + 1)
@@ -244,7 +246,12 @@ def render_analysis_sections(
         if electron_config:
             blocks.append(f"{h3} Natural Electron Configuration\n{electron_config}")
 
-        cmo_section = _render_cmo_analysis_section(nbo, data, make_table)
+        cmo_section = _render_cmo_analysis_section(
+            nbo,
+            data,
+            make_table,
+            render_options=render_options,
+        )
         if cmo_section:
             blocks.append(f"{h3} Canonical MO Character (NBO CMO)\n{cmo_section}")
 
@@ -296,12 +303,23 @@ def render_analysis_sections(
                 if entries:
                     blocks.append(
                         f"{h3} E(2) Perturbation — {label} spin ({len(entries)} entries)\n"
-                        + _render_e2_table(entries, make_table)
+                        + _render_e2_table(
+                            entries,
+                            make_table,
+                            top_n=render_options.e2_top_interactions,
+                        )
                     )
         else:
             entries = nbo.get("e2_perturbation", [])
             if entries:
-                blocks.append(f"{h3} Second-Order Perturbation E(2)\n" + _render_e2_table(entries, make_table))
+                blocks.append(
+                    f"{h3} Second-Order Perturbation E(2)\n"
+                    + _render_e2_table(
+                        entries,
+                        make_table,
+                        top_n=render_options.e2_top_interactions,
+                    )
+                )
 
     return blocks
 
@@ -392,8 +410,8 @@ def _collect_relevant_cmo_indices(
     data: Dict[str, Any],
     cmo_lookup: CMOLookup,
     *,
-    state_limit: int = 10,
-    frontier_window: int = 8,
+    state_limit: Optional[int] = 10,
+    frontier_window: Optional[int] = 8,
 ) -> List[Tuple[str, int]]:
     """Choose the most relevant canonical orbitals to display."""
     indices: List[Tuple[str, int]] = []
@@ -406,7 +424,10 @@ def _collect_relevant_cmo_indices(
         final_block = blocks[-1] if blocks else None
 
     if final_block:
-        for state in (final_block.get("states") or [])[:state_limit]:
+        states = list(final_block.get("states") or [])
+        if state_limit is not None:
+            states = states[:state_limit]
+        for state in states:
             dominant = max(
                 state.get("transitions", []),
                 key=lambda item: item.get("weight", 0.0),
@@ -438,8 +459,12 @@ def _collect_relevant_cmo_indices(
             continue
         occupied = sorted(index for index, cmo in spin_entries.items() if cmo.get("type") == "occ")
         virtual = sorted(index for index, cmo in spin_entries.items() if cmo.get("type") == "vir")
-        fallback.extend((spin_key, index) for index in occupied[-frontier_window:])
-        fallback.extend((spin_key, index) for index in virtual[:frontier_window])
+        if frontier_window is None:
+            fallback.extend((spin_key, index) for index in occupied)
+            fallback.extend((spin_key, index) for index in virtual)
+        else:
+            fallback.extend((spin_key, index) for index in occupied[-frontier_window:])
+            fallback.extend((spin_key, index) for index in virtual[:frontier_window])
 
     deduped: List[Tuple[str, int]] = []
     for item in fallback:
@@ -478,6 +503,8 @@ def _render_cmo_analysis_section(
     nbo: Dict[str, Any],
     data: Dict[str, Any],
     make_table: MakeTable,
+    *,
+    render_options: RenderOptions,
 ) -> str:
     """Render a compact CMO/NBO character table for TDDFT/frontier orbitals."""
     del nbo
@@ -485,7 +512,12 @@ def _render_cmo_analysis_section(
     if not cmo_lookup:
         return ""
 
-    indices = _collect_relevant_cmo_indices(data, cmo_lookup)
+    indices = _collect_relevant_cmo_indices(
+        data,
+        cmo_lookup,
+        state_limit=render_options.cmo_state_limit,
+        frontier_window=render_options.cmo_frontier_window,
+    )
     if not indices:
         return ""
 
@@ -517,11 +549,16 @@ def _render_cmo_analysis_section(
 
     tddft = data.get("tddft", {})
     has_tddft = bool(tddft.get("final_excited_state_block") or tddft.get("excited_state_blocks"))
-    scope = (
-        "Shown for canonical orbitals referenced by the dominant TDDFT/CIS excitations."
-        if has_tddft
-        else "Shown for frontier-adjacent canonical orbitals."
-    )
+    if render_options.is_full:
+        scope = (
+            "Shown for every canonical orbital with parsed NBO CMO character."
+        )
+    else:
+        scope = (
+            "Shown for canonical orbitals referenced by the dominant TDDFT/CIS excitations."
+            if has_tddft
+            else "Shown for frontier-adjacent canonical orbitals."
+        )
     note = "NBO CMO numbering is 1-based; ORCA orbital numbers are 0-based, so CMO MO N corresponds to ORCA MO N-1."
     return f"{scope}\n{note}\n\n{make_table(rows)}"
 
@@ -654,10 +691,15 @@ def _collect_wiberg_bonds(matrix: List[List[Any]], atom_symbols: List[str]) -> L
     return bonds
 
 
-def _render_e2_table(entries: List[Dict[str, Any]], make_table: MakeTable) -> str:
-    """Render E(2) table: top 20 by energy, then a compact summary of the rest."""
+def _render_e2_table(
+    entries: List[Dict[str, Any]],
+    make_table: MakeTable,
+    *,
+    top_n: Optional[int] = 20,
+) -> str:
+    """Render E(2) entries with optional compact top-N truncation."""
     top = sorted(entries, key=lambda item: -item.get("E2_kcal_mol", 0))
-    shown = top[:20]
+    shown = top if top_n is None else top[:top_n]
     rows = [("Donor", "Acceptor", "E(2) kcal/mol", "ΔE a.u.", "F a.u.")]
     for entry in shown:
         rows.append((
@@ -668,9 +710,12 @@ def _render_e2_table(entries: List[Dict[str, Any]], make_table: MakeTable) -> st
             f"{entry.get('Fock_au', 0):.4f}",
         ))
     result = make_table(rows)
-    if len(entries) > 20:
+    if top_n is not None and len(entries) > len(shown):
         total = sum(entry.get("E2_kcal_mol", 0) for entry in entries)
-        result += f"\n\n*Showing top 20 of {len(entries)} interactions. Total E(2) = {total:.2f} kcal/mol.*"
+        result += (
+            f"\n\n*Showing top {len(shown)} of {len(entries)} interactions. "
+            f"Total E(2) = {total:.2f} kcal/mol.*"
+        )
     return result
 
 

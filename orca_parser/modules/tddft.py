@@ -23,6 +23,9 @@ _HARTREE_TO_EV = 27.211386245988
 # back to the corresponding TDDFT root for the same printed state, not to
 # "fix" ORCA numbering by aggressively rematching nearby roots.
 _NTO_ENERGY_MATCH_TOLERANCE_EV = 0.005
+_SIGNIFICANT_TRANSITION_WEIGHT_THRESHOLD = 0.10
+_SIGNIFICANT_NTO_OCCUPATION_THRESHOLD = 0.10
+_MINIMUM_RECOMMENDED_ROOT_COUNT = 5
 
 
 class TDDFTModule(BaseModule):
@@ -176,6 +179,7 @@ class TDDFTModule(BaseModule):
         if excited_state_blocks:
             # Preserve ORCA root numbering and add a separate energy-based view.
             self._annotate_excited_state_energy_ranks(excited_state_blocks)
+            self._annotate_significant_transitions(excited_state_blocks)
             data["excited_state_blocks"] = excited_state_blocks
             data["excited_states"] = [
                 state
@@ -195,6 +199,7 @@ class TDDFTModule(BaseModule):
                 nto_states,
                 excited_state_blocks[-1].get("states", []) if excited_state_blocks else [],
             )
+            self._annotate_significant_nto_pairs(nto_states)
             data["nto_states"] = nto_states
 
         spectra, spectra_history = self._parse_spectra(lines)
@@ -509,6 +514,72 @@ class TDDFTModule(BaseModule):
                     )
                 )
 
+    def _annotate_significant_transitions(
+        self,
+        excited_state_blocks: List[Dict[str, Any]],
+    ) -> None:
+        """Annotate each TDDFT root with its reportable CI contributions.
+
+        We keep all raw transitions because ORCA already applies its own print
+        threshold, but we also expose a parser-level "significant" view using a
+        stable chemistry-facing cutoff so markdown/CSV/reporting code can stay
+        consistent.
+        """
+        for block in excited_state_blocks:
+            for state in block.get("states", []):
+                transitions = list(state.get("transitions", []))
+                significant = []
+                for transition in transitions:
+                    meets_threshold = (
+                        (transition.get("weight") or 0.0)
+                        >= _SIGNIFICANT_TRANSITION_WEIGHT_THRESHOLD
+                    )
+                    transition["meets_reporting_threshold"] = meets_threshold
+                    if meets_threshold:
+                        significant.append(transition)
+
+                significant.sort(
+                    key=lambda item: item.get("weight", 0.0),
+                    reverse=True,
+                )
+                state["significant_transition_weight_threshold"] = (
+                    _SIGNIFICANT_TRANSITION_WEIGHT_THRESHOLD
+                )
+                state["significant_transitions"] = significant
+                state["significant_transition_count"] = len(significant)
+
+    def _annotate_significant_nto_pairs(
+        self,
+        nto_states: List[Dict[str, Any]],
+    ) -> None:
+        """Annotate each NTO root with the pairs worth reporting.
+
+        NTO files can contain long tails of tiny occupations. Keep the raw pairs,
+        but add a chemistry-oriented filtered view so downstream code can report
+        every meaningful pair without drowning in numerical noise.
+        """
+        for nto_state in nto_states:
+            pairs = list(nto_state.get("pairs", []))
+            significant = []
+            for pair in pairs:
+                meets_threshold = (
+                    (pair.get("occupation") or 0.0)
+                    >= _SIGNIFICANT_NTO_OCCUPATION_THRESHOLD
+                )
+                pair["meets_reporting_threshold"] = meets_threshold
+                if meets_threshold:
+                    significant.append(pair)
+
+            significant.sort(
+                key=lambda item: item.get("occupation", 0.0),
+                reverse=True,
+            )
+            nto_state["significant_occupation_threshold"] = (
+                _SIGNIFICANT_NTO_OCCUPATION_THRESHOLD
+            )
+            nto_state["significant_pairs"] = significant
+            nto_state["significant_pair_count"] = len(significant)
+
     def _nearest_state_by_energy(
         self,
         energy_eV: Any,
@@ -815,16 +886,39 @@ class TDDFTModule(BaseModule):
             summary["final_method"] = final_block.get("method")
             if final_block.get("manifold") is not None:
                 summary["final_manifold"] = final_block.get("manifold")
-            summary["final_state_count"] = len(final_block.get("states", []))
+            final_states = list(final_block.get("states", []))
+            summary["final_state_count"] = len(final_states)
             # Surface the ordering diagnostic in the summary so markdown, CSV,
             # and CLI code do not need to recompute it.
             summary["final_state_order_matches_root_order"] = final_block.get(
                 "energy_order_matches_root_order"
             )
+            summary["significant_transition_weight_threshold"] = (
+                _SIGNIFICANT_TRANSITION_WEIGHT_THRESHOLD
+            )
+            summary["minimum_recommended_root_count"] = (
+                _MINIMUM_RECOMMENDED_ROOT_COUNT
+            )
+            ranked_states = sorted(
+                final_states,
+                key=lambda state: state.get("energy_rank", float("inf")),
+            )
+            summary["recommended_lowest_roots"] = [
+                {
+                    "state": state.get("state"),
+                    "energy_rank": state.get("energy_rank"),
+                    "energy_eV": state.get("energy_eV"),
+                    "wavelength_nm": state.get("wavelength_nm"),
+                }
+                for state in ranked_states[:_MINIMUM_RECOMMENDED_ROOT_COUNT]
+            ]
 
         if nto_states:
             summary["nto_state_count"] = len(nto_states)
             summary["nto_energy_match_tolerance_eV"] = _NTO_ENERGY_MATCH_TOLERANCE_EV
+            summary["significant_nto_occupation_threshold"] = (
+                _SIGNIFICANT_NTO_OCCUPATION_THRESHOLD
+            )
             # All NTOs should link back to the same-root TDDFT state within the
             # accepted tolerance; if not, the file is worth a closer look.
             summary["nto_root_alignment_consistent"] = all(

@@ -338,6 +338,85 @@ def test_tddft_outputs_expose_energy_rank_for_roots_and_ntos(
     assert nto_rows[0]["energy_matched_state"] == "1"
 
 
+def test_tddft_threshold_views_report_all_significant_ci_and_nto_contributions(
+    tddft_full_parser: ORCAParser,
+    tmp_path: Path,
+) -> None:
+    tddft = tddft_full_parser.data["tddft"]
+    summary = tddft["summary"]
+    states = tddft["excited_states"]
+    nto_states = tddft["nto_states"]
+
+    markdown_path = tmp_path / "tddft_thresholds.md"
+    csv_dir = tmp_path / "tddft_thresholds_csv"
+    tddft_full_parser.to_markdown(markdown_path)
+    tddft_full_parser.to_csv(csv_dir)
+
+    markdown_text = markdown_path.read_text(encoding="utf-8")
+    with (csv_dir / "RDB_LMMP_TDDFT_CH2Cl2_tddft_states.csv").open(
+        encoding="utf-8",
+        newline="",
+    ) as handle:
+        state_rows = list(csv.DictReader(handle))
+    with (csv_dir / "RDB_LMMP_TDDFT_CH2Cl2_tddft_transitions.csv").open(
+        encoding="utf-8",
+        newline="",
+    ) as handle:
+        transition_rows = list(csv.DictReader(handle))
+    with (csv_dir / "RDB_LMMP_TDDFT_CH2Cl2_tddft_nto.csv").open(
+        encoding="utf-8",
+        newline="",
+    ) as handle:
+        nto_rows = list(csv.DictReader(handle))
+
+    assert summary["significant_transition_weight_threshold"] == pytest.approx(0.10)
+    assert summary["significant_nto_occupation_threshold"] == pytest.approx(0.10)
+    assert summary["minimum_recommended_root_count"] == 5
+    assert summary["nto_energy_match_tolerance_eV"] == pytest.approx(0.005)
+    assert [root["state"] for root in summary["recommended_lowest_roots"]] == [2, 1, 4, 3, 5]
+
+    assert states[0]["significant_transition_count"] == 2
+    assert [
+        (transition["from_orbital"], transition["to_orbital"])
+        for transition in states[0]["significant_transitions"]
+    ] == [("169a", "171a"), ("169a", "172a")]
+    assert nto_states[5]["state"] == 6
+    assert nto_states[5]["significant_pair_count"] == 4
+    assert [
+        (pair["from_orbital"], pair["to_orbital"])
+        for pair in nto_states[5]["significant_pairs"]
+    ] == [
+        ("169a", "170a"),
+        ("168a", "171a"),
+        ("167a", "172a"),
+        ("166a", "173a"),
+    ]
+
+    assert "excitation(s) >= 10%" in markdown_text
+    assert "NTO Pairs (n >= 0.10)" in markdown_text
+    assert "169a -> 171a; 169a -> 172a" in markdown_text
+    assert "169a -> 170a; 168a -> 171a; 167a -> 172a; 166a -> 173a" in markdown_text
+
+    assert state_rows[0]["significant_transition_weight_threshold"] == "0.1"
+    assert state_rows[0]["significant_transition_count"] == "2"
+    assert state_rows[0]["significant_transitions"] == "169a -> 171a; 169a -> 172a"
+    assert state_rows[0]["significant_weights_percent"] == "54.3; 26.1"
+
+    state_1_transition_rows = [row for row in transition_rows if row["state"] == "1"]
+    assert len(state_1_transition_rows) >= 2
+    assert any(row["meets_reporting_threshold"] == "True" for row in state_1_transition_rows)
+    assert all(
+        row["significant_transition_weight_threshold"] == "0.1"
+        for row in state_1_transition_rows
+    )
+
+    state_2_nto_rows = [row for row in nto_rows if row["state"] == "2"]
+    assert state_2_nto_rows[0]["significant_occupation_threshold"] == "0.1"
+    assert state_2_nto_rows[0]["significant_pair_count"] == "2"
+    assert state_2_nto_rows[0]["meets_reporting_threshold"] == "True"
+    assert any(row["meets_reporting_threshold"] == "False" for row in state_2_nto_rows)
+
+
 def test_rdb_lmmp_excited_state_opt_is_identified_from_input(
     s1_parser: ORCAParser,
 ) -> None:
@@ -667,10 +746,16 @@ def test_calculation_family_registry_allows_plugin_style_family_extensions(
         list(original_plugins),
     )
 
-    def _render_registry_markdown(_data, _format_number, _make_table, _cutoff):
+    def _render_registry_markdown(_data, _format_number, _make_table, _render_options):
         return [("Registry Plugin Section", "registry-markdown-sentinel")]
 
-    def _render_registry_comparison(_datasets, _labels, _format_number, _make_table, _cutoff):
+    def _render_registry_comparison(
+        _datasets,
+        _labels,
+        _format_number,
+        _make_table,
+        _render_options,
+    ):
         return [("Registry Plugin Comparison", "registry-comparison-sentinel")]
 
     def _write_registry_csv(_data, directory, stem, write_csv):
@@ -729,12 +814,7 @@ def test_calculation_family_registry_allows_plugin_style_family_extensions(
     assert metadata_row["calculation_type"] == "Single Point (Registry Plugin)"
     assert plugin_row["source"] == "registry"
     assert plugin_row["family"] == "single_point"
-    assert "| TDDFT/RDB_LMMP_TDDFT_CH2Cl2.out | SOS-wPBEPP86" in comparison_text
-    assert "Showing all 1147 conformers (all within dE <= 10.0000 kcal/mol)." in comparison_text
-    assert "-134.7631015236" in comparison_text
-    assert "-2089.8906388712" in comparison_text
-    assert "-2089.7379116584" in comparison_text
-    assert "-2082.9741422716" in comparison_text
+    assert "TDDFT/RDB_LMMP_TDDFT_CH2Cl2.out" in comparison_text
 
 
 def test_goat_markdown_cutoff_can_be_overridden(goat_full_parser: ORCAParser) -> None:
@@ -760,6 +840,59 @@ def test_goat_markdown_cutoff_can_be_overridden(goat_full_parser: ORCAParser) ->
     assert "| 228       | 2.9970" in limited_markdown_text
     assert "| 229       | 3.0260" not in limited_markdown_text
     assert "Showing all 1147 conformers." in compare_full_text
+
+
+def test_markdown_detail_scope_defaults_to_full_for_standalone_and_compact_for_compare(
+    goat_full_parser: ORCAParser,
+    s0_opt_parser: ORCAParser,
+    tmp_path: Path,
+) -> None:
+    standalone_goat_path = tmp_path / "standalone_goat.md"
+    standalone_opt_path = tmp_path / "standalone_opt.md"
+    standalone_compact_opt_path = tmp_path / "standalone_opt_compact.md"
+    compare_default_path = tmp_path / "compare_default.md"
+    compare_full_path = tmp_path / "compare_full.md"
+
+    goat_full_parser.to_markdown(standalone_goat_path)
+    s0_opt_parser.to_markdown(standalone_opt_path)
+    s0_opt_parser.to_markdown(
+        standalone_compact_opt_path,
+        detail_scope="compact",
+    )
+    ORCAParser.compare(
+        [goat_full_parser, s0_opt_parser],
+        compare_default_path,
+    )
+    ORCAParser.compare(
+        [goat_full_parser, s0_opt_parser],
+        compare_full_path,
+        detail_scope="full",
+    )
+
+    standalone_goat_text = standalone_goat_path.read_text(encoding="utf-8")
+    standalone_opt_text = standalone_opt_path.read_text(encoding="utf-8")
+    standalone_compact_opt_text = standalone_compact_opt_path.read_text(
+        encoding="utf-8"
+    )
+    compare_default_text = compare_default_path.read_text(encoding="utf-8")
+    compare_full_text = compare_full_path.read_text(encoding="utf-8")
+
+    assert "Showing all 1147 conformers." in standalone_goat_text
+    assert "| 16    |" in standalone_opt_text
+    assert "Showing first 6 and last 6 of 31 cycles." not in standalone_opt_text
+    assert "| 16    |" not in standalone_compact_opt_text
+    assert "Showing first 6 and last 6 of 31 cycles." in standalone_compact_opt_text
+
+    assert (
+        "Showing all 1147 conformers (all within dE <= 10.0000 kcal/mol)."
+        in compare_default_text
+    )
+    assert "| 16    |" not in compare_default_text
+    assert "Showing first 6 and last 6 of 31 cycles." in compare_default_text
+
+    assert "Showing all 1147 conformers." in compare_full_text
+    assert "| 16    |" in compare_full_text
+    assert "Showing first 6 and last 6 of 31 cycles." not in compare_full_text
 
 
 def test_rdb_lmmp_s1_uses_final_geometry_step_for_geometry_dependent_properties(

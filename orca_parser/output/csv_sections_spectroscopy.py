@@ -117,6 +117,9 @@ def write_tddft_section(
 
         for state in states:
             transitions = state.get("transitions", [])
+            # Persist the parser-normalized significant view so CSV consumers do
+            # not need to reimplement the TDDFT reporting thresholds themselves.
+            significant_transitions = state.get("significant_transitions", [])
             dominant = max(
                 transitions,
                 key=lambda item: item.get("weight", 0.0),
@@ -137,6 +140,23 @@ def write_tddft_section(
                 "wavelength_nm": state.get("wavelength_nm", ""),
                 "s_squared": state.get("s_squared", ""),
                 "multiplicity": state.get("multiplicity", ""),
+                "significant_transition_weight_threshold": state.get(
+                    "significant_transition_weight_threshold",
+                    "",
+                ),
+                "significant_transition_count": state.get(
+                    "significant_transition_count",
+                    "",
+                ),
+                "significant_transitions": "; ".join(
+                    f"{transition.get('from_orbital', '')} -> {transition.get('to_orbital', '')}"
+                    for transition in significant_transitions
+                ),
+                "significant_weights_percent": "; ".join(
+                    f"{100.0 * float(transition.get('weight', 0.0)):.1f}"
+                    for transition in significant_transitions
+                    if transition.get("weight") is not None
+                ),
                 "dominant_from_orbital": dominant.get("from_orbital", ""),
                 "dominant_to_orbital": dominant.get("to_orbital", ""),
                 "dominant_weight": dominant.get("weight", ""),
@@ -159,6 +179,14 @@ def write_tddft_section(
                     "to_spin": transition.get("to_spin", ""),
                     "weight": transition.get("weight"),
                     "coefficient": transition.get("coefficient"),
+                    "meets_reporting_threshold": transition.get(
+                        "meets_reporting_threshold",
+                        "",
+                    ),
+                    "significant_transition_weight_threshold": state.get(
+                        "significant_transition_weight_threshold",
+                        "",
+                    ),
                 })
 
         files.append(write_csv(
@@ -167,6 +195,8 @@ def write_tddft_section(
                 "block_index", "method", "manifold", "order_in_block",
                 "state", "energy_rank", "state_label", "symmetry", "energy_au", "energy_eV", "energy_cm1",
                 "wavelength_nm", "s_squared", "multiplicity",
+                "significant_transition_weight_threshold", "significant_transition_count",
+                "significant_transitions", "significant_weights_percent",
                 "dominant_from_orbital", "dominant_to_orbital",
                 "dominant_weight", "dominant_coefficient",
             ],
@@ -180,6 +210,8 @@ def write_tddft_section(
                     "from_orbital", "from_index", "from_spin",
                     "to_orbital", "to_index", "to_spin",
                     "weight", "coefficient",
+                    "meets_reporting_threshold",
+                    "significant_transition_weight_threshold",
                 ],
             ))
 
@@ -201,6 +233,11 @@ def write_tddft_section(
                     "energy_matched_state": state.get("energy_matched_state", ""),
                     "energy_matched_rank": state.get("energy_matched_rank", ""),
                     "energy_matched_delta_eV": state.get("energy_matched_delta_eV", ""),
+                    "significant_occupation_threshold": state.get(
+                        "significant_occupation_threshold",
+                        "",
+                    ),
+                    "significant_pair_count": state.get("significant_pair_count", ""),
                     "from_orbital": pair.get("from_orbital"),
                     "from_index": pair.get("from_index", ""),
                     "from_spin": pair.get("from_spin", ""),
@@ -208,6 +245,10 @@ def write_tddft_section(
                     "to_index": pair.get("to_index", ""),
                     "to_spin": pair.get("to_spin", ""),
                     "occupation": pair.get("occupation"),
+                    "meets_reporting_threshold": pair.get(
+                        "meets_reporting_threshold",
+                        "",
+                    ),
                 })
         if nto_rows:
             files.append(write_csv(
@@ -217,8 +258,10 @@ def write_tddft_section(
                     "energy_au", "energy_eV", "energy_cm1", "wavelength_nm",
                     "energy_match_consistent", "energy_matched_state",
                     "energy_matched_rank", "energy_matched_delta_eV",
+                    "significant_occupation_threshold", "significant_pair_count",
                     "from_orbital", "from_index", "from_spin",
                     "to_orbital", "to_index", "to_spin", "occupation",
+                    "meets_reporting_threshold",
                 ],
             ))
 

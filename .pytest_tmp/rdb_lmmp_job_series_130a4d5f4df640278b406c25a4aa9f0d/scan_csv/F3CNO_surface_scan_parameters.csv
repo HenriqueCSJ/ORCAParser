@@ -1,2 +1,0 @@
-parameter_index,label,kind,coordinate_type,atoms,unit,mode,start,end,steps,values
-1,"D(5,2,0,4)",D,Dihedral,"5,2,0,4",deg,range,-180.0,360.0,37,

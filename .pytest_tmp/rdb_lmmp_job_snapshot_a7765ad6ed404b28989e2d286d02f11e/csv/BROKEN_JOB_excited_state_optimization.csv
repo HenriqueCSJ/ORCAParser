@@ -1,2 +1,0 @@
-electronic_state,target_state,target_root,target_multiplicity,input_block,input_nroots,followiroot,firkeepfirstref,analytic_excited_state_gradients,socgrad,final_root,final_state_of_interest,gradient_block_count,input_electron_density,cispre_job_title,firen_thresh_eV,firs2_thresh,firsthresh,firminoverlap,firdynoverlap,firdynoverratio,root_follow_updates
-Excited-state optimization (S1),S1,1,,tddft,,no,,,,,,,,,,,,,,,

@@ -12,7 +12,7 @@ A modular Python parser for [ORCA](https://orcaforum.kofo.mpg.de/) quantum chemi
 - **Relaxed surface scan** support: scan coordinate definitions (`B`, `A`, `D`), simultaneous vs. nested scans, per-step energies, optimized `*.xyz` files, and detected `relaxscan*.dat` / `allxyz` sidecars
 - **DeltaSCF** metadata extraction: ALPHACONF/BETACONF, IONIZEALPHA/IONIZEBETA, occupation vectors, MOM/IMOM settings, with explicit excited-state labeling in Markdown and CSV outputs
 - **TDDFT/CIS excited-state optimization** support: `%tddft` / `%cis` targets (`IRoot`, `IRootMult`), `FOLLOWIROOT` / FIR controls, analytic excited-state gradient detection, per-cycle target-state history, and explicit `Sx` / `Tx` labeling in Markdown and CSV outputs
-- **TDDFT/NTO root-order diagnostics**: preserves ORCA's printed root numbers, adds explicit energy ranks when roots are not printed in ascending energy order, and records NTO-to-root energy consistency checks
+- **TDDFT/NTO root-order diagnostics**: preserves ORCA's printed root numbers, adds explicit energy ranks when roots are not printed in ascending energy order, records NTO-to-root energy consistency checks, and keeps parser-level reporting thresholds for significant CI contributions (`weight >= 10%`) and NTO pairs (`n >= 0.10`)
 - **EPR/EPR properties**: Zero-Field Splitting, g-tensor (with atomic breakdown), hyperfine coupling, EFG, quadrupole
 - **UseSym / point-group symmetry** support: detected point group, reduced/orbital irrep group, irrep occupations, and symmetry-perfected geometries when ORCA prints them
 - **Normalized parse-time views** for downstream development: `job_snapshot` (job identity/state/method labels), `job_series` (GOAT/optimization/scan histories), and `final_snapshot` (authoritative final-step geometry-dependent properties)
@@ -251,12 +251,29 @@ AI-readable reports optimized for LLM-assisted paper writing. Includes publicati
 
 For TDDFT/NTO jobs, markdown keeps ORCA's printed `STATE n` root labels and adds an `E-rank` column when the roots are not ordered by excitation energy. This avoids silently renumbering roots while still making the lowest-energy states obvious in the report.
 
+TDDFT markdown and CSV reporting use fixed parser-level thresholds so the same chemistry is shown consistently across outputs:
+- CI / MO-basis excitation contributions: report all contributions with `weight >= 10%`
+- NTO pairs: report all pairs with `n >= 0.10`
+- Oscillator strengths: always keep the printed value, including dark states with `f ~= 0`
+- Recommended lowest-root view: keep at least the lowest 5 roots available via `summary["recommended_lowest_roots"]`
+
 ```bash
 orca_parser water.out --markdown                   # Per-file report
 orca_parser *.out --compare --outdir results/      # Multi-molecule comparison
+orca_parser water.out --markdown --detail-scope compact
+orca_parser *.out --compare --detail-scope full
 orca_parser conformers.out --markdown --goat-max-relative-energy-kcal 3
 orca_parser conformers.out other.out --compare --goat-max-relative-energy-kcal all
 ```
+
+Markdown now uses a shared render-policy layer:
+
+- standalone markdown defaults to **full** detail for bulky sections such as GOAT ensembles, orbital windows, CMO/NBO character tables, and optimization histories
+- comparison markdown defaults to **compact** ranges for those same sections
+- `--detail-scope compact` forces compact rendering even for a single file
+- `--detail-scope full` forces full rendering even in compare mode
+
+Today this policy mainly affects markdown/report truncation. CSV and JSON remain full-fidelity exports. The same shared policy object is intended to become the universal range-control seam for future bulky sections.
 
 Standalone markdown prints the full GOAT ensemble by default. Comparison markdown truncates GOAT tables at `dE <= 10 kcal/mol` unless you override it with `--goat-max-relative-energy-kcal`.
 
@@ -283,6 +300,10 @@ Output Formats:
   --csv / --no-csv        CSV output (default: on)
   --hdf5 / --no-hdf5      HDF5 output (default: off)
   --markdown / --no-markdown  Markdown report (default: off)
+  --detail-scope auto|full|compact
+                          Control bulky markdown sections. 'auto' keeps
+                          stand-alone reports full and comparison reports
+                          compact.
   --goat-max-relative-energy-kcal N|all
                           Limit GOAT markdown tables by relative energy
   --compare               Multi-molecule comparison (implies --markdown)

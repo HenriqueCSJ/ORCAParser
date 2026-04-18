@@ -13,6 +13,9 @@ Notes
     during recursive discovery and rejected if passed directly.
   * Geometry-dependent final-state exports prefer the final converged block,
     not the first block, for multi-step jobs such as geometry optimizations.
+  * Render detail defaults are mode-aware: stand-alone markdown reports show
+    full bulky sections by default, while comparison reports keep compact
+    ranges by default. Use ``--detail-scope`` to force either behavior.
   * Markdown, CSV, and CLI summaries prefer normalized parse-time views
     (``job_snapshot``, ``job_series``, ``final_snapshot``) so job labels,
     stepwise histories, and final-state values stay aligned.
@@ -23,7 +26,9 @@ Notes
     metadata (`IRoot`, `IRootMult`, `FOLLOWIROOT`, FIR controls).
   * TDDFT/NTO output preserves ORCA root numbering exactly. When ORCA prints
     roots out of energy order, markdown and CSV add an explicit ``E-rank``
-    field instead of silently renumbering the states.
+    field instead of silently renumbering the states. TDDFT summaries report
+    all CI contributions with weight >= 10% and all NTO pairs with occupancy
+    ``n >= 0.10``.
   * GOAT conformer searches are parsed as dedicated GOAT jobs, including the
     final ensemble table, global-minimum xyz, conformer window counts, and
     ensemble thermochemistry.
@@ -74,6 +79,9 @@ Examples
   # Generate an AI-readable markdown report alongside JSON
   orca_parser water.out --markdown
 
+  # Force compact/ranged markdown even for a stand-alone file
+  orca_parser water.out --markdown --detail-scope compact
+
   # Parse NBO analysis only
   orca_parser water.out --sections nbo
 
@@ -85,6 +93,9 @@ Examples
 
   # Compare all *.out and *.log files found recursively in a directory
   orca_parser calculations/ --compare --outdir results/
+
+  # Force full per-molecule detail in comparison mode
+  orca_parser calculations/ --compare --detail-scope full
 
   # Mix files and directories
   orca_parser extra.out calculations/ --compare
@@ -215,6 +226,7 @@ def parse_args():
                    help="Write compact AI-readable markdown report (.md) "
                         "with symmetry, DeltaSCF / TDDFT excited-state "
                         "labeling, TDDFT root/energy-rank summaries, "
+                        "significant CI (>=10%%) / NTO (n>=0.10) tables, "
                         "root-follow summaries, GOAT ensemble summaries, "
                         "and surface-scan summaries")
     p.add_argument("--no-markdown", dest="write_markdown", action="store_false",
@@ -224,6 +236,17 @@ def parse_args():
                         "Implies --markdown. Accepts directories — searches "
                         "recursively for *.out and *.log files, skipping "
                         "auxiliary *_atomNN helper outputs.")
+    p.add_argument(
+        "--detail-scope",
+        choices=("auto", "full", "compact"),
+        default="auto",
+        help=(
+            "Control how much bulky markdown detail to show. "
+            "'auto' keeps the mode-aware defaults: standalone markdown is full, "
+            "comparison markdown is compact. Use 'full' to force everything, "
+            "or 'compact' to force ranged summaries."
+        ),
+    )
     p.add_argument(
         "--goat-max-relative-energy-kcal",
         type=_parse_goat_markdown_cutoff,
@@ -467,11 +490,15 @@ def main():
         if args.write_markdown:
             md_path = outdir / (fp.stem + ".md")
             if goat_cutoff is _GOAT_CUTOFF_UNSET:
-                written = parser.to_markdown(md_path)
+                written = parser.to_markdown(
+                    md_path,
+                    detail_scope=args.detail_scope,
+                )
             else:
                 written = parser.to_markdown(
                     md_path,
                     goat_max_relative_energy_kcal_mol=goat_cutoff,
+                    detail_scope=args.detail_scope,
                 )
             if not args.quiet:
                 size = written.stat().st_size
@@ -488,12 +515,17 @@ def main():
         comp_outdir = Path(args.outdir) if args.outdir else resolved_files[0].parent
         comp_path   = comp_outdir / "comparison.md"
         if goat_cutoff is _GOAT_CUTOFF_UNSET:
-            written = ORCAParser.compare(all_parsers, comp_path)
+            written = ORCAParser.compare(
+                all_parsers,
+                comp_path,
+                detail_scope=args.detail_scope,
+            )
         else:
             written = ORCAParser.compare(
                 all_parsers,
                 comp_path,
                 goat_max_relative_energy_kcal_mol=goat_cutoff,
+                detail_scope=args.detail_scope,
             )
         if not args.quiet:
             size = written.stat().st_size
