@@ -74,7 +74,9 @@ class OrbitalEnergiesModule(BaseModule):
         data = {}
         is_uhf = self.context.get("is_uhf", False)
 
-        idx = self.find_line(lines, "ORBITAL ENERGIES")
+        # Optimization outputs can contain one orbital block per geometry step.
+        # Use the last main SCF block rather than the first/input-geometry one.
+        idx = self.find_last_line_exact(lines, "ORBITAL ENERGIES")
         if idx == -1:
             return None
 

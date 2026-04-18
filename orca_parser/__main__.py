@@ -11,11 +11,27 @@ Notes
   * Directories are searched recursively for ``*.out`` and ``*.log`` files.
   * Auxiliary ORCA helper/ECP files such as ``*_atom83.out`` are skipped
     during recursive discovery and rejected if passed directly.
+  * Geometry-dependent final-state exports prefer the final converged block,
+    not the first block, for multi-step jobs such as geometry optimizations.
+  * Render detail defaults are mode-aware: stand-alone markdown reports show
+    full bulky sections by default, while comparison reports keep compact
+    ranges by default. Use ``--detail-scope`` to force either behavior.
+  * Markdown, CSV, and CLI summaries prefer normalized parse-time views
+    (``job_snapshot``, ``job_series``, ``final_snapshot``) so job labels,
+    stepwise histories, and final-state values stay aligned.
   * Markdown and CSV exports explicitly distinguish DeltaSCF excited-state
     jobs from ordinary ground-state single-points.
   * `%tddft` / `%cis` excited-state geometry optimizations are reported as
     excited-state optimization jobs, including target-state and root-follow
     metadata (`IRoot`, `IRootMult`, `FOLLOWIROOT`, FIR controls).
+  * TDDFT/NTO output preserves ORCA root numbering exactly. When ORCA prints
+    roots out of energy order, markdown and CSV add an explicit ``E-rank``
+    field instead of silently renumbering the states. TDDFT summaries report
+    all CI contributions with weight >= 10% and all NTO pairs with occupancy
+    ``n >= 0.10``.
+  * GOAT conformer searches are parsed as dedicated GOAT jobs, including the
+    final ensemble table, global-minimum xyz, conformer window counts, and
+    ensemble thermochemistry.
   * Relaxed surface scans are parsed as scan jobs, not collapsed into a
     single geometry optimization. Scan coordinates, per-step energies, and
     discovered ``relaxscan*.dat`` / ``allxyz`` sidecars are exported.
@@ -32,8 +48,11 @@ Section aliases
   bonds      mayer, loewdin
   nbo        nbo
   dipole     dipole
+  solvation  solvation
+  tddft      tddft
   geometry   geometry, basis_set
   epr        epr (ZFS, g-tensor, hyperfine/EFG)
+  goat       goat (GOAT final ensemble, minimum, Sconf/Gconf)
   opt        geom_opt (optimization cycles, convergence, RMSD)
   scan       surface_scan (relaxed scan coordinates, per-step energies)
 
@@ -60,6 +79,9 @@ Examples
   # Generate an AI-readable markdown report alongside JSON
   orca_parser water.out --markdown
 
+  # Force compact/ranged markdown even for a stand-alone file
+  orca_parser water.out --markdown --detail-scope compact
+
   # Parse NBO analysis only
   orca_parser water.out --sections nbo
 
@@ -71,6 +93,9 @@ Examples
 
   # Compare all *.out and *.log files found recursively in a directory
   orca_parser calculations/ --compare --outdir results/
+
+  # Force full per-molecule detail in comparison mode
+  orca_parser calculations/ --compare --detail-scope full
 
   # Mix files and directories
   orca_parser extra.out calculations/ --compare
@@ -93,11 +118,23 @@ Examples
   # Parse a relaxed surface scan and export its scan table
   orca_parser relaxscan.out --sections scan --markdown --csv
 
+  # Parse a GOAT conformer search and export the final ensemble
+  orca_parser conformers.out --sections goat --markdown --csv
+
+  # Limit GOAT markdown tables to conformers within 3 kcal/mol
+  orca_parser conformers.out --sections goat --markdown --goat-max-relative-energy-kcal 3
+
+  # Force the full GOAT ensemble even in comparison mode
+  orca_parser conformers.out other.out --compare --goat-max-relative-energy-kcal all
+
   # DeltaSCF excited-state jobs are called out explicitly in markdown/CSV
   orca_parser excited_state.out --markdown --csv
 
   # TDDFT/CIS excited-state optimization (for example S1)
   orca_parser excited_opt.out --sections tddft opt --markdown --csv
+
+  # Show TDDFT roots with explicit energy ranking in markdown / CSV
+  orca_parser vertical_tddft.out --sections tddft --markdown --csv
 """
 
 import argparse
@@ -105,7 +142,43 @@ import sys
 from pathlib import Path
 from typing import List
 
+from orca_parser.final_snapshot import (
+    get_final_dipole as _get_final_dipole,
+    get_final_orbital_energies as _get_final_orbital_energies,
+)
+from orca_parser.output.job_state import (
+    calculation_type_label as _calculation_type_label,
+    electronic_state_label as _electronic_state_label,
+    get_basis_set as _get_basis_set,
+    get_charge as _get_charge,
+    get_excited_state_opt_data as _get_excited_state_opt_data,
+    get_job_name as _get_job_name,
+    get_method_header_label as _get_method_header_label,
+    get_multiplicity as _get_multiplicity,
+    symmetry_inline_label as _symmetry_inline_label,
+)
 from orca_parser.parser import is_auxiliary_orca_file
+
+
+_GOAT_CUTOFF_UNSET = object()
+
+
+def _parse_goat_markdown_cutoff(value: str):
+    """Parse a GOAT markdown cutoff argument."""
+    text = value.strip().lower()
+    if text in {"all", "full", "none"}:
+        return None
+    try:
+        cutoff = float(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(
+            "GOAT cutoff must be a non-negative number or 'all'."
+        ) from exc
+    if cutoff < 0:
+        raise argparse.ArgumentTypeError(
+            "GOAT cutoff must be a non-negative number or 'all'."
+        )
+    return cutoff
 
 
 def parse_args():
@@ -114,8 +187,12 @@ def parse_args():
         description=(
             "Parse ORCA quantum chemistry output files into JSON, CSV, "
             "HDF5, and Markdown. Handles ground-state, DeltaSCF excited-state, "
-            "TDDFT/CIS excited-state optimization, UseSym/symmetry-aware, "
-            "EPR, relaxed surface-scan, and geometry-optimization jobs."
+            "TDDFT/CIS excited-state optimization, GOAT conformer-search, "
+            "UseSym/symmetry-aware, EPR, relaxed surface-scan, and "
+            "geometry-optimization jobs, using normalized final-state and "
+            "job-metadata summaries for downstream output. TDDFT output keeps "
+            "ORCA root numbering intact and adds explicit energy-rank "
+            "annotations when roots are not printed in ascending energy order."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
@@ -130,7 +207,7 @@ def parse_args():
     p.add_argument("--sections", nargs="+", metavar="SEC", default=None,
                    help="Sections / aliases to parse (default: all). "
                         "Examples: --sections charges mos dipole, "
-                        "--sections epr, --sections opt, --sections scan")
+                        "--sections epr, --sections goat, --sections opt, --sections scan")
 
     # ── Output format flags ─────────────────────────────────────────
     p.add_argument("--json",    dest="write_json", action="store_true",  default=True,
@@ -148,8 +225,10 @@ def parse_args():
     p.add_argument("--markdown", dest="write_markdown", action="store_true",  default=False,
                    help="Write compact AI-readable markdown report (.md) "
                         "with symmetry, DeltaSCF / TDDFT excited-state "
-                        "labeling, root-follow summaries, and surface-scan "
-                        "summaries")
+                        "labeling, TDDFT root/energy-rank summaries, "
+                        "significant CI (>=10%%) / NTO (n>=0.10) tables, "
+                        "root-follow summaries, GOAT ensemble summaries, "
+                        "and surface-scan summaries")
     p.add_argument("--no-markdown", dest="write_markdown", action="store_false",
                    help="Disable markdown output")
     p.add_argument("--compare",  dest="write_compare",  action="store_true",  default=False,
@@ -157,6 +236,29 @@ def parse_args():
                         "Implies --markdown. Accepts directories — searches "
                         "recursively for *.out and *.log files, skipping "
                         "auxiliary *_atomNN helper outputs.")
+    p.add_argument(
+        "--detail-scope",
+        choices=("auto", "full", "compact"),
+        default="auto",
+        help=(
+            "Control how much bulky markdown detail to show. "
+            "'auto' keeps the mode-aware defaults: standalone markdown is full, "
+            "comparison markdown is compact. Use 'full' to force everything, "
+            "or 'compact' to force ranged summaries."
+        ),
+    )
+    p.add_argument(
+        "--goat-max-relative-energy-kcal",
+        type=_parse_goat_markdown_cutoff,
+        default=_GOAT_CUTOFF_UNSET,
+        metavar="N|all",
+        help=(
+            "Limit GOAT ensemble tables in markdown to conformers with "
+            "dE <= N kcal/mol, or use 'all' to print the full ensemble. "
+            "By default, standalone markdown shows all conformers while "
+            "comparison markdown shows dE <= 10 kcal/mol."
+        ),
+    )
 
     # ── JSON options ─────────────────────────────────────────────────
     p.add_argument("--indent", type=int, default=2, metavar="N",
@@ -180,8 +282,10 @@ def parse_args():
                         "for directory/compare mode, the chosen output root)")
     p.add_argument("--summary", action="store_true",
                    help="Print a human-readable summary to stdout, including "
-                        "calculation type, basic symmetry/spin diagnostics, "
-                        "and scan info when applicable")
+                        "normalized job labels, basic symmetry/spin "
+                        "diagnostics, final frontier orbitals/dipole when "
+                        "available, TDDFT root-order diagnostics when "
+                        "available, and scan info when applicable")
     p.add_argument("--quiet", action="store_true",
                    help="Suppress progress messages")
 
@@ -220,15 +324,18 @@ def _print_summary(data: dict, path: Path) -> None:
 
     meta = data.get("metadata", {})
     ctx  = data.get("context",  {})
+    state_label = _electronic_state_label(data, ground_state_label="Ground-state")
+    symmetry_label = _symmetry_inline_label(data)
     print(f"  ORCA version : {meta.get('orca_version', 'N/A')}")
-    print(f"  Job          : {meta.get('job_name', 'N/A')}")
-    print(f"  Calc type    : {meta.get('calculation_type', 'N/A')}")
+    print(f"  Job          : {_get_job_name(data) or 'N/A'}")
+    print(f"  Calc type    : {_calculation_type_label(data) or 'N/A'}")
+    print(f"  State        : {state_label}")
     print(f"  HF type      : {ctx.get('hf_type', 'N/A')}")
-    print(f"  Functional   : {meta.get('functional', 'N/A')}")
-    print(f"  Basis        : {meta.get('basis_set', 'N/A')}")
-    print(f"  Charge/Mult  : {meta.get('charge', 'N/A')} / {meta.get('multiplicity', 'N/A')}")
-    print(f"  Symmetry     : {'yes' if ctx.get('has_symmetry') else 'no'}")
-    excopt = meta.get("excited_state_optimization", {})
+    print(f"  Method       : {_get_method_header_label(data)}")
+    print(f"  Basis        : {_get_basis_set(data) or 'N/A'}")
+    print(f"  Charge/Mult  : {_get_charge(data)} / {_get_multiplicity(data)}")
+    print(f"  Symmetry     : {symmetry_label or 'none'}")
+    excopt = _get_excited_state_opt_data(data)
     if excopt:
         label = excopt.get("target_state_label") or excopt.get("target_root")
         if label:
@@ -247,7 +354,7 @@ def _print_summary(data: dict, path: Path) -> None:
             print(f"  <S²>         : {scf['s_squared']:.6f}  "
                   f"(ideal {scf.get('s_squared_ideal', 'N/A')})")
 
-    oe = data.get("orbital_energies", {})
+    oe = _get_final_orbital_energies(data)
     if "HOMO_LUMO_gap_eV" in oe:
         print(f"  HOMO-LUMO (eV): {oe['HOMO_LUMO_gap_eV']:.4f}")
     for spin in ("alpha", "beta"):
@@ -255,7 +362,7 @@ def _print_summary(data: dict, path: Path) -> None:
         if key in oe:
             print(f"  {spin.capitalize()} gap (eV): {oe[key]:.4f}")
 
-    dip = data.get("dipole", {})
+    dip = _get_final_dipole(data)
     if dip:
         mag = dip.get('magnitude_Debye')
         print(f"  Dipole (D)   : {mag:.4f}" if mag is not None else "  Dipole (D)   : N/A")
@@ -284,6 +391,26 @@ def _print_summary(data: dict, path: Path) -> None:
         if scan.get("energy_span_kcal_mol") is not None:
             print(f"  Scan span    : {scan['energy_span_kcal_mol']:.4f} kcal/mol")
 
+    goat = data.get("goat", {})
+    if goat:
+        n_confs = goat.get("n_conformers", 0)
+        print(f"  GOAT confs   : {n_confs}")
+        if goat.get("conformers_below_energy_window") is not None:
+            window = goat.get("conformer_energy_window_kcal_mol")
+            print(
+                f"  Below {window:.2f} kcal/mol: "
+                f"{goat['conformers_below_energy_window']}"
+            )
+        if goat.get("lowest_energy_conformer_Eh") is not None:
+            print(
+                "  GOAT minimum : "
+                f"{goat['lowest_energy_conformer_Eh']:.6f} Eh"
+            )
+        if goat.get("sconf_cal_molK") is not None:
+            print(f"  Sconf        : {goat['sconf_cal_molK']:.2f} cal/(molK)")
+        if goat.get("gconf_kcal_mol") is not None:
+            print(f"  Gconf        : {goat['gconf_kcal_mol']:.2f} kcal/mol")
+
     for name, key in [("Mulliken", "mulliken"), ("Hirshfeld", "hirshfeld"),
                       ("MBIS", "mbis"), ("CHELPG", "chelpg")]:
         section = data.get(key, {})
@@ -300,6 +427,7 @@ def main():
     from orca_parser import ORCAParser
 
     h5_compression = None if args.h5_compression.lower() == "none" else args.h5_compression
+    goat_cutoff = args.goat_max_relative_energy_kcal
     if args.write_compare:
         args.write_markdown = True
 
@@ -361,7 +489,17 @@ def main():
         # ── Markdown (per file) ──────────────────────────────────────
         if args.write_markdown:
             md_path = outdir / (fp.stem + ".md")
-            written = parser.to_markdown(md_path)
+            if goat_cutoff is _GOAT_CUTOFF_UNSET:
+                written = parser.to_markdown(
+                    md_path,
+                    detail_scope=args.detail_scope,
+                )
+            else:
+                written = parser.to_markdown(
+                    md_path,
+                    goat_max_relative_energy_kcal_mol=goat_cutoff,
+                    detail_scope=args.detail_scope,
+                )
             if not args.quiet:
                 size = written.stat().st_size
                 print(f"→ {written.name} ({size/1024:.1f} KB)", end="", flush=True)
@@ -376,7 +514,19 @@ def main():
     if args.write_compare and len(all_parsers) > 1:
         comp_outdir = Path(args.outdir) if args.outdir else resolved_files[0].parent
         comp_path   = comp_outdir / "comparison.md"
-        written     = ORCAParser.compare(all_parsers, comp_path)
+        if goat_cutoff is _GOAT_CUTOFF_UNSET:
+            written = ORCAParser.compare(
+                all_parsers,
+                comp_path,
+                detail_scope=args.detail_scope,
+            )
+        else:
+            written = ORCAParser.compare(
+                all_parsers,
+                comp_path,
+                goat_max_relative_energy_kcal_mol=goat_cutoff,
+                detail_scope=args.detail_scope,
+            )
         if not args.quiet:
             size = written.stat().st_size
             print(f"\n→ comparison: {written.name} ({size/1024:.1f} KB)")
