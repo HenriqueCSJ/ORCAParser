@@ -157,6 +157,12 @@ from orca_parser.output.job_state import (
     get_multiplicity as _get_multiplicity,
     symmetry_inline_label as _symmetry_inline_label,
 )
+from orca_parser.plugin_discovery import (
+    bootstrap_plugin_bundles as _bootstrap_plugin_bundles,
+    build_plugin_help_section as _build_plugin_help_section,
+    get_plugin_option_values as _get_plugin_option_values,
+    get_registered_plugin_options as _get_registered_plugin_options,
+)
 from orca_parser.parser import is_auxiliary_orca_file
 
 
@@ -182,6 +188,8 @@ def _parse_goat_markdown_cutoff(value: str):
 
 
 def parse_args():
+    _bootstrap_plugin_bundles()
+    plugin_help = _build_plugin_help_section()
     p = argparse.ArgumentParser(
         prog="orca_parser",
         description=(
@@ -195,7 +203,7 @@ def parse_args():
             "annotations when roots are not printed in ascending energy order."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=__doc__,
+        epilog=__doc__ + plugin_help,
     )
     p.add_argument("files", nargs="+", metavar="FILE",
                    help="ORCA output file(s) or directory(ies) to parse. "
@@ -288,6 +296,12 @@ def parse_args():
                         "available, and scan info when applicable")
     p.add_argument("--quiet", action="store_true",
                    help="Suppress progress messages")
+
+    # Plugin bundles can advertise their own options declaratively. The CLI
+    # discovers them here so adding a module can extend help/arguments without
+    # editing this central parser.
+    for option in _get_registered_plugin_options():
+        p.add_argument(*option.flags, **option.argparse_kwargs())
 
     return p.parse_args()
 
@@ -425,6 +439,7 @@ def _print_summary(data: dict, path: Path) -> None:
 def main():
     args = parse_args()
     from orca_parser import ORCAParser
+    plugin_options = _get_plugin_option_values(args)
 
     h5_compression = None if args.h5_compression.lower() == "none" else args.h5_compression
     goat_cutoff = args.goat_max_relative_energy_kcal
@@ -448,7 +463,7 @@ def main():
             print(f"Parsing {fp.name} [{sec_label}] ...", end=" ", flush=True)
 
         try:
-            parser = ORCAParser(fp)
+            parser = ORCAParser(fp, plugin_options=plugin_options)
             data = parser.parse(sections=args.sections)
             all_parsers.append(parser)
         except Exception as exc:

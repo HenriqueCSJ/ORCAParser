@@ -20,6 +20,7 @@ from typing import Any, Dict, List, Optional
 from .final_snapshot import build_final_snapshot
 from .job_series import build_job_series
 from .job_snapshot import build_job_snapshot
+from .plugin_discovery import bootstrap_plugin_bundles
 from .parser_section_registry import (
     get_core_parser_section_keys,
     get_parser_section_alias_map,
@@ -28,6 +29,10 @@ from .parser_section_registry import (
     resolve_requested_parser_sections,
 )
 from .render_options import RENDER_OPTION_UNSET
+
+# Discover explicit plugin bundles before freezing compatibility snapshots so
+# newly dropped-in modules participate in normal parser flows automatically.
+bootstrap_plugin_bundles()
 
 # Legacy compatibility snapshots for external code that still imports these
 # names from ``orca_parser.parser``. The parser itself now consumes the
@@ -224,11 +229,17 @@ class ORCAParser:
         ``n_atoms``, ``atom_symbols``.
     """
 
-    def __init__(self, filepath: str | Path):
+    def __init__(
+        self,
+        filepath: str | Path,
+        *,
+        plugin_options: Optional[Dict[str, Any]] = None,
+    ):
         self.filepath = Path(filepath)
         self.data: Dict[str, Any] = {}
         self.context: Dict[str, Any] = {}
         self._lines: List[str] = []
+        self.plugin_options: Dict[str, Any] = dict(plugin_options or {})
 
     # ---------------------------------------------------------------- #
     # Public API                                                        #
@@ -278,6 +289,8 @@ class ORCAParser:
         results: Dict[str, Any] = {
             "source_file": str(self.filepath),
         }
+        if self.plugin_options:
+            results["plugin_options"] = dict(self.plugin_options)
         results["context"] = dict(self.context)
 
         for plugin in iter_active_parser_section_plugins(active):
@@ -447,6 +460,7 @@ class ORCAParser:
             "source_stem": self.filepath.stem,
             "source_relpath": _normalize_job_path(self.filepath),
             "job_id": _normalize_job_path(self.filepath),
+            "plugin_options": dict(self.plugin_options),
         }
 
         for ln in self._lines:
