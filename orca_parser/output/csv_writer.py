@@ -72,6 +72,7 @@ from .csv_sections_state import (
     write_metadata_section as _write_state_metadata_section,
     write_symmetry_section as _write_state_symmetry_section,
 )
+from .csv_section_registry import iter_csv_section_plugins as _iter_csv_section_plugins
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -499,34 +500,11 @@ def write_csvs(data: Dict[str, Any], directory: Path) -> List[Path]:
     stem = _stem(data)
     written: List[Path] = []
 
-    writers = [
-        _write_metadata,
-        _write_geometry,
-        _write_symmetry,
-        _write_orbital_energies,
-        _write_qro,
-        _write_mulliken,
-        _write_loewdin,
-        _write_mayer,
-        _write_hirshfeld,
-        _write_mbis,
-        _write_chelpg,
-        _write_nbo_nao,
-        _write_nbo_npa,
-        _write_dipole,
-        _write_solvation,
-        _write_tddft,
-        _write_nbo_lewis,
-        _write_nbo_e2,
-        _write_nbo_nlmo_hyb,
-        _write_nbo_nlmo_bo,
-        _write_nbo_nlmo_steric,
-        _write_epr,
-    ]
-
-    for writer in writers:
+    # Common CSV exports are now registry-driven so new sections do not need
+    # another entry in a writer-local list.
+    for plugin in _iter_csv_section_plugins():
         try:
-            files = writer(data, directory, stem)
+            files = plugin.render_files(data, directory, stem, _write_csv)
             written.extend(files)
         except Exception:  # noqa: BLE001
             pass  # Section absent or parse issue; continue silently
@@ -539,15 +517,5 @@ def write_csvs(data: Dict[str, Any], directory: Path) -> List[Path]:
             written.extend(writer(data, directory, stem, _write_csv))
         except Exception:  # noqa: BLE001
             pass
-
-    # Wiberg and NBI matrices
-    try:
-        written.extend(_write_nbo_matrix(data, directory, stem, "wiberg_matrix", "wiberg"))
-    except Exception:
-        pass
-    try:
-        written.extend(_write_nbo_matrix(data, directory, stem, "nbi_matrix", "nbi"))
-    except Exception:
-        pass
 
     return written
