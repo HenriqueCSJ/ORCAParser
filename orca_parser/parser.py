@@ -17,6 +17,10 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from .final_snapshot import build_final_snapshot
+from .job_series import build_job_series
+from .job_snapshot import build_job_snapshot
+from .render_options import RENDER_OPTION_UNSET
 from .modules import (
     MetadataModule,
     GeometryModule,
@@ -36,6 +40,7 @@ from .modules import (
     NBOModule,
     EPRModule,
     GeomOptModule,
+    GOATModule,
     SurfaceScanModule,
 )
 
@@ -61,6 +66,7 @@ MODULE_REGISTRY: List[tuple] = [
     ("tddft",            TDDFTModule),
     ("nbo",              NBOModule),
     ("epr",              EPRModule),
+    ("goat",             GOATModule),
     ("surface_scan",     SurfaceScanModule),
     ("geom_opt",         GeomOptModule),
 ]
@@ -81,6 +87,7 @@ SECTION_ALIASES: Dict[str, List[str]] = {
     "tddft":      ["tddft"],
     "geometry":   ["geometry", "basis_set"],
     "epr":        ["epr"],
+    "goat":       ["goat"],
     "scan":       ["surface_scan"],
     "opt":        ["geom_opt"],
 }
@@ -89,6 +96,155 @@ _AUXILIARY_ATOM_FILE_RE = re.compile(
     r"_atom\d+\.(?:out|log)$",
     re.IGNORECASE,
 )
+_INPUT_NAME_RE = re.compile(r"^NAME\s*=\s*(\S+)")
+_INPUT_END_RE = re.compile(r"\*{4}END OF INPUT\*{4}", re.IGNORECASE)
+_INPUT_ECHO_LINE_RE = re.compile(r"^\|\s*(\d+)>\s*(.*)$")
+_INPUT_BANG_RE = re.compile(r"^\|\s*\d+>\s*!\s*(.+)$")
+_INPUT_BLOCK_START_RE = re.compile(r"^\|\s*\d+>\s*%([A-Za-z][\w-]*)\b\s*(.*)$")
+_INPUT_BLOCK_END_RE = re.compile(r"^\|\s*\d+>\s*end\b", re.IGNORECASE)
+_INPUT_STRUCTURE_RE = re.compile(
+    r"^\|\s*\d+>\s*\*\s*(\w+)\s+(-?\d+)\s+(\d+)(?:\s+(\S+))?",
+    re.IGNORECASE,
+)
+
+
+def _normalize_job_path(path: Path) -> str:
+    """Return a stable path string suitable for per-job IDs."""
+    resolved = path.resolve()
+    try:
+        return resolved.relative_to(Path.cwd().resolve()).as_posix()
+    except ValueError:
+        return resolved.as_posix()
+
+
+def _coerce_input_value(value: str) -> Any:
+    """Best-effort scalar coercion for echoed input settings."""
+    cleaned = value.split("#", 1)[0].strip()
+    if not cleaned:
+        return ""
+
+    lowered = cleaned.lower()
+    if lowered == "true":
+        return True
+    if lowered == "false":
+        return False
+
+    try:
+        if any(ch in cleaned for ch in (".", "e", "E")):
+            return float(cleaned)
+        return int(cleaned)
+    except ValueError:
+        return cleaned
+
+
+def _parse_input_block_setting(content: str) -> Optional[tuple[str, Any]]:
+    """Parse a simple ORCA echoed-input setting line into key/value."""
+    stripped = content.strip()
+    if not stripped or stripped.startswith("!"):
+        return None
+
+    if "=" in stripped:
+        left, right = stripped.split("=", 1)
+        key = left.strip().split()[0].lower()
+        return key, _coerce_input_value(right)
+
+    parts = stripped.split(None, 1)
+    if len(parts) == 2:
+        return parts[0].lower(), _coerce_input_value(parts[1])
+    return parts[0].lower(), True
+
+
+def _parse_input_echo(lines: List[str]) -> Dict[str, Any]:
+    """Parse the echoed ORCA input block once for run-scoped metadata."""
+    input_end = next(
+        (idx for idx, line in enumerate(lines) if _INPUT_END_RE.search(line)),
+        len(lines),
+    )
+
+    data: Dict[str, Any] = {
+        "bang_lines": [],
+        "bang_tokens": [],
+        "block_names": [],
+        "blocks": {},
+    }
+
+    i = 0
+    while i < input_end:
+        line = lines[i]
+
+        name_match = _INPUT_NAME_RE.match(line)
+        if name_match:
+            data["input_name"] = name_match.group(1)
+            i += 1
+            continue
+
+        bang_match = _INPUT_BANG_RE.match(line)
+        if bang_match:
+            bang_line = bang_match.group(1).strip()
+            if bang_line:
+                data["bang_lines"].append(bang_line)
+                data["bang_tokens"].extend(bang_line.split())
+            i += 1
+            continue
+
+        structure_match = _INPUT_STRUCTURE_RE.match(line)
+        if structure_match:
+            data["structure_input"] = {
+                "kind": structure_match.group(1).lower(),
+                "charge": int(structure_match.group(2)),
+                "multiplicity": int(structure_match.group(3)),
+                "source": structure_match.group(4) or "",
+            }
+            i += 1
+            continue
+
+        block_match = _INPUT_BLOCK_START_RE.match(line)
+        if not block_match:
+            i += 1
+            continue
+
+        block_name = block_match.group(1).lower()
+        header_remainder = block_match.group(2).strip()
+        block: Dict[str, Any] = {
+            "name": block_name,
+            "raw_lines": [],
+            "settings": {},
+        }
+        if header_remainder:
+            block["inline"] = True
+            block["raw_lines"].append(header_remainder)
+            parsed = _parse_input_block_setting(header_remainder)
+            if parsed:
+                key, value = parsed
+                block["settings"][key] = value
+            data["block_names"].append(block_name)
+            data["blocks"][block_name] = block
+            i += 1
+            continue
+
+        j = i + 1
+        while j < input_end:
+            inner_line = lines[j]
+            if _INPUT_BLOCK_END_RE.match(inner_line):
+                break
+            inner_match = _INPUT_ECHO_LINE_RE.match(inner_line)
+            if inner_match:
+                content = inner_match.group(2).strip()
+                if content:
+                    block["raw_lines"].append(content)
+                    parsed = _parse_input_block_setting(content)
+                    if parsed:
+                        key, value = parsed
+                        block["settings"][key] = value
+            j += 1
+
+        data["block_names"].append(block_name)
+        data["blocks"][block_name] = block
+        i = j + 1 if j < input_end else j
+
+    if data["bang_lines"]:
+        data["bang_text"] = " ".join(data["bang_lines"])
+    return data
 
 
 def is_auxiliary_orca_file(path: str | Path) -> bool:
@@ -270,14 +426,25 @@ class ORCAParser:
             compression_opts=compression_opts,
         )
 
-    def to_markdown(self, path: str | Path) -> Path:
+    def to_markdown(
+        self,
+        path: str | Path,
+        *,
+        goat_max_relative_energy_kcal_mol=RENDER_OPTION_UNSET,
+        detail_scope: str = "auto",
+    ) -> Path:
         """Write a compact, AI-readable markdown report.
 
         Designed for feeding into LLMs for paper writing: maximum information
         density, publication-ready tables, spin diagnostics up front.
         """
         from .output.markdown_writer import write_markdown
-        return write_markdown(self.data, Path(path))
+        return write_markdown(
+            self.data,
+            Path(path),
+            goat_max_relative_energy_kcal_mol=goat_max_relative_energy_kcal_mol,
+            detail_scope=detail_scope,
+        )
 
     # ---------------------------------------------------------------- #
     # Class-level utilities                                             #
@@ -288,6 +455,9 @@ class ORCAParser:
         cls,
         parsers: "list[ORCAParser]",
         path: str | Path,
+        *,
+        goat_max_relative_energy_kcal_mol=RENDER_OPTION_UNSET,
+        detail_scope: str = "auto",
     ) -> Path:
         """Write a multi-molecule comparison markdown document.
 
@@ -300,7 +470,12 @@ class ORCAParser:
         """
         from .output.markdown_writer import write_comparison
         datasets = [p.data for p in parsers]
-        return write_comparison(datasets, Path(path))
+        return write_comparison(
+            datasets,
+            Path(path),
+            goat_max_relative_energy_kcal_mol=goat_max_relative_energy_kcal_mol,
+            detail_scope=detail_scope,
+        )
 
 
 
@@ -336,12 +511,15 @@ class ORCAParser:
             "has_symmetry": False,
             "is_surface_scan": False,
             "hf_type": "RHF",
+            "charge": 0,
             "multiplicity": 1,
             "n_atoms": 0,
             "atom_symbols": [],
             "source_path": str(self.filepath),
             "source_dir": str(self.filepath.parent),
             "source_stem": self.filepath.stem,
+            "source_relpath": _normalize_job_path(self.filepath),
+            "job_id": _normalize_job_path(self.filepath),
         }
 
         for ln in self._lines:
@@ -352,6 +530,10 @@ class ORCAParser:
                 ctx["is_uhf"] = m.group(1).upper() == "UHF"
 
             # Multiplicity
+            m = re.search(r"Total Charge\s+Charge\s+\.\.\.\.\s+(-?\d+)", ln)
+            if m:
+                ctx["charge"] = int(m.group(1))
+
             m = re.search(r"Multiplicity\s+Mult\s+\.\.\.\.\s+(\d+)", ln)
             if m:
                 ctx["multiplicity"] = int(m.group(1))
@@ -367,6 +549,19 @@ class ORCAParser:
             m = re.search(r"Number of atoms\s+\.\.\.\s+(\d+)", ln)
             if m:
                 ctx["n_atoms"] = int(m.group(1))
+
+        input_echo = _parse_input_echo(self._lines)
+        if input_echo:
+            ctx["input_echo"] = input_echo
+            structure_input = input_echo.get("structure_input") or {}
+            if "charge" in structure_input:
+                ctx["charge"] = structure_input["charge"]
+            if "multiplicity" in structure_input:
+                ctx["multiplicity"] = structure_input["multiplicity"]
+            if "bang_tokens" in input_echo:
+                bang_upper = {token.upper() for token in input_echo.get("bang_tokens", [])}
+                if "GOAT" in bang_upper:
+                    ctx["is_goat"] = True
 
         # Collect atom symbols from Cartesian coordinate block
         idx = -1
@@ -404,3 +599,19 @@ class ORCAParser:
             calc_type = str(meta.get("calculation_type", "")).strip().lower()
             if calc_type == "geometry optimization":
                 meta["calculation_type"] = "Excited-State Geometry Optimization"
+
+        # Freeze normalized job identity/state metadata once so downstream
+        # writers do not have to rediscover it from loosely shaped payloads.
+        job_snapshot = build_job_snapshot(results, context=self.context)
+        if job_snapshot is not None:
+            results["job_snapshot"] = job_snapshot.to_dict()
+
+        # Stepwise histories get the same treatment: GOAT/opt/scan/ES-opt
+        # should have one parse-time authority before any output code runs.
+        job_series = build_job_series(results)
+        if job_series is not None:
+            results["job_series"] = job_series.to_dict()
+
+        final_snapshot = build_final_snapshot(results, context=self.context)
+        if final_snapshot is not None:
+            results["final_snapshot"] = final_snapshot.to_dict()

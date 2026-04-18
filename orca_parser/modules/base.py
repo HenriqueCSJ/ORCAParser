@@ -64,6 +64,28 @@ class BaseModule(ABC):
         return [i for i, ln in enumerate(lines) if pat in ln.lower()]
 
     @staticmethod
+    def find_last_line(lines: list[str], pattern: str) -> int:
+        """Return index of last line containing *pattern* (case-insensitive), else -1."""
+        pat = pattern.lower()
+        for i in range(len(lines) - 1, -1, -1):
+            if pat in lines[i].lower():
+                return i
+        return -1
+
+    @staticmethod
+    def find_last_line_exact(
+        lines: list[str],
+        pattern: str,
+        start: int = 0,
+    ) -> int:
+        """Return index of last line whose stripped text equals *pattern* (case-insensitive), else -1."""
+        pat = pattern.strip().lower()
+        for i in range(len(lines) - 1, start - 1, -1):
+            if lines[i].strip().lower() == pat:
+                return i
+        return -1
+
+    @staticmethod
     def safe_float(value: str) -> Optional[float]:
         try:
             return float(value)

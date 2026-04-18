@@ -24,14 +24,14 @@ class SCFModule(BaseModule):
         data = {}
 
         # --- Total energy (from FINAL SINGLE POINT ENERGY) ---
-        idx = self.find_line(lines, "FINAL SINGLE POINT ENERGY")
+        idx = self.find_last_line(lines, "FINAL SINGLE POINT ENERGY")
         if idx != -1:
             m = re.search(r"FINAL SINGLE POINT ENERGY\s+([-\d.]+)", lines[idx])
             if m:
                 data["final_single_point_energy_Eh"] = float(m.group(1))
 
-        # --- Energy components from TOTAL SCF ENERGY block ---
-        idx = self.find_line(lines, "TOTAL SCF ENERGY")
+        # --- Energy components from the last TOTAL SCF ENERGY block ---
+        idx = self.find_last_line(lines, "TOTAL SCF ENERGY")
         if idx != -1:
             for ln in lines[idx: idx + 25]:
                 m = re.search(r"Total Energy\s+:\s+([-\d.]+)\s+Eh\s+([-\d.]+)\s+eV", ln)
@@ -62,7 +62,7 @@ class SCFModule(BaseModule):
 
         # --- DFT components ---
         dft = {}
-        idx_dft = self.find_line(lines, "DFT components:")
+        idx_dft = self.find_last_line(lines, "DFT components:")
         if idx_dft != -1:
             for ln in lines[idx_dft: idx_dft + 15]:
                 m = re.search(r"N\(Alpha\)\s+:\s+([\d.]+)\s+electrons", ln)
@@ -84,7 +84,7 @@ class SCFModule(BaseModule):
                 data["dft_components"] = dft
 
         # --- NL dispersion energy ---
-        idx_nl = self.find_line(lines, "NL    Energy:")
+        idx_nl = self.find_last_line(lines, "NL    Energy:")
         if idx_nl != -1:
             m = re.search(r"NL\s+Energy:\s+([-\d.]+)", lines[idx_nl])
             if m:
@@ -92,7 +92,7 @@ class SCFModule(BaseModule):
 
         # --- SCF convergence ---
         conv = {}
-        idx_c = self.find_line(lines, "SCF CONVERGENCE")
+        idx_c = self.find_last_line(lines, "SCF CONVERGENCE")
         if idx_c != -1:
             for ln in lines[idx_c: idx_c + 12]:
                 m = re.search(r"Last Energy change\s+\.\.\.\s+([-\d.e+]+)\s+Tolerance\s+:\s+([-\d.e+]+)", ln)
@@ -110,14 +110,14 @@ class SCFModule(BaseModule):
             data["scf_convergence"] = conv
 
         # Count SCF cycles
-        idx_success = self.find_line(lines, "SCF CONVERGED AFTER")
+        idx_success = self.find_last_line(lines, "SCF CONVERGED AFTER")
         if idx_success != -1:
             m = re.search(r"SCF CONVERGED AFTER\s+(\d+)\s+CYCLES", lines[idx_success])
             if m:
                 data["scf_cycles"] = int(m.group(1))
 
         # --- S**2 for UHF ---
-        idx_s2 = self.find_line(lines, "Expectation value of <S**2>")
+        idx_s2 = self.find_last_line(lines, "Expectation value of <S**2>")
         if idx_s2 != -1:
             m = re.search(r"Expectation value of <S\*\*2>\s+:\s+([\d.]+)", lines[idx_s2])
             if m:
