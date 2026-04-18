@@ -20,77 +20,24 @@ from typing import Any, Dict, List, Optional
 from .final_snapshot import build_final_snapshot
 from .job_series import build_job_series
 from .job_snapshot import build_job_snapshot
-from .render_options import RENDER_OPTION_UNSET
-from .modules import (
-    MetadataModule,
-    GeometryModule,
-    BasisSetModule,
-    SCFModule,
-    OrbitalEnergiesModule,
-    QROModule,
-    MullikenModule,
-    LoewdinModule,
-    MayerModule,
-    HirshfeldModule,
-    MBISModule,
-    CHELPGModule,
-    DipoleMomentModule,
-    SolvationModule,
-    TDDFTModule,
-    NBOModule,
-    EPRModule,
-    GeomOptModule,
-    GOATModule,
-    SurfaceScanModule,
+from .parser_section_registry import (
+    get_core_parser_section_keys,
+    get_parser_section_alias_map,
+    get_registered_parser_section_plugins,
+    iter_active_parser_section_plugins,
+    resolve_requested_parser_sections,
 )
+from .render_options import RENDER_OPTION_UNSET
 
-# ─────────────────────────────────────────────────────────────────
-# Registry: ordered list of (key, ModuleClass) pairs.
-# The key is used in the output dict.
-# ─────────────────────────────────────────────────────────────────
+# Legacy compatibility snapshots for external code that still imports these
+# names from ``orca_parser.parser``. The parser itself now consumes the
+# registry helpers directly.
 MODULE_REGISTRY: List[tuple] = [
-    ("metadata",         MetadataModule),
-    ("geometry",         GeometryModule),
-    ("basis_set",        BasisSetModule),
-    ("scf",              SCFModule),
-    ("orbital_energies", OrbitalEnergiesModule),
-    ("qro",              QROModule),
-    ("mulliken",         MullikenModule),
-    ("loewdin",          LoewdinModule),
-    ("mayer",            MayerModule),
-    ("hirshfeld",        HirshfeldModule),
-    ("mbis",             MBISModule),
-    ("chelpg",           CHELPGModule),
-    ("dipole",           DipoleMomentModule),
-    ("solvation",        SolvationModule),
-    ("tddft",            TDDFTModule),
-    ("nbo",              NBOModule),
-    ("epr",              EPRModule),
-    ("goat",             GOATModule),
-    ("surface_scan",     SurfaceScanModule),
-    ("geom_opt",         GeomOptModule),
+    (plugin.key, plugin.module_class)
+    for plugin in get_registered_parser_section_plugins()
 ]
-
-# Sections always included regardless of the `sections` argument.
-_CORE_SECTIONS: set = {"metadata", "geometry", "basis_set", "scf"}
-
-# Convenience aliases that expand to lists of section keys.
-SECTION_ALIASES: Dict[str, List[str]] = {
-    "all":        [key for key, _ in MODULE_REGISTRY],
-    "charges":    ["mulliken", "loewdin", "hirshfeld", "mbis", "chelpg"],
-    "population": ["mulliken", "loewdin", "mayer"],
-    "mos":        ["orbital_energies", "qro"],
-    "bonds":      ["mayer", "loewdin"],
-    "nbo":        ["nbo"],
-    "dipole":     ["dipole"],
-    "solvation":  ["solvation"],
-    "tddft":      ["tddft"],
-    "geometry":   ["geometry", "basis_set"],
-    "epr":        ["epr"],
-    "goat":       ["goat"],
-    "scan":       ["surface_scan"],
-    "opt":        ["geom_opt"],
-}
+_CORE_SECTIONS: set = get_core_parser_section_keys()
+SECTION_ALIASES: Dict[str, List[str]] = get_parser_section_alias_map()
 
 _AUXILIARY_ATOM_FILE_RE = re.compile(
     r"_atom\d+\.(?:out|log)$",
@@ -253,26 +200,8 @@ def is_auxiliary_orca_file(path: str | Path) -> bool:
 
 
 def _resolve_sections(sections) -> Optional[set]:
-    """Expand aliases and return the full set of section keys to run.
-
-    Returns None to indicate 'run everything'.
-    """
-    if sections is None:
-        return None
-    if isinstance(sections, str):
-        sections = [sections]
-    requested: set = set()
-    for token in sections:
-        token = token.lower().strip()
-        if token == "all":
-            return None  # short-circuit
-        if token in SECTION_ALIASES:
-            requested.update(SECTION_ALIASES[token])
-        else:
-            requested.add(token)
-    # Always add core sections
-    requested.update(_CORE_SECTIONS)
-    return requested
+    """Compatibility wrapper around the parser-section registry."""
+    return resolve_requested_parser_sections(sections)
 
 
 class ORCAParser:
@@ -351,16 +280,14 @@ class ORCAParser:
         }
         results["context"] = dict(self.context)
 
-        for key, ModClass in MODULE_REGISTRY:
-            if active is not None and key not in active:
-                continue
+        for plugin in iter_active_parser_section_plugins(active):
             try:
-                mod = ModClass(self.context)
+                mod = plugin.module_class(self.context)
                 result = mod.parse(self._lines)
                 if result is not None:
-                    results[key] = result
+                    results[plugin.key] = result
             except Exception as exc:  # noqa: BLE001
-                results[f"{key}_parse_error"] = str(exc)
+                results[f"{plugin.key}_parse_error"] = str(exc)
 
         self._postprocess_results(results)
         results["context"] = dict(self.context)

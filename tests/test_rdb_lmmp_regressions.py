@@ -9,8 +9,15 @@ import pytest
 
 from orca_parser import ORCAParser
 import orca_parser.job_family_registry as family_registry
+import orca_parser.output.csv_section_registry as csv_section_registry
+import orca_parser.output.markdown_section_registry as markdown_section_registry
+import orca_parser.parser_section_registry as section_registry
 from orca_parser.job_family_registry import CalculationFamilyPlugin
 from orca_parser.job_snapshot import build_job_snapshot
+from orca_parser.modules.base import BaseModule
+from orca_parser.output.csv_section_registry import CSVSectionPlugin
+from orca_parser.output.markdown_section_registry import MarkdownSectionPlugin
+from orca_parser.parser_section_registry import ParserSectionAlias, ParserSectionPlugin
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -815,6 +822,136 @@ def test_calculation_family_registry_allows_plugin_style_family_extensions(
     assert plugin_row["source"] == "registry"
     assert plugin_row["family"] == "single_point"
     assert "TDDFT/RDB_LMMP_TDDFT_CH2Cl2.out" in comparison_text
+
+
+def test_parser_section_registry_allows_plugin_style_section_extensions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_plugins = list(section_registry.get_registered_parser_section_plugins())
+    original_aliases = list(section_registry.get_registered_parser_section_aliases())
+    monkeypatch.setattr(
+        section_registry,
+        "_PARSER_SECTION_PLUGINS",
+        list(original_plugins),
+    )
+    monkeypatch.setattr(
+        section_registry,
+        "_PARSER_SECTION_ALIASES",
+        list(original_aliases),
+    )
+
+    class RegistrySentinelModule(BaseModule):
+        name = "registry_sentinel"
+
+        def parse(self, lines: list[str]):
+            return {
+                "source": "registry",
+                "terminated_normally": any(
+                    "ORCA TERMINATED NORMALLY" in line
+                    for line in lines
+                ),
+            }
+
+    section_registry.register_parser_section_plugin(
+        ParserSectionPlugin(
+            key="registry_sentinel",
+            module_class=RegistrySentinelModule,
+        )
+    )
+    section_registry.register_parser_section_alias(
+        ParserSectionAlias(
+            name="registry_demo",
+            section_keys=("registry_sentinel",),
+        )
+    )
+
+    parser = ORCAParser(TDDFT_OUT)
+    data = parser.parse(sections=["registry_demo"])
+
+    assert data["registry_sentinel"]["source"] == "registry"
+    assert data["registry_sentinel"]["terminated_normally"] is True
+    assert "metadata" in data
+    assert "geometry" in data
+    assert "basis_set" in data
+    assert "scf" in data
+
+
+def test_markdown_section_registry_allows_plugin_style_section_extensions(
+    monkeypatch: pytest.MonkeyPatch,
+    tddft_parser: ORCAParser,
+    tmp_path: Path,
+) -> None:
+    original_plugins = list(markdown_section_registry.get_registered_markdown_section_plugins())
+    monkeypatch.setattr(
+        markdown_section_registry,
+        "_MARKDOWN_SECTION_PLUGINS",
+        list(original_plugins),
+    )
+
+    markdown_section_registry.register_markdown_section_plugin(
+        MarkdownSectionPlugin(
+            key="registry_markdown",
+            order=15,
+            render_molecule_blocks=lambda *_args: [
+                "## Registry Markdown Section\nregistry-markdown-sentinel"
+            ],
+            render_comparison_blocks=lambda *_args: [
+                "## Registry Markdown Comparison\nregistry-markdown-comparison-sentinel"
+            ],
+        )
+    )
+
+    markdown_path = tmp_path / "registry_markdown.md"
+    comparison_path = tmp_path / "registry_markdown_comparison.md"
+
+    tddft_parser.to_markdown(markdown_path)
+    ORCAParser.compare([tddft_parser], comparison_path)
+
+    markdown_text = markdown_path.read_text(encoding="utf-8")
+    comparison_text = comparison_path.read_text(encoding="utf-8")
+
+    assert "## Registry Markdown Section" in markdown_text
+    assert "registry-markdown-sentinel" in markdown_text
+    assert "## Registry Markdown Comparison" in comparison_text
+    assert "registry-markdown-comparison-sentinel" in comparison_text
+
+
+def test_csv_section_registry_allows_plugin_style_section_extensions(
+    monkeypatch: pytest.MonkeyPatch,
+    tddft_parser: ORCAParser,
+    tmp_path: Path,
+) -> None:
+    original_plugins = list(csv_section_registry.get_registered_csv_section_plugins())
+    monkeypatch.setattr(
+        csv_section_registry,
+        "_CSV_SECTION_PLUGINS",
+        list(original_plugins),
+    )
+
+    csv_section_registry.register_csv_section_plugin(
+        CSVSectionPlugin(
+            key="registry_csv",
+            order=15,
+            render_files=lambda _data, directory, stem, write_csv: [
+                write_csv(
+                    directory,
+                    f"{stem}_registry_csv.csv",
+                    [{"source": "registry", "kind": "common"}],
+                    ["source", "kind"],
+                )
+            ],
+        )
+    )
+
+    csv_dir = tmp_path / "registry_csv"
+    tddft_parser.to_csv(csv_dir)
+
+    plugin_csv_path = csv_dir / "RDB_LMMP_TDDFT_CH2Cl2_registry_csv.csv"
+    with plugin_csv_path.open(encoding="utf-8", newline="") as handle:
+        plugin_row = next(csv.DictReader(handle))
+
+    assert plugin_row["source"] == "registry"
+    assert plugin_row["kind"] == "common"
 
 
 def test_goat_markdown_cutoff_can_be_overridden(goat_full_parser: ORCAParser) -> None:

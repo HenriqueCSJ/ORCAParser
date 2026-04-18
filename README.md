@@ -339,6 +339,8 @@ The codebase now has normalized parse-time views that downstream tooling should 
 These layers exist to prevent repeated "first block vs last block" bugs and to keep Markdown, CSV, and CLI summaries aligned.
 
 Calculation-family output behavior is also moving toward registry-driven dispatch, so new families can be added with less scattered wiring than before.
+Parser-section registration now follows the same direction through `parser_section_registry.py`, so new sections and aliases can be added without editing `parser.py`.
+Common standalone/comparison markdown sections now register through `output/markdown_section_registry.py`, and common CSV exports register through `output/csv_section_registry.py`, so new output sections can be added without extending the top-level writer lists.
 
 ## Important ORCA-specific behavior
 

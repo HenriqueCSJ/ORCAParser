@@ -12,7 +12,10 @@ class BaseModule(ABC):
     Abstract base class for all parser modules.
 
     To add a new property/section, subclass BaseModule, implement `parse()`,
-    and register the subclass in parser.py's MODULE_REGISTRY.
+    and register the subclass through ``orca_parser.parser_section_registry``.
+
+    That registry now owns parse order, core-section behavior, and section
+    aliases so new parser sections do not need to edit ``parser.py`` directly.
     """
 
     # Override in subclasses to give a human-readable name

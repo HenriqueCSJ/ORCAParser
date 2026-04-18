@@ -67,6 +67,11 @@ from .markdown_sections_spectroscopy import (
     render_tddft_section as _render_spectroscopy_tddft_section,
 )
 from .markdown_sections_state import render_symmetry_section as _render_state_symmetry_section
+from .markdown_section_registry import (
+    MarkdownRenderHelpers as _MarkdownRenderHelpers,
+    iter_comparison_markdown_section_plugins as _iter_comparison_markdown_section_plugins,
+    iter_molecule_markdown_section_plugins as _iter_molecule_markdown_section_plugins,
+)
 
 
 AU_TO_DEBYE = 2.541746473
@@ -92,7 +97,7 @@ def write_markdown(
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
-        _render_molecule(
+        _render_molecule_registry(
             data,
             render_options=render_options,
         ),
@@ -117,13 +122,194 @@ def write_comparison(
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
-        _render_comparison(
+        _render_comparison_registry(
             datasets,
             render_options=render_options,
         ),
         encoding="utf-8",
     )
     return path
+
+
+def _markdown_render_helpers(heading_level: int) -> _MarkdownRenderHelpers:
+    """Bundle shared formatting helpers for registry-driven markdown sections."""
+    return _MarkdownRenderHelpers(
+        heading_level=heading_level,
+        format_number=_f,
+        make_table=_table,
+        render_matrix=_render_matrix,
+        get_dipole_vector=_get_dipole_vector,
+        format_vector=_format_vector,
+        format_orbital_energy_with_irrep=_format_orbital_energy_with_irrep,
+        compact_irrep_counts=_compact_irrep_counts,
+        render_irrep_orbital_window=_render_irrep_orbital_window,
+    )
+
+
+def _render_molecule_registry(
+    data: Dict[str, Any],
+    heading_level: int = 1,
+    display_label: Optional[str] = None,
+    source_display: Optional[str] = None,
+    render_options: Optional[RenderOptions] = None,
+) -> str:
+    """Registry-driven single-molecule markdown report."""
+    render_options = render_options or _build_render_options(comparison=False)
+    H = "#" * heading_level
+    H2 = "#" * (heading_level + 1)
+
+    blocks: List[str] = []
+
+    scf = data.get("scf", {})
+    src_path = Path(data.get("source_file", "unknown"))
+    src = source_display or src_path.name
+
+    job = display_label or _get_job_name(data) or src_path.stem
+    charge = _get_charge(data)
+    mult = _get_multiplicity(data)
+    state_label = _electronic_state_label(data)
+    sym_label = _symmetry_inline_label(data)
+    state = f"  state={state_label}" if state_label else ""
+    sym = f"  symmetry={sym_label}" if sym_label else ""
+    job_id = _get_job_id(data)
+    blocks.append(
+        f"{H} {job}\n"
+        f"`{_get_method_header_label(data)}` | charge={charge} mult={mult}{state}{sym}  \n"
+        f"source: `{src}` | id: `{job_id}`"
+    )
+
+    scf_lines = []
+    energy = scf.get("final_single_point_energy_Eh")
+    if energy is not None:
+        scf_lines.append(f"**Energy:** {energy:.10f} Eh")
+    if "dispersion_correction_Eh" in scf:
+        scf_lines.append(f"**Dispersion (D):** {scf['dispersion_correction_Eh']:.8f} Eh")
+    if "s_squared" in scf:
+        s_squared = scf["s_squared"]
+        ideal_s_squared = scf.get("s_squared_ideal", "?")
+        contamination = (
+            abs(s_squared - float(ideal_s_squared))
+            if isinstance(ideal_s_squared, (int, float))
+            else None
+        )
+        warning = "  âš ï¸ *contamination > 0.01*" if contamination and contamination > 0.01 else ""
+        scf_lines.append(f"**âŸ¨SÂ²âŸ©:** {s_squared:.6f} (ideal {ideal_s_squared}){warning}")
+
+    dipole = _get_final_dipole(data)
+    if dipole.get("magnitude_Debye") is not None:
+        vector = _get_dipole_vector(dipole, "total_dipole", "Debye")
+        xyz = ""
+        if vector:
+            xyz = (
+                f"  ({vector.get('x', 0.0):.4f}, {vector.get('y', 0.0):.4f}, "
+                f"{vector.get('z', 0.0):.4f}) D"
+            )
+        scf_lines.append(f"**Dipole:** {dipole['magnitude_Debye']:.4f} D{xyz}")
+
+    if scf_lines:
+        blocks.append("\n".join(scf_lines))
+
+    helpers = _markdown_render_helpers(heading_level)
+    # Common standalone sections now come from the registry rather than a
+    # giant writer-local branch chain. The writer keeps only the report shell.
+    for plugin in _iter_molecule_markdown_section_plugins():
+        if plugin.order >= 50:
+            continue
+        blocks.extend(plugin.render_molecule_blocks(data, helpers, render_options))
+
+    family_plugin = _get_calculation_family_plugin(data)
+    if family_plugin.render_markdown_sections is not None:
+        for heading, body in family_plugin.render_markdown_sections(
+            data,
+            _f,
+            _table,
+            render_options,
+        ):
+            if body:
+                blocks.append(f"{H2} {heading}\n{body}")
+
+    for plugin in _iter_molecule_markdown_section_plugins():
+        if plugin.order < 50:
+            continue
+        blocks.extend(plugin.render_molecule_blocks(data, helpers, render_options))
+
+    return "\n\n".join(blocks) + "\n"
+
+
+def _render_comparison_registry(
+    datasets: List[Dict[str, Any]],
+    *,
+    render_options: Optional[RenderOptions] = None,
+) -> str:
+    """Registry-driven comparison markdown report."""
+    render_options = render_options or _build_render_options(comparison=True)
+    if not datasets:
+        return "# ORCA Comparison\n\n*No data provided.*\n"
+
+    blocks: List[str] = ["# ORCA Calculation Comparison"]
+    labels = _comparison_labels(datasets)
+    helpers = _markdown_render_helpers(1)
+
+    comparison_renderers = []
+    # Comparison sections share the same registry idea. Family-specific hooks
+    # and common sections now meet in one ordered render queue.
+    for plugin in _iter_comparison_markdown_section_plugins():
+        comparison_renderers.append(
+            (
+                plugin.order,
+                plugin.key,
+                lambda section_plugin=plugin: section_plugin.render_comparison_blocks(
+                    datasets,
+                    labels,
+                    helpers,
+                    render_options,
+                ),
+            )
+        )
+
+    for plugin in _iter_active_comparison_family_plugins(datasets):
+        comparison_renderers.append(
+            (
+                plugin.comparison_order,
+                plugin.family,
+                lambda family_plugin=plugin: [
+                    (heading, body)
+                    for heading, body in family_plugin.render_comparison_sections(
+                        datasets,
+                        labels,
+                        _f,
+                        _table,
+                        render_options,
+                    )
+                    if body
+                ],
+            )
+        )
+
+    for _order, _key, render_blocks in sorted(
+        comparison_renderers,
+        key=lambda item: (item[0], item[1]),
+    ):
+        for block in render_blocks():
+            if isinstance(block, tuple):
+                heading, body = block
+                blocks.append(f"## {heading}\n{body}")
+            else:
+                blocks.append(block)
+
+    blocks.append("---\n# Individual Reports")
+    for label, dataset in zip(labels, datasets):
+        blocks.append(
+            _render_molecule_registry(
+                dataset,
+                heading_level=2,
+                display_label=label,
+                source_display=label,
+                render_options=render_options,
+            )
+        )
+
+    return "\n\n".join(blocks) + "\n"
 
 
 # ─────────────────────────────────────────────────────────────────────────────

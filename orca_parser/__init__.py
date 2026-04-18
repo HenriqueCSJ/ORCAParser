@@ -9,6 +9,10 @@ Quick start::
     data = p.parse()
     p.to_json("my_calc.json")
     p.to_csv("csv_output/")
+
+The package still exposes ``MODULE_REGISTRY`` for compatibility, but new
+parser-section extensions should register through
+``orca_parser.parser_section_registry`` instead of editing parser globals.
 """
 
 from .parser import ORCAParser, MODULE_REGISTRY
