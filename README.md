@@ -339,6 +339,82 @@ The codebase now has normalized parse-time views that downstream tooling should 
 These layers exist to prevent repeated "first block vs last block" bugs and to keep Markdown, CSV, and CLI summaries aligned.
 
 Calculation-family output behavior is also moving toward registry-driven dispatch, so new families can be added with less scattered wiring than before.
+Parser-section registration now follows the same direction through `parser_section_registry.py`, so new sections and aliases can be added without editing `parser.py`.
+Common standalone/comparison markdown sections now register through `output/markdown_section_registry.py`, and common CSV exports register through `output/csv_section_registry.py`, so new output sections can be added without extending the top-level writer lists.
+
+### How to incorporate a new module now
+
+The recommended path is now an explicit plugin bundle with automatic
+discovery.
+
+1. Add a new module file under `orca_parser/modules/`.
+2. Subclass `BaseModule` and implement `parse()`.
+3. Export a `PLUGIN_BUNDLE` that declares what the module contributes:
+   - parser sections
+   - section aliases
+   - optional calculation-family behavior
+   - optional Markdown / CSV section hooks
+   - optional CLI-visible plugin options
+   - short documentation metadata
+4. Let autodiscovery register the bundle into the existing registries.
+
+That means a new feature can usually arrive by *adding one file* instead of
+editing the top-level parser, Markdown writer, CSV writer, and help text in
+parallel.
+
+Example shape:
+
+```python
+from orca_parser.modules.base import BaseModule
+from orca_parser.plugin_bundle import PluginBundle, PluginMetadata, PluginOption
+from orca_parser.parser_section_registry import ParserSectionAlias, ParserSectionPlugin
+
+
+class MyNewModule(BaseModule):
+    name = "my_new_section"
+
+    def parse(self, lines):
+        return {"example": True}
+
+
+PLUGIN_BUNDLE = PluginBundle(
+    metadata=PluginMetadata(
+        key="my_new_plugin",
+        name="My New Plugin",
+        short_help="Parse my new ORCA section.",
+        docs_path="docs/my_new_plugin.md",
+        examples=("orca_parser calc.out --sections my_new_section",),
+    ),
+    parser_sections=(
+        ParserSectionPlugin(key="my_new_section", module_class=MyNewModule),
+    ),
+    parser_aliases=(
+        ParserSectionAlias(name="my_new_alias", section_keys=("my_new_section",)),
+    ),
+    options=(
+        PluginOption(
+            dest="my_new_threshold",
+            flags=("--my-new-threshold",),
+            help="Example plugin-owned CLI option.",
+            default=0.1,
+            type=float,
+        ),
+    ),
+)
+```
+
+The parser/CLI bootstrap layer discovers `PLUGIN_BUNDLE` objects under
+`orca_parser.modules` automatically. Plugin-owned option values are exposed to
+modules through `self.context["plugin_options"]` and carried into parsed data
+as `data["plugin_options"]`, so future family/render hooks can use the same
+declarative option channel.
+
+If the new data is authoritative final-step or stepwise history data, wire it
+into the normalized parse-time layers instead of teaching each writer how to
+guess it from raw payloads:
+- `final_snapshot` for final converged properties
+- `job_series` for stepwise histories
+- `job_snapshot` for normalized job identity / classification
 
 ## Important ORCA-specific behavior
 

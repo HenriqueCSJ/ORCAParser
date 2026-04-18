@@ -12,7 +12,16 @@ class BaseModule(ABC):
     Abstract base class for all parser modules.
 
     To add a new property/section, subclass BaseModule, implement `parse()`,
-    and register the subclass in parser.py's MODULE_REGISTRY.
+    and either:
+
+    * export a ``PLUGIN_BUNDLE`` from a module discovered under
+      ``orca_parser.modules``, or
+    * register the section manually through
+      ``orca_parser.parser_section_registry``.
+
+    The explicit plugin-bundle path is the preferred development workflow
+    because it lets one module announce its parser section, aliases, output
+    hooks, options, and docs metadata without editing central orchestrators.
     """
 
     # Override in subclasses to give a human-readable name
