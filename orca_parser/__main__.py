@@ -241,7 +241,7 @@ def parse_args():
                    help="Disable markdown output")
     p.add_argument("--compare",  dest="write_compare",  action="store_true",  default=False,
                    help="Write multi-molecule comparison document (comparison.md). "
-                        "Implies --markdown. Accepts directories — searches "
+                        "Implies --markdown. Accepts directories - searches "
                         "recursively for *.out and *.log files, skipping "
                         "auxiliary *_atomNN helper outputs.")
     p.add_argument(
@@ -366,7 +366,7 @@ def _print_summary(data: dict, path: Path) -> None:
         E = scf.get("final_single_point_energy_Eh") or scf.get("total_energy_Eh")
         print(f"\n  Energy (Eh)  : {E}")
         if "s_squared" in scf:
-            print(f"  <S²>         : {scf['s_squared']:.6f}  "
+            print(f"  <S^2>        : {scf['s_squared']:.6f}  "
                   f"(ideal {scf.get('s_squared_ideal', 'N/A')})")
 
     oe = _get_final_orbital_energies(data)
@@ -395,7 +395,7 @@ def _print_summary(data: dict, path: Path) -> None:
         if gopt.get("final_energy_Eh") is not None:
             print(f"  Opt energy   : {gopt['final_energy_Eh']:.10f} Eh")
         if gopt.get("rmsd_initial_to_final_ang") is not None:
-            print(f"  RMSD i→f     : {gopt['rmsd_initial_to_final_ang']:.6f} Å")
+            print(f"  RMSD i->f    : {gopt['rmsd_initial_to_final_ang']:.6f} A")
 
     scan = data.get("surface_scan", {})
     if scan:
@@ -483,7 +483,7 @@ def main():
                                      strip_none=strip, compress=gzip_on)
             if not args.quiet:
                 size = written.stat().st_size
-                print(f"→ {written.name} ({size/1024:.1f} KB)", end="  ", flush=True)
+                print(f"-> {written.name} ({size/1024:.1f} KB)", end="  ", flush=True)
 
         # ── HDF5 ────────────────────────────────────────────────────
         if args.write_hdf5:
@@ -493,14 +493,14 @@ def main():
                                      compression_opts=args.h5_level)
             if not args.quiet:
                 size = written.stat().st_size
-                print(f"→ {written.name} ({size/1024:.1f} KB)", end="  ", flush=True)
+                print(f"-> {written.name} ({size/1024:.1f} KB)", end="  ", flush=True)
 
         # ── CSV ─────────────────────────────────────────────────────
         if args.write_csv:
             csv_dir = outdir / (fp.stem + "_csv")
             files = parser.to_csv(csv_dir)
             if not args.quiet:
-                print(f"→ {csv_dir.name}/ ({len(files)} tables)", end="  ", flush=True)
+                print(f"-> {csv_dir.name}/ ({len(files)} tables)", end="  ", flush=True)
 
         # ── Markdown (per file) ──────────────────────────────────────
         if args.write_markdown:
@@ -518,7 +518,7 @@ def main():
                 )
             if not args.quiet:
                 size = written.stat().st_size
-                print(f"→ {written.name} ({size/1024:.1f} KB)", end="", flush=True)
+                print(f"-> {written.name} ({size/1024:.1f} KB)", end="", flush=True)
 
         if not args.quiet:
             print()
@@ -545,7 +545,7 @@ def main():
             )
         if not args.quiet:
             size = written.stat().st_size
-            print(f"\n→ comparison: {written.name} ({size/1024:.1f} KB)")
+            print(f"\n-> comparison: {written.name} ({size/1024:.1f} KB)")
 
 
 if __name__ == "__main__":

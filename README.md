@@ -21,7 +21,7 @@ It is designed for real multistep ORCA outputs, not just ideal single-point jobs
 - GOAT ensemble parsing with populations, energy windows, global minimum, and ensemble thermochemistry
 - Excited-state geometry optimization support with target-root tracking and root-follow metadata
 - TDDFT/NTO handling that preserves ORCA root numbering while also exposing energy rank
-- Symmetry-aware parsing for UseSym jobs, including point-group and irrep metadata
+- Symmetry-aware parsing for UseSym jobs, with explicit no-symmetry normalization when ORCA defaults symmetry off
 - Recursive directory parsing for `*.out` and `*.log`, while skipping ORCA helper/ECP files such as `*_atom83.out`
 - Normalized parse-time views for downstream development: `job_snapshot`, `job_series`, and `final_snapshot`
 
@@ -204,7 +204,7 @@ The TDDFT module keeps ORCA's printed root numbering and adds extra metadata ins
 
 - `state` = ORCA printed root number
 - `energy_rank` = where that root falls after sorting by excitation energy
-- NTO mapping uses an energy-matching tolerance of `+-0.005 eV`
+- NTO mapping uses an energy-matching tolerance of `+/-0.005 eV`
 
 Fixed parser-level thresholds:
 
@@ -447,6 +447,7 @@ guess it from raw payloads:
 - Excited-state optimizations export target-state metadata and root-follow history when available
 - Geometry-dependent properties for multistep jobs come from the final converged block, not the first printed block
 - UseSym jobs report point-group and irrep-group information separately when ORCA prints both
+- If neither `UseSym` nor an explicit `%sym` request enables symmetry, the normalized input intent is treated as symmetry-off to match ORCA's default behavior
 - GOAT jobs are exported as GOAT calculations, not ordinary single points or optimizations
 - Relaxed surface scans are treated as scan jobs, not ordinary geometry optimizations
 
