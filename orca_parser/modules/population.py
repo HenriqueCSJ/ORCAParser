@@ -52,6 +52,22 @@ def _find_last_exact_label(lines: List[str], label: str, start: int = 0) -> int:
     return -1
 
 
+def _find_last_label_starting_with(lines: List[str], label_prefix: str, start: int = 0) -> int:
+    """Return the last line whose stripped uppercase text starts with *label_prefix*.
+
+    ORCA sometimes extends headers such as ``MULLIKEN REDUCED ORBITAL CHARGES``
+    to ``... AND SPIN POPULATIONS`` in open-shell jobs. Prefix matching keeps
+    the parser stable across those variants without weakening the exact-match
+    behavior for unrelated headers.
+    """
+
+    target = label_prefix.strip().upper()
+    for i in range(len(lines) - 1, start - 1, -1):
+        if lines[i].strip().upper().startswith(target):
+            return i
+    return -1
+
+
 def _parse_reduced_orbital_charges(
     lines: List[str],
     start: int,
@@ -170,7 +186,7 @@ class MullikenModule(BaseModule):
                 data["sum_of_charges"] = float(m.group(1))
 
         # --- Reduced orbital charges ---
-        idx_red = _find_last_exact_label(lines, "MULLIKEN REDUCED ORBITAL CHARGES")
+        idx_red = _find_last_label_starting_with(lines, "MULLIKEN REDUCED ORBITAL CHARGES")
         if idx_red != -1:
             idx_charge = _find_exact_label(lines, "CHARGE", idx_red)
             charge_start = idx_charge + 1 if idx_charge != -1 else idx_red + 2
@@ -269,7 +285,7 @@ class LoewdinModule(BaseModule):
         atoms = _parse_atomic_values(lines, idx + 2, n_cols=2 if is_uhf else 1)
         data["atomic_charges"] = atoms
 
-        idx_red = _find_last_exact_label(lines, "LOEWDIN REDUCED ORBITAL CHARGES")
+        idx_red = _find_last_label_starting_with(lines, "LOEWDIN REDUCED ORBITAL CHARGES")
         if idx_red != -1:
             idx_charge = _find_exact_label(lines, "CHARGE", idx_red)
             charge_start = idx_charge + 1 if idx_charge != -1 else idx_red + 2

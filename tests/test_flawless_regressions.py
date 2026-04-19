@@ -224,8 +224,8 @@ def test_tddft_symmetry_and_dominant_excitations_are_preserved(
     assert "## Dipole Moment" in text
     assert "**Total magnitude:** 0.2769 D | 0.108925 a.u." in text
     assert "## TDDFT Excited States" in text
-    assert "| State | Symmetry | E (eV)" in text
-    assert '| 1     | A"' in text
+    assert "| Root | E-rank | Symmetry | E (eV)" in text
+    assert '| 1    | 1      | A"' in text
     assert "23a (17-A') -> 24a (8-A\")" in text
     assert "### Absorption Spectrum (Electric Dipole)" in text
     assert "### Absorption Spectrum (Velocity Dipole)" in text
@@ -286,8 +286,8 @@ def test_markdown_renders_natural_electron_configurations_and_cmo_character(
     assert "π*(C7-C8)" in text
     assert "π(C7-C8)" in text
     assert "CMO/NBO character (>= 10%)" in text
-    assert "| 11    |" in text
-    assert "| 100   |" in text
+    assert "| 100     | 101    | occ" in text
+    assert "| 110     | 111    | vir" in text
     assert "107a -> 111a" in text
     assert "109a -> 111a" in text
     assert "38.4%" in text
