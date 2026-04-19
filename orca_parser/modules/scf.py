@@ -7,6 +7,7 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, Optional
 
+from ..job_family_registry import CalculationFamilyPlugin
 from ..parser_section_plugin import ParserSectionPlugin
 from ..plugin_bundle import PluginBundle, PluginMetadata
 from .base import BaseModule
@@ -136,21 +137,56 @@ class SCFModule(BaseModule):
         return data if data else None
 
 
-PLUGIN_BUNDLE = PluginBundle(
-    metadata=PluginMetadata(
-        key="scf_section",
-        name="SCF Section",
-        short_help="Built-in SCF parser section owned by scf.py.",
-        description=(
-            "Self-registering built-in parser section for final single-point "
-            "energy, SCF convergence metrics, and SCF/DFT energy components."
+def _matches_single_point(
+    meta: Dict[str, Any],
+    data: Dict[str, Any],
+    context: Dict[str, Any],
+    deltascf: Dict[str, Any],
+    excited_state_optimization: Dict[str, Any],
+) -> bool:
+    """Match the ordinary single-point family from the SCF-owning module."""
+
+    del data, context, deltascf, excited_state_optimization
+    calc_type = str(meta.get("calculation_type", "")).strip().lower()
+    return "single point" in calc_type or calc_type == ""
+
+
+PLUGIN_BUNDLES = (
+    PluginBundle(
+        metadata=PluginMetadata(
+            key="scf_section",
+            name="SCF Section",
+            short_help="Built-in SCF parser section owned by scf.py.",
+            description=(
+                "Self-registering built-in parser section for final single-point "
+                "energy, SCF convergence metrics, and SCF/DFT energy components."
+            ),
+            docs_path="README.md",
+            examples=(
+                "orca_parser job.out --sections scf",
+            ),
         ),
-        docs_path="README.md",
-        examples=(
-            "orca_parser job.out --sections scf",
+        parser_sections=(
+            ParserSectionPlugin("scf", SCFModule, always_include=True),
         ),
     ),
-    parser_sections=(
-        ParserSectionPlugin("scf", SCFModule, always_include=True),
+    PluginBundle(
+        metadata=PluginMetadata(
+            key="single_point",
+            name="Single Point Family",
+            short_help="Built-in single-point calculation family owned by scf.py.",
+            description=(
+                "Self-registering built-in calculation family for ordinary "
+                "single-point ORCA jobs."
+            ),
+            docs_path="README.md",
+        ),
+        calculation_families=(
+            CalculationFamilyPlugin(
+                family="single_point",
+                default_calculation_label="Single Point",
+                matcher=_matches_single_point,
+            ),
+        ),
     ),
 )

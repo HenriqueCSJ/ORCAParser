@@ -1106,6 +1106,7 @@ def test_builtin_families_are_discovered_from_their_modules() -> None:
 
     assert "geometry_sections" in bundle_keys
     assert "scf_section" in bundle_keys
+    assert "single_point" in bundle_keys
     assert "population_sections" in bundle_keys
     assert "orbital_sections" in bundle_keys
     assert "dipole_section" in bundle_keys
@@ -1123,6 +1124,10 @@ def test_builtin_families_are_discovered_from_their_modules() -> None:
     )
     assert (
         plugin_discovery.get_registered_plugin_source("scf_section")
+        == "orca_parser.modules.scf"
+    )
+    assert (
+        plugin_discovery.get_registered_plugin_source("single_point")
         == "orca_parser.modules.scf"
     )
     assert (
@@ -1172,6 +1177,7 @@ def test_builtin_families_are_discovered_from_their_modules() -> None:
 
     assert bundles["orbital_sections"].markdown_sections
     assert bundles["orbital_sections"].csv_sections
+    assert bundles["single_point"].calculation_families
     assert bundles["geometry_sections"].markdown_sections
     assert bundles["geometry_sections"].csv_sections
     assert bundles["dipole_section"].markdown_sections

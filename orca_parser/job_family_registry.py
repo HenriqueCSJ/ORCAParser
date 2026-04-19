@@ -236,31 +236,3 @@ def iter_active_comparison_family_plugins(
         if plugin.family in active_families and plugin.render_comparison_sections is not None
     ]
     return sorted(plugins, key=lambda plugin: (plugin.comparison_order, plugin.family))
-
-
-def _matches_single_point(
-    meta: Dict[str, Any],
-    data: Dict[str, Any],
-    context: Dict[str, Any],
-    deltascf: Dict[str, Any],
-    excited_state_optimization: Dict[str, Any],
-) -> bool:
-    """Fallback family for ordinary single-point-like jobs.
-
-    More specialized families should self-register from the modules that own
-    their semantics. This central fallback exists so the parser always has a
-    safe default family even when no specialized plugin claims a job.
-    """
-
-    del data, context, deltascf, excited_state_optimization
-    calc_type = str(meta.get("calculation_type", "")).strip().lower()
-    return "single point" in calc_type or calc_type == ""
-
-
-register_calculation_family_plugin(
-    CalculationFamilyPlugin(
-        family="single_point",
-        default_calculation_label="Single Point",
-        matcher=_matches_single_point,
-    )
-)
