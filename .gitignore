@@ -11,4 +11,5 @@ sample_outs/
 
 # Local regression artifacts and private reference outputs.
 .pytest_tmp/
+.pytest_cache/
 sample_md/

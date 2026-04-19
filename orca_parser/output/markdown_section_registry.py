@@ -724,97 +724,93 @@ def _comparison_charge_blocks(
     return blocks
 
 
-register_markdown_section_plugin(
-    MarkdownSectionPlugin(
-        key="dipole",
-        order=10,
-        render_molecule_blocks=_molecule_dipole_blocks,
-    )
+DIPOLE_MARKDOWN_SECTION_PLUGIN = MarkdownSectionPlugin(
+    key="dipole",
+    order=10,
+    render_molecule_blocks=_molecule_dipole_blocks,
 )
-register_markdown_section_plugin(
-    MarkdownSectionPlugin(
-        key="basis_set",
-        order=20,
-        render_molecule_blocks=_molecule_basis_set_blocks,
-    )
+
+BASIS_SET_MARKDOWN_SECTION_PLUGIN = MarkdownSectionPlugin(
+    key="basis_set",
+    order=20,
+    render_molecule_blocks=_molecule_basis_set_blocks,
 )
-register_markdown_section_plugin(
-    MarkdownSectionPlugin(
-        key="symmetry",
-        order=30,
-        render_molecule_blocks=_molecule_symmetry_blocks,
-        render_comparison_blocks=_comparison_symmetry_blocks,
-    )
+
+SYMMETRY_MARKDOWN_SECTION_PLUGIN = MarkdownSectionPlugin(
+    key="symmetry",
+    order=30,
+    render_molecule_blocks=_molecule_symmetry_blocks,
+    render_comparison_blocks=_comparison_symmetry_blocks,
 )
-register_markdown_section_plugin(
-    MarkdownSectionPlugin(
-        key="methods",
-        order=10,
-        render_comparison_blocks=_comparison_methods_blocks,
-    )
+
+METHODS_MARKDOWN_SECTION_PLUGIN = MarkdownSectionPlugin(
+    key="methods",
+    order=10,
+    render_comparison_blocks=_comparison_methods_blocks,
 )
-register_markdown_section_plugin(
-    MarkdownSectionPlugin(
-        key="solvation",
-        order=60,
-        render_molecule_blocks=_molecule_solvation_blocks,
-    )
+
+SOLVATION_MARKDOWN_SECTION_PLUGIN = MarkdownSectionPlugin(
+    key="solvation",
+    order=60,
+    render_molecule_blocks=_molecule_solvation_blocks,
 )
-register_markdown_section_plugin(
-    MarkdownSectionPlugin(
-        key="tddft",
-        order=70,
-        render_molecule_blocks=_molecule_tddft_blocks,
-    )
+
+TDDFT_MARKDOWN_SECTION_PLUGIN = MarkdownSectionPlugin(
+    key="tddft",
+    order=70,
+    render_molecule_blocks=_molecule_tddft_blocks,
 )
-register_markdown_section_plugin(
-    MarkdownSectionPlugin(
-        key="energies",
-        order=60,
-        render_comparison_blocks=_comparison_energy_blocks,
-    )
+
+ENERGIES_MARKDOWN_SECTION_PLUGIN = MarkdownSectionPlugin(
+    key="energies",
+    order=60,
+    render_comparison_blocks=_comparison_energy_blocks,
 )
-register_markdown_section_plugin(
-    MarkdownSectionPlugin(
-        key="frontier_orbitals",
-        order=80,
-        render_molecule_blocks=_molecule_frontier_orbital_blocks,
-        render_comparison_blocks=_comparison_frontier_orbital_blocks,
-    )
+
+FRONTIER_ORBITALS_MARKDOWN_SECTION_PLUGIN = MarkdownSectionPlugin(
+    key="frontier_orbitals",
+    order=80,
+    render_molecule_blocks=_molecule_frontier_orbital_blocks,
+    render_comparison_blocks=_comparison_frontier_orbital_blocks,
 )
-register_markdown_section_plugin(
-    MarkdownSectionPlugin(
-        key="qro",
-        order=90,
-        render_molecule_blocks=_molecule_qro_blocks,
-    )
+
+QRO_MARKDOWN_SECTION_PLUGIN = MarkdownSectionPlugin(
+    key="qro",
+    order=90,
+    render_molecule_blocks=_molecule_qro_blocks,
 )
-register_markdown_section_plugin(
-    MarkdownSectionPlugin(
-        key="epr",
-        order=100,
-        render_molecule_blocks=_molecule_epr_blocks,
-        render_comparison_blocks=_comparison_epr_blocks,
-    )
+
+EPR_MARKDOWN_SECTION_PLUGIN = MarkdownSectionPlugin(
+    key="epr",
+    order=100,
+    render_molecule_blocks=_molecule_epr_blocks,
+    render_comparison_blocks=_comparison_epr_blocks,
 )
-register_markdown_section_plugin(
-    MarkdownSectionPlugin(
-        key="charges_analysis",
-        order=90,
-        render_comparison_blocks=_comparison_charge_blocks,
-    )
+
+CHARGES_ANALYSIS_MARKDOWN_SECTION_PLUGIN = MarkdownSectionPlugin(
+    key="charges_analysis",
+    order=90,
+    render_comparison_blocks=_comparison_charge_blocks,
 )
-register_markdown_section_plugin(
-    MarkdownSectionPlugin(
-        key="analysis",
-        order=110,
-        render_molecule_blocks=_molecule_analysis_blocks,
-    )
+
+ANALYSIS_MARKDOWN_SECTION_PLUGIN = MarkdownSectionPlugin(
+    key="analysis",
+    order=110,
+    render_molecule_blocks=_molecule_analysis_blocks,
 )
-register_markdown_section_plugin(
-    MarkdownSectionPlugin(
-        key="geometry",
-        order=120,
-        render_molecule_blocks=_molecule_geometry_blocks,
-    )
+
+GEOMETRY_MARKDOWN_SECTION_PLUGIN = MarkdownSectionPlugin(
+    key="geometry",
+    order=120,
+    render_molecule_blocks=_molecule_geometry_blocks,
 )
+
+
+for _plugin in (
+    SYMMETRY_MARKDOWN_SECTION_PLUGIN,
+    METHODS_MARKDOWN_SECTION_PLUGIN,
+    ENERGIES_MARKDOWN_SECTION_PLUGIN,
+    CHARGES_ANALYSIS_MARKDOWN_SECTION_PLUGIN,
+    ANALYSIS_MARKDOWN_SECTION_PLUGIN,
+):
+    register_markdown_section_plugin(_plugin)

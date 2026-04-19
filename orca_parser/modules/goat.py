@@ -8,8 +8,14 @@ thermochemistry, and the xyz filenames printed near the end of the run.
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List, Optional
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional
 
+from ..job_family_registry import CalculationFamilyPlugin
+from ..job_series import get_goat_series
+from ..parser_section_plugin import ParserSectionAlias, ParserSectionPlugin
+from ..plugin_bundle import PluginBundle, PluginMetadata
+from ..render_options import RenderOptions
 from .base import BaseModule
 
 
@@ -63,6 +69,66 @@ def _parse_ensemble_rows(lines: List[str], start: int) -> List[Dict[str, Any]]:
                 break
 
     return rows
+
+
+def _matches_goat(
+    meta: Dict[str, Any],
+    data: Dict[str, Any],
+    context: Dict[str, Any],
+    deltascf: Dict[str, Any],
+    excited_state_optimization: Dict[str, Any],
+) -> bool:
+    """Match GOAT jobs for normalized family behavior.
+
+    Keeping this matcher in the module means the parser logic and the family
+    classification evolve together instead of teaching a central registry about
+    GOAT in a second place.
+    """
+
+    del deltascf, excited_state_optimization
+    calc_type = str(meta.get("calculation_type", "")).strip().lower()
+    return bool(data.get("goat") or context.get("is_goat") or "goat" in calc_type)
+
+
+def _render_goat_markdown_sections(
+    data: Dict[str, Any],
+    format_number: Callable[[Any, str], str],
+    make_table: Callable[[List[tuple]], str],
+    render_options: RenderOptions,
+) -> List[tuple[str, str]]:
+    """Render GOAT markdown output via the family plugin hook."""
+
+    from ..output.markdown_sections_basic import render_goat_section
+
+    goat = get_goat_series(data)
+    if not goat:
+        return []
+
+    body = render_goat_section(
+        goat,
+        format_number=format_number,
+        make_table=make_table,
+        max_relative_energy_kcal_mol=render_options.goat_max_relative_energy_kcal_mol,
+    )
+    return [("GOAT Conformer Search", body)] if body else []
+
+
+def _write_goat_csv_sections(
+    data: Dict[str, Any],
+    directory: Path,
+    stem: str,
+    write_csv: Callable[[Path, str, List[Dict[str, Any]], List[str]], Path],
+) -> List[Path]:
+    """Write GOAT CSV output via the family plugin hook."""
+
+    from ..output.csv_sections_basic import write_goat_section
+
+    return write_goat_section(
+        data,
+        directory,
+        stem,
+        write_csv=write_csv,
+    )
 
 
 class GOATModule(BaseModule):
@@ -137,3 +203,37 @@ class GOATModule(BaseModule):
             return None
 
         return data
+
+
+PLUGIN_BUNDLE = PluginBundle(
+    metadata=PluginMetadata(
+        key="goat",
+        name="GOAT Conformer Search",
+        short_help="Built-in GOAT parser family with ensemble markdown/CSV hooks.",
+        description=(
+            "Self-registering built-in GOAT parser module. Owns the parser "
+            "section, alias, normalized calculation-family behavior, and GOAT "
+            "family-specific markdown/CSV output hooks."
+        ),
+        docs_path="README.md",
+        examples=(
+            "orca_parser conformers.out --sections goat --markdown --csv",
+            "orca_parser conformers.out --markdown --goat-max-relative-energy-kcal 5",
+        ),
+    ),
+    parser_sections=(
+        ParserSectionPlugin("goat", GOATModule),
+    ),
+    parser_aliases=(
+        ParserSectionAlias(name="goat", section_keys=("goat",)),
+    ),
+    calculation_families=(
+        CalculationFamilyPlugin(
+            family="goat",
+            default_calculation_label="GOAT Conformer Search",
+            matcher=_matches_goat,
+            render_markdown_sections=_render_goat_markdown_sections,
+            csv_writers=(_write_goat_csv_sections,),
+        ),
+    ),
+)

@@ -476,36 +476,153 @@ def _nbi_matrix_files(data: Dict[str, Any], directory: Path, stem: str, write_cs
     )
 
 
-for order, key, renderer in (
-    (10, "metadata", _metadata_files),
-    (20, "geometry", _geometry_files),
-    (30, "symmetry", _symmetry_files),
-    (40, "orbital_energies", _orbital_energy_files),
-    (50, "qro", _qro_files),
-    (60, "mulliken", _mulliken_files),
-    (70, "loewdin", _loewdin_files),
-    (80, "mayer", _mayer_files),
-    (90, "hirshfeld", _hirshfeld_files),
-    (100, "mbis", _mbis_files),
-    (110, "chelpg", _chelpg_files),
-    (120, "nbo_nao", _nbo_nao_files),
-    (130, "nbo_npa", _nbo_npa_files),
-    (140, "dipole", _dipole_files),
-    (150, "solvation", _solvation_files),
-    (160, "tddft", _tddft_files),
-    (170, "nbo_lewis", _nbo_lewis_files),
-    (180, "nbo_e2", _nbo_e2_files),
-    (190, "nbo_nlmo_hybridization", _nbo_nlmo_hybridization_files),
-    (200, "nbo_nlmo_bond_order", _nbo_nlmo_bond_order_files),
-    (210, "nbo_nlmo_steric", _nbo_nlmo_steric_files),
-    (220, "epr", _epr_files),
-    (230, "wiberg_matrix", _wiberg_matrix_files),
-    (240, "nbi_matrix", _nbi_matrix_files),
+METADATA_CSV_SECTION_PLUGIN = CSVSectionPlugin(
+    key="metadata",
+    order=10,
+    render_files=_metadata_files,
+)
+
+GEOMETRY_CSV_SECTION_PLUGIN = CSVSectionPlugin(
+    key="geometry",
+    order=20,
+    render_files=_geometry_files,
+)
+
+SYMMETRY_CSV_SECTION_PLUGIN = CSVSectionPlugin(
+    key="symmetry",
+    order=30,
+    render_files=_symmetry_files,
+)
+
+ORBITAL_ENERGIES_CSV_SECTION_PLUGIN = CSVSectionPlugin(
+    key="orbital_energies",
+    order=40,
+    render_files=_orbital_energy_files,
+)
+
+QRO_CSV_SECTION_PLUGIN = CSVSectionPlugin(
+    key="qro",
+    order=50,
+    render_files=_qro_files,
+)
+
+MULLIKEN_CSV_SECTION_PLUGIN = CSVSectionPlugin(
+    key="mulliken",
+    order=60,
+    render_files=_mulliken_files,
+)
+
+LOEWDIN_CSV_SECTION_PLUGIN = CSVSectionPlugin(
+    key="loewdin",
+    order=70,
+    render_files=_loewdin_files,
+)
+
+MAYER_CSV_SECTION_PLUGIN = CSVSectionPlugin(
+    key="mayer",
+    order=80,
+    render_files=_mayer_files,
+)
+
+HIRSHFELD_CSV_SECTION_PLUGIN = CSVSectionPlugin(
+    key="hirshfeld",
+    order=90,
+    render_files=_hirshfeld_files,
+)
+
+MBIS_CSV_SECTION_PLUGIN = CSVSectionPlugin(
+    key="mbis",
+    order=100,
+    render_files=_mbis_files,
+)
+
+CHELPG_CSV_SECTION_PLUGIN = CSVSectionPlugin(
+    key="chelpg",
+    order=110,
+    render_files=_chelpg_files,
+)
+
+NBO_NAO_CSV_SECTION_PLUGIN = CSVSectionPlugin(
+    key="nbo_nao",
+    order=120,
+    render_files=_nbo_nao_files,
+)
+
+NBO_NPA_CSV_SECTION_PLUGIN = CSVSectionPlugin(
+    key="nbo_npa",
+    order=130,
+    render_files=_nbo_npa_files,
+)
+
+DIPOLE_CSV_SECTION_PLUGIN = CSVSectionPlugin(
+    key="dipole",
+    order=140,
+    render_files=_dipole_files,
+)
+
+SOLVATION_CSV_SECTION_PLUGIN = CSVSectionPlugin(
+    key="solvation",
+    order=150,
+    render_files=_solvation_files,
+)
+
+TDDFT_CSV_SECTION_PLUGIN = CSVSectionPlugin(
+    key="tddft",
+    order=160,
+    render_files=_tddft_files,
+)
+
+NBO_LEWIS_CSV_SECTION_PLUGIN = CSVSectionPlugin(
+    key="nbo_lewis",
+    order=170,
+    render_files=_nbo_lewis_files,
+)
+
+NBO_E2_CSV_SECTION_PLUGIN = CSVSectionPlugin(
+    key="nbo_e2",
+    order=180,
+    render_files=_nbo_e2_files,
+)
+
+NBO_NLMO_HYBRIDIZATION_CSV_SECTION_PLUGIN = CSVSectionPlugin(
+    key="nbo_nlmo_hybridization",
+    order=190,
+    render_files=_nbo_nlmo_hybridization_files,
+)
+
+NBO_NLMO_BOND_ORDER_CSV_SECTION_PLUGIN = CSVSectionPlugin(
+    key="nbo_nlmo_bond_order",
+    order=200,
+    render_files=_nbo_nlmo_bond_order_files,
+)
+
+NBO_NLMO_STERIC_CSV_SECTION_PLUGIN = CSVSectionPlugin(
+    key="nbo_nlmo_steric",
+    order=210,
+    render_files=_nbo_nlmo_steric_files,
+)
+
+EPR_CSV_SECTION_PLUGIN = CSVSectionPlugin(
+    key="epr",
+    order=220,
+    render_files=_epr_files,
+)
+
+WIBERG_MATRIX_CSV_SECTION_PLUGIN = CSVSectionPlugin(
+    key="wiberg_matrix",
+    order=230,
+    render_files=_wiberg_matrix_files,
+)
+
+NBI_MATRIX_CSV_SECTION_PLUGIN = CSVSectionPlugin(
+    key="nbi_matrix",
+    order=240,
+    render_files=_nbi_matrix_files,
+)
+
+
+for _plugin in (
+    METADATA_CSV_SECTION_PLUGIN,
+    SYMMETRY_CSV_SECTION_PLUGIN,
 ):
-    register_csv_section_plugin(
-        CSVSectionPlugin(
-            key=key,
-            order=order,
-            render_files=renderer,
-        )
-    )
+    register_csv_section_plugin(_plugin)

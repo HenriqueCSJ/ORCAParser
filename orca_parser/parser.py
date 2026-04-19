@@ -18,6 +18,11 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from .final_snapshot import build_final_snapshot
+from .input_semantics import (
+    detect_input_symmetry_request,
+    infer_reference_type,
+    is_unrestricted_reference,
+)
 from .job_series import build_job_series
 from .job_snapshot import build_job_snapshot
 from .plugin_discovery import bootstrap_plugin_bundles
@@ -225,8 +230,9 @@ class ORCAParser:
         Parsed results, populated after calling :meth:`parse`.
     context : dict
         Shared flags set from the metadata pass:
-        ``is_uhf``, ``has_symmetry``, ``hf_type``, ``multiplicity``,
-        ``n_atoms``, ``atom_symbols``.
+        ``is_unrestricted`` / compatibility alias ``is_uhf``,
+        ``reference_type``, ``hf_type``, ``has_symmetry``,
+        ``multiplicity``, ``n_atoms``, ``atom_symbols``.
     """
 
     def __init__(
@@ -448,9 +454,11 @@ class ORCAParser:
         """
         ctx: Dict[str, Any] = {
             "is_uhf": False,
+            "is_unrestricted": False,
             "has_symmetry": False,
             "is_surface_scan": False,
             "hf_type": "RHF",
+            "reference_type": "RHF",
             "charge": 0,
             "multiplicity": 1,
             "n_atoms": 0,
@@ -468,7 +476,6 @@ class ORCAParser:
             m = re.search(r"Hartree-Fock type\s+HFTyp\s+\.\.\.\.\s+(\w+)", ln)
             if m:
                 ctx["hf_type"] = m.group(1)
-                ctx["is_uhf"] = m.group(1).upper() == "UHF"
 
             # Multiplicity
             m = re.search(r"Total Charge\s+Charge\s+\.\.\.\.\s+(-?\d+)", ln)
@@ -503,6 +510,20 @@ class ORCAParser:
                 bang_upper = {token.upper() for token in input_echo.get("bang_tokens", [])}
                 if "GOAT" in bang_upper:
                     ctx["is_goat"] = True
+                input_use_sym = detect_input_symmetry_request(input_echo.get("bang_tokens", []))
+                if input_use_sym is not None:
+                    ctx["input_use_sym"] = input_use_sym
+
+        # Normalize the user-facing reference semantics once here so every
+        # downstream parser module sees the same restricted/unrestricted view.
+        ctx["reference_type"] = infer_reference_type(
+            bang_tokens=(ctx.get("input_echo") or {}).get("bang_tokens", []),
+            hf_type=ctx.get("hf_type"),
+        ) or "RHF"
+        ctx["is_unrestricted"] = is_unrestricted_reference(ctx["reference_type"])
+        # ``is_uhf`` survives as a compatibility alias while the rest of the
+        # codebase migrates toward the clearer ``is_unrestricted`` name.
+        ctx["is_uhf"] = ctx["is_unrestricted"]
 
         # Collect atom symbols from Cartesian coordinate block
         idx = -1

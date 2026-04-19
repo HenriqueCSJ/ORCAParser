@@ -13,9 +13,15 @@ Extracts:
   quadrupole coupling parameters (e²qQ, eta)
 """
 
+from __future__ import annotations
+
 import re
 from typing import Any, Dict, List, Optional
 
+from ..output.csv_section_registry import EPR_CSV_SECTION_PLUGIN
+from ..output.markdown_section_registry import EPR_MARKDOWN_SECTION_PLUGIN
+from ..parser_section_plugin import ParserSectionAlias, ParserSectionPlugin
+from ..plugin_bundle import PluginBundle, PluginMetadata
 from .base import BaseModule
 
 # ─────────────────────────────────────────────────────────────────────
@@ -662,3 +668,32 @@ class EPRModule(BaseModule):
                 data["hyperfine"] = hf
 
         return data if data else None
+
+
+PLUGIN_BUNDLE = PluginBundle(
+    metadata=PluginMetadata(
+        key="epr_section",
+        name="EPR Section",
+        short_help="Built-in EPR parser section owned by epr.py.",
+        description=(
+            "Self-registering built-in parser section for EPR properties such "
+            "as ZFS, g-tensors, hyperfine couplings, and EFG data."
+        ),
+        docs_path="README.md",
+        examples=(
+            "orca_parser epr.out --sections epr",
+        ),
+    ),
+    parser_sections=(
+        ParserSectionPlugin("epr", EPRModule),
+    ),
+    parser_aliases=(
+        ParserSectionAlias(name="epr", section_keys=("epr",)),
+    ),
+    markdown_sections=(
+        EPR_MARKDOWN_SECTION_PLUGIN,
+    ),
+    csv_sections=(
+        EPR_CSV_SECTION_PLUGIN,
+    ),
+)

@@ -15,7 +15,7 @@ It is designed for real multistep ORCA outputs, not just ideal single-point jobs
 
 ## Highlights
 
-- 20 parser modules covering SCF, orbitals, solvation, TDDFT/CIS, GOAT, population analyses, dipole moments, NBO, EPR, geometry optimization, and relaxed scans
+- Built-in parser modules covering SCF, orbitals, solvation, TDDFT/CIS, GOAT, population analyses, dipole moments, NBO, EPR, geometry optimization, and relaxed scans
 - 4 output formats: JSON, CSV, HDF5, and Markdown
 - RHF/RKS and UHF/UKS support, including spin-resolved data
 - GOAT ensemble parsing with populations, energy windows, global minimum, and ensemble thermochemistry
@@ -56,6 +56,27 @@ Editable install for development:
 
 ```bash
 pip install -e .
+```
+
+## Privacy guardrails
+
+This repo now includes an explicit tracked-file safety check so local scratch
+artifacts and private reference outputs do not quietly leak into git history.
+
+- CI runs [`tools/check_tracked_private_artifacts.py`](tools/check_tracked_private_artifacts.py) on pushes and pull requests
+- blocked patterns live in [`.privacy_guardrails.json`](.privacy_guardrails.json)
+- the current guardrail blocks tracked `.codex*`, `.pytest_tmp`, `.pytest_cache`, and `sample_md` paths
+
+To enable the local pre-commit hook:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+To run the check manually:
+
+```bash
+python tools/check_tracked_private_artifacts.py --repo-root .
 ```
 
 ## Quick start
@@ -367,7 +388,7 @@ Example shape:
 ```python
 from orca_parser.modules.base import BaseModule
 from orca_parser.plugin_bundle import PluginBundle, PluginMetadata, PluginOption
-from orca_parser.parser_section_registry import ParserSectionAlias, ParserSectionPlugin
+from orca_parser.parser_section_plugin import ParserSectionAlias, ParserSectionPlugin
 
 
 class MyNewModule(BaseModule):

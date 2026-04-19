@@ -19,7 +19,7 @@ from orca_parser.job_snapshot import build_job_snapshot
 from orca_parser.modules.base import BaseModule
 from orca_parser.output.csv_section_registry import CSVSectionPlugin
 from orca_parser.output.markdown_section_registry import MarkdownSectionPlugin
-from orca_parser.parser_section_registry import ParserSectionAlias, ParserSectionPlugin
+from orca_parser.parser_section_plugin import ParserSectionAlias, ParserSectionPlugin
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -976,7 +976,7 @@ def test_plugin_bundle_autodiscovery_registers_drop_in_module_capabilities(
             f"""
             from orca_parser.modules.base import BaseModule
             from orca_parser.plugin_bundle import PluginBundle, PluginMetadata, PluginOption
-            from orca_parser.parser_section_registry import ParserSectionAlias, ParserSectionPlugin
+            from orca_parser.parser_section_plugin import ParserSectionAlias, ParserSectionPlugin
             from orca_parser.output.markdown_section_registry import MarkdownSectionPlugin
             from orca_parser.output.csv_section_registry import CSVSectionPlugin
 
@@ -1095,6 +1095,101 @@ def test_plugin_bundle_autodiscovery_registers_drop_in_module_capabilities(
     }
     assert "Auto Bundle Demo" in help_text
     assert flag_name in help_text
+
+
+def test_builtin_families_are_discovered_from_their_modules() -> None:
+    bundles = {
+        bundle.metadata.key: bundle
+        for bundle in plugin_discovery.get_registered_plugin_bundles()
+    }
+    bundle_keys = set(bundles)
+
+    assert "geometry_sections" in bundle_keys
+    assert "scf_section" in bundle_keys
+    assert "single_point" in bundle_keys
+    assert "population_sections" in bundle_keys
+    assert "orbital_sections" in bundle_keys
+    assert "dipole_section" in bundle_keys
+    assert "solvation_section" in bundle_keys
+    assert "nbo_section" in bundle_keys
+    assert "epr_section" in bundle_keys
+    assert "deltascf" in bundle_keys
+    assert "excited_state_optimization" in bundle_keys
+    assert "goat" in bundle_keys
+    assert "surface_scan" in bundle_keys
+    assert "geom_opt" in bundle_keys
+    assert (
+        plugin_discovery.get_registered_plugin_source("geometry_sections")
+        == "orca_parser.modules.geometry"
+    )
+    assert (
+        plugin_discovery.get_registered_plugin_source("scf_section")
+        == "orca_parser.modules.scf"
+    )
+    assert (
+        plugin_discovery.get_registered_plugin_source("single_point")
+        == "orca_parser.modules.scf"
+    )
+    assert (
+        plugin_discovery.get_registered_plugin_source("population_sections")
+        == "orca_parser.modules.population"
+    )
+    assert (
+        plugin_discovery.get_registered_plugin_source("orbital_sections")
+        == "orca_parser.modules.orbitals"
+    )
+    assert (
+        plugin_discovery.get_registered_plugin_source("dipole_section")
+        == "orca_parser.modules.dipole"
+    )
+    assert (
+        plugin_discovery.get_registered_plugin_source("solvation_section")
+        == "orca_parser.modules.solvation"
+    )
+    assert (
+        plugin_discovery.get_registered_plugin_source("nbo_section")
+        == "orca_parser.modules.nbo"
+    )
+    assert (
+        plugin_discovery.get_registered_plugin_source("epr_section")
+        == "orca_parser.modules.epr"
+    )
+    assert (
+        plugin_discovery.get_registered_plugin_source("deltascf")
+        == "orca_parser.modules.geometry"
+    )
+    assert (
+        plugin_discovery.get_registered_plugin_source("excited_state_optimization")
+        == "orca_parser.modules.tddft"
+    )
+    assert (
+        plugin_discovery.get_registered_plugin_source("goat")
+        == "orca_parser.modules.goat"
+    )
+    assert (
+        plugin_discovery.get_registered_plugin_source("surface_scan")
+        == "orca_parser.modules.surface_scan"
+    )
+    assert (
+        plugin_discovery.get_registered_plugin_source("geom_opt")
+        == "orca_parser.modules.geom_opt"
+    )
+
+    assert bundles["orbital_sections"].markdown_sections
+    assert bundles["orbital_sections"].csv_sections
+    assert bundles["single_point"].calculation_families
+    assert bundles["geometry_sections"].markdown_sections
+    assert bundles["geometry_sections"].csv_sections
+    assert bundles["dipole_section"].markdown_sections
+    assert bundles["dipole_section"].csv_sections
+    assert bundles["solvation_section"].markdown_sections
+    assert bundles["solvation_section"].csv_sections
+    assert bundles["population_sections"].csv_sections
+    assert bundles["nbo_section"].csv_sections
+    assert bundles["epr_section"].markdown_sections
+    assert bundles["epr_section"].csv_sections
+    assert bundles["excited_state_optimization"].markdown_sections
+    assert bundles["excited_state_optimization"].csv_sections
 
 
 def test_goat_markdown_cutoff_can_be_overridden(goat_full_parser: ORCAParser) -> None:

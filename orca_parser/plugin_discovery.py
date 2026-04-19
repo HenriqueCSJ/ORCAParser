@@ -175,6 +175,12 @@ def get_registered_plugin_bundles() -> tuple[PluginBundle, ...]:
     return tuple(_REGISTERED_PLUGIN_BUNDLES.values())
 
 
+def get_registered_plugin_source(plugin_key: str) -> str | None:
+    """Return the module path that registered a discovered plugin bundle."""
+
+    return _REGISTERED_PLUGIN_SOURCES.get(plugin_key)
+
+
 def get_registered_plugin_options() -> tuple[PluginOption, ...]:
     """Return all discovered plugin CLI options."""
 

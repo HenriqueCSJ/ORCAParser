@@ -20,9 +20,24 @@ For UHF/UKS: all NBO sections are parsed separately for alpha and beta spins.
 The overall NPA (with spin density column) is also captured.
 """
 
+from __future__ import annotations
+
 import re
 from typing import Any, Dict, List, Optional
 
+from ..output.csv_section_registry import (
+    NBI_MATRIX_CSV_SECTION_PLUGIN,
+    NBO_E2_CSV_SECTION_PLUGIN,
+    NBO_LEWIS_CSV_SECTION_PLUGIN,
+    NBO_NAO_CSV_SECTION_PLUGIN,
+    NBO_NLMO_BOND_ORDER_CSV_SECTION_PLUGIN,
+    NBO_NLMO_HYBRIDIZATION_CSV_SECTION_PLUGIN,
+    NBO_NLMO_STERIC_CSV_SECTION_PLUGIN,
+    NBO_NPA_CSV_SECTION_PLUGIN,
+    WIBERG_MATRIX_CSV_SECTION_PLUGIN,
+)
+from ..parser_section_plugin import ParserSectionAlias, ParserSectionPlugin
+from ..plugin_bundle import PluginBundle, PluginMetadata
 from .base import BaseModule
 
 
@@ -1256,3 +1271,38 @@ class NBOModule(BaseModule):
         if entries:
             data["determinants"] = entries
         return data
+
+
+PLUGIN_BUNDLE = PluginBundle(
+    metadata=PluginMetadata(
+        key="nbo_section",
+        name="NBO Section",
+        short_help="Built-in NBO parser section owned by nbo.py.",
+        description=(
+            "Self-registering built-in parser section for NBO analysis, "
+            "including NPA, NBO/NLMO character, perturbation analysis, and "
+            "related orbital-composition tables."
+        ),
+        docs_path="README.md",
+        examples=(
+            "orca_parser job.out --sections nbo",
+        ),
+    ),
+    parser_sections=(
+        ParserSectionPlugin("nbo", NBOModule),
+    ),
+    parser_aliases=(
+        ParserSectionAlias(name="nbo", section_keys=("nbo",)),
+    ),
+    csv_sections=(
+        NBO_NAO_CSV_SECTION_PLUGIN,
+        NBO_NPA_CSV_SECTION_PLUGIN,
+        NBO_LEWIS_CSV_SECTION_PLUGIN,
+        NBO_E2_CSV_SECTION_PLUGIN,
+        NBO_NLMO_HYBRIDIZATION_CSV_SECTION_PLUGIN,
+        NBO_NLMO_BOND_ORDER_CSV_SECTION_PLUGIN,
+        NBO_NLMO_STERIC_CSV_SECTION_PLUGIN,
+        WIBERG_MATRIX_CSV_SECTION_PLUGIN,
+        NBI_MATRIX_CSV_SECTION_PLUGIN,
+    ),
+)

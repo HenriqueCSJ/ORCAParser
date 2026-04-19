@@ -9,8 +9,13 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
+from ..job_family_registry import CalculationFamilyPlugin
+from ..job_series import get_surface_scan_series
+from ..parser_section_plugin import ParserSectionAlias, ParserSectionPlugin
+from ..plugin_bundle import PluginBundle, PluginMetadata
+from ..render_options import RenderOptions
 from .base import BaseModule
 
 
@@ -431,6 +436,106 @@ def _merge_step_data(
     return steps
 
 
+def _matches_surface_scan(
+    meta: Dict[str, Any],
+    data: Dict[str, Any],
+    context: Dict[str, Any],
+    deltascf: Dict[str, Any],
+    excited_state_optimization: Dict[str, Any],
+) -> bool:
+    """Match relaxed scans from either parsed data or input-context hints."""
+
+    del meta, deltascf, excited_state_optimization
+    return bool(data.get("surface_scan") or context.get("is_surface_scan"))
+
+
+def _render_surface_scan_markdown_sections(
+    data: Dict[str, Any],
+    format_number: Callable[[Any, str], str],
+    make_table: Callable[[List[tuple]], str],
+    render_options: RenderOptions,
+) -> List[tuple[str, str]]:
+    """Render the scan-family markdown block from the normalized job series."""
+
+    del render_options
+
+    from ..output.markdown_sections_basic import render_surface_scan_section
+
+    surface_scan = get_surface_scan_series(data)
+    if not surface_scan:
+        return []
+
+    body = render_surface_scan_section(
+        surface_scan,
+        format_number=format_number,
+        make_table=make_table,
+    )
+    return [("Relaxed Surface Scan", body)] if body else []
+
+
+def _render_surface_scan_comparison_sections(
+    datasets: List[Dict[str, Any]],
+    labels: List[str],
+    format_number: Callable[[Any, str], str],
+    make_table: Callable[[List[tuple]], str],
+    render_options: RenderOptions,
+) -> List[tuple[str, str]]:
+    """Render scan comparisons from the family plugin instead of a central table."""
+
+    del render_options
+
+    if not any(
+        get_surface_scan_series(dataset)
+        for dataset in datasets
+    ):
+        return []
+
+    rows = [("", "mode", "parameters", "steps", "coordinates", "span (kcal/mol)")]
+    for label, dataset in zip(labels, datasets):
+        scan = get_surface_scan_series(dataset)
+        parameters = scan.get("parameters") or []
+        coordinate_summary = "; ".join(
+            (
+                f"{parameter.get('label', '?')} "
+                f"{format_number(parameter.get('start'))}->{format_number(parameter.get('end'))} "
+                f"({parameter.get('steps', '?')})"
+            )
+            if parameter.get("mode") != "values"
+            else f"{parameter.get('label', '?')} [{len(parameter.get('values') or [])} values]"
+            for parameter in parameters
+        ) or "—"
+        rows.append((
+            label,
+            scan.get("mode", "—"),
+            str(scan.get("n_parameters", "—")),
+            str(scan.get("n_constrained_optimizations", "—")),
+            coordinate_summary,
+            format_number(scan.get("actual_energy_span_kcal_mol")),
+        ))
+
+    return [("Surface Scans", make_table(rows))]
+
+
+def _write_surface_scan_csv_sections(
+    data: Dict[str, Any],
+    directory: Path,
+    stem: str,
+    write_csv: Callable[[Path, str, List[Dict[str, Any]], List[str]], Path],
+) -> List[Path]:
+    """Write scan CSV exports from the family plugin."""
+
+    from ..output import job_state as _job_state
+    from ..output.csv_sections_basic import write_surface_scan_section
+
+    return write_surface_scan_section(
+        data,
+        directory,
+        stem,
+        write_csv=write_csv,
+        format_simple_vector=_job_state.format_simple_vector,
+    )
+
+
 class SurfaceScanModule(BaseModule):
     """Parse relaxed surface scans and their summary tables."""
 
@@ -529,3 +634,39 @@ class SurfaceScanModule(BaseModule):
                 )
 
         return data
+
+
+PLUGIN_BUNDLE = PluginBundle(
+    metadata=PluginMetadata(
+        key="surface_scan",
+        name="Relaxed Surface Scan",
+        short_help="Built-in relaxed scan parser family with scan-specific output hooks.",
+        description=(
+            "Self-registering built-in relaxed scan module. Owns the parser "
+            "section, the scan alias, the normalized scan family matcher, and "
+            "scan-specific markdown/CSV/comparison hooks."
+        ),
+        docs_path="README.md",
+        examples=(
+            "orca_parser scan.out --sections scan --markdown --csv",
+            "orca_parser scan.out other_scan.out --compare",
+        ),
+    ),
+    parser_sections=(
+        ParserSectionPlugin("surface_scan", SurfaceScanModule),
+    ),
+    parser_aliases=(
+        ParserSectionAlias(name="scan", section_keys=("surface_scan",)),
+    ),
+    calculation_families=(
+        CalculationFamilyPlugin(
+            family="surface_scan",
+            default_calculation_label="Relaxed Surface Scan",
+            matcher=_matches_surface_scan,
+            render_markdown_sections=_render_surface_scan_markdown_sections,
+            render_comparison_sections=_render_surface_scan_comparison_sections,
+            csv_writers=(_write_surface_scan_csv_sections,),
+            comparison_order=80,
+        ),
+    ),
+)

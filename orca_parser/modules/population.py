@@ -2,9 +2,21 @@
 Population analysis modules: Mulliken, Loewdin, Mayer, Hirshfeld, MBIS, CHELPG.
 """
 
+from __future__ import annotations
+
 import re
 from typing import Any, Dict, Iterable, List, Optional
 
+from ..output.csv_section_registry import (
+    CHELPG_CSV_SECTION_PLUGIN,
+    HIRSHFELD_CSV_SECTION_PLUGIN,
+    LOEWDIN_CSV_SECTION_PLUGIN,
+    MAYER_CSV_SECTION_PLUGIN,
+    MBIS_CSV_SECTION_PLUGIN,
+    MULLIKEN_CSV_SECTION_PLUGIN,
+)
+from ..parser_section_plugin import ParserSectionAlias, ParserSectionPlugin
+from ..plugin_bundle import PluginBundle, PluginMetadata
 from .base import BaseModule
 
 
@@ -48,6 +60,22 @@ def _find_last_exact_label(lines: List[str], label: str, start: int = 0) -> int:
     target = label.strip().upper()
     for i in range(len(lines) - 1, start - 1, -1):
         if lines[i].strip().upper() == target:
+            return i
+    return -1
+
+
+def _find_last_label_starting_with(lines: List[str], label_prefix: str, start: int = 0) -> int:
+    """Return the last line whose stripped uppercase text starts with *label_prefix*.
+
+    ORCA sometimes extends headers such as ``MULLIKEN REDUCED ORBITAL CHARGES``
+    to ``... AND SPIN POPULATIONS`` in open-shell jobs. Prefix matching keeps
+    the parser stable across those variants without weakening the exact-match
+    behavior for unrelated headers.
+    """
+
+    target = label_prefix.strip().upper()
+    for i in range(len(lines) - 1, start - 1, -1):
+        if lines[i].strip().upper().startswith(target):
             return i
     return -1
 
@@ -170,7 +198,7 @@ class MullikenModule(BaseModule):
                 data["sum_of_charges"] = float(m.group(1))
 
         # --- Reduced orbital charges ---
-        idx_red = _find_last_exact_label(lines, "MULLIKEN REDUCED ORBITAL CHARGES")
+        idx_red = _find_last_label_starting_with(lines, "MULLIKEN REDUCED ORBITAL CHARGES")
         if idx_red != -1:
             idx_charge = _find_exact_label(lines, "CHARGE", idx_red)
             charge_start = idx_charge + 1 if idx_charge != -1 else idx_red + 2
@@ -269,7 +297,7 @@ class LoewdinModule(BaseModule):
         atoms = _parse_atomic_values(lines, idx + 2, n_cols=2 if is_uhf else 1)
         data["atomic_charges"] = atoms
 
-        idx_red = _find_last_exact_label(lines, "LOEWDIN REDUCED ORBITAL CHARGES")
+        idx_red = _find_last_label_starting_with(lines, "LOEWDIN REDUCED ORBITAL CHARGES")
         if idx_red != -1:
             idx_charge = _find_exact_label(lines, "CHARGE", idx_red)
             charge_start = idx_charge + 1 if idx_charge != -1 else idx_red + 2
@@ -511,3 +539,52 @@ class CHELPGModule(BaseModule):
 
         data["atomic_charges"] = atoms
         return data if data else None
+
+
+PLUGIN_BUNDLE = PluginBundle(
+    metadata=PluginMetadata(
+        key="population_sections",
+        name="Population Sections",
+        short_help="Built-in population-analysis parser sections owned by population.py.",
+        description=(
+            "Self-registering built-in parser sections for Mulliken, Loewdin, "
+            "Mayer, Hirshfeld, MBIS, and CHELPG analysis, plus the shared "
+            "charges/population/bonds aliases."
+        ),
+        docs_path="README.md",
+        examples=(
+            "orca_parser job.out --sections charges",
+            "orca_parser job.out --sections population bonds",
+        ),
+    ),
+    parser_sections=(
+        ParserSectionPlugin("mulliken", MullikenModule),
+        ParserSectionPlugin("loewdin", LoewdinModule),
+        ParserSectionPlugin("mayer", MayerModule),
+        ParserSectionPlugin("hirshfeld", HirshfeldModule),
+        ParserSectionPlugin("mbis", MBISModule),
+        ParserSectionPlugin("chelpg", CHELPGModule),
+    ),
+    parser_aliases=(
+        ParserSectionAlias(
+            name="charges",
+            section_keys=("mulliken", "loewdin", "hirshfeld", "mbis", "chelpg"),
+        ),
+        ParserSectionAlias(
+            name="population",
+            section_keys=("mulliken", "loewdin", "mayer"),
+        ),
+        ParserSectionAlias(
+            name="bonds",
+            section_keys=("mayer", "loewdin"),
+        ),
+    ),
+    csv_sections=(
+        MULLIKEN_CSV_SECTION_PLUGIN,
+        LOEWDIN_CSV_SECTION_PLUGIN,
+        MAYER_CSV_SECTION_PLUGIN,
+        HIRSHFELD_CSV_SECTION_PLUGIN,
+        MBIS_CSV_SECTION_PLUGIN,
+        CHELPG_CSV_SECTION_PLUGIN,
+    ),
+)
