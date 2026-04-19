@@ -8,9 +8,13 @@ Handles:
 - UNO natural orbital occupancies
 """
 
+from __future__ import annotations
+
 import re
 from typing import Any, Dict, List, Optional
 
+from ..parser_section_plugin import ParserSectionAlias, ParserSectionPlugin
+from ..plugin_bundle import PluginBundle, PluginMetadata
 from .base import BaseModule
 
 
@@ -311,3 +315,28 @@ class QROModule(BaseModule):
             data["unso_file_written"] = True
 
         return data if data else None
+
+
+PLUGIN_BUNDLE = PluginBundle(
+    metadata=PluginMetadata(
+        key="orbital_sections",
+        name="Orbital Sections",
+        short_help="Built-in orbital-energy and QRO parser sections owned by orbitals.py.",
+        description=(
+            "Self-registering built-in parser sections for orbital energies "
+            "and quasi-restricted orbitals, plus the shared mos alias."
+        ),
+        docs_path="README.md",
+        examples=(
+            "orca_parser job.out --sections mos",
+            "orca_parser job.out --sections orbital_energies qro",
+        ),
+    ),
+    parser_sections=(
+        ParserSectionPlugin("orbital_energies", OrbitalEnergiesModule),
+        ParserSectionPlugin("qro", QROModule),
+    ),
+    parser_aliases=(
+        ParserSectionAlias(name="mos", section_keys=("orbital_energies", "qro")),
+    ),
+)

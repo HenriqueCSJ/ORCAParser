@@ -2,9 +2,13 @@
 Module for SCF total energy, convergence data, and DFT components.
 """
 
+from __future__ import annotations
+
 import re
 from typing import Any, Dict, Optional
 
+from ..parser_section_plugin import ParserSectionPlugin
+from ..plugin_bundle import PluginBundle, PluginMetadata
 from .base import BaseModule
 
 
@@ -130,3 +134,23 @@ class SCFModule(BaseModule):
                     data["spin_contamination"] = data["s_squared"] - data["s_squared_ideal"]
 
         return data if data else None
+
+
+PLUGIN_BUNDLE = PluginBundle(
+    metadata=PluginMetadata(
+        key="scf_section",
+        name="SCF Section",
+        short_help="Built-in SCF parser section owned by scf.py.",
+        description=(
+            "Self-registering built-in parser section for final single-point "
+            "energy, SCF convergence metrics, and SCF/DFT energy components."
+        ),
+        docs_path="README.md",
+        examples=(
+            "orca_parser job.out --sections scf",
+        ),
+    ),
+    parser_sections=(
+        ParserSectionPlugin("scf", SCFModule, always_include=True),
+    ),
+)

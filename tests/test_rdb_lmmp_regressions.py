@@ -1103,6 +1103,13 @@ def test_builtin_families_are_discovered_from_their_modules() -> None:
     }
 
     assert "geometry_sections" in bundle_keys
+    assert "scf_section" in bundle_keys
+    assert "population_sections" in bundle_keys
+    assert "orbital_sections" in bundle_keys
+    assert "dipole_section" in bundle_keys
+    assert "solvation_section" in bundle_keys
+    assert "nbo_section" in bundle_keys
+    assert "epr_section" in bundle_keys
     assert "deltascf" in bundle_keys
     assert "excited_state_optimization" in bundle_keys
     assert "goat" in bundle_keys
@@ -1111,6 +1118,34 @@ def test_builtin_families_are_discovered_from_their_modules() -> None:
     assert (
         plugin_discovery.get_registered_plugin_source("geometry_sections")
         == "orca_parser.modules.geometry"
+    )
+    assert (
+        plugin_discovery.get_registered_plugin_source("scf_section")
+        == "orca_parser.modules.scf"
+    )
+    assert (
+        plugin_discovery.get_registered_plugin_source("population_sections")
+        == "orca_parser.modules.population"
+    )
+    assert (
+        plugin_discovery.get_registered_plugin_source("orbital_sections")
+        == "orca_parser.modules.orbitals"
+    )
+    assert (
+        plugin_discovery.get_registered_plugin_source("dipole_section")
+        == "orca_parser.modules.dipole"
+    )
+    assert (
+        plugin_discovery.get_registered_plugin_source("solvation_section")
+        == "orca_parser.modules.solvation"
+    )
+    assert (
+        plugin_discovery.get_registered_plugin_source("nbo_section")
+        == "orca_parser.modules.nbo"
+    )
+    assert (
+        plugin_discovery.get_registered_plugin_source("epr_section")
+        == "orca_parser.modules.epr"
     )
     assert (
         plugin_discovery.get_registered_plugin_source("deltascf")

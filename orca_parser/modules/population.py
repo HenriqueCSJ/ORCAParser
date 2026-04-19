@@ -2,9 +2,13 @@
 Population analysis modules: Mulliken, Loewdin, Mayer, Hirshfeld, MBIS, CHELPG.
 """
 
+from __future__ import annotations
+
 import re
 from typing import Any, Dict, Iterable, List, Optional
 
+from ..parser_section_plugin import ParserSectionAlias, ParserSectionPlugin
+from ..plugin_bundle import PluginBundle, PluginMetadata
 from .base import BaseModule
 
 
@@ -527,3 +531,44 @@ class CHELPGModule(BaseModule):
 
         data["atomic_charges"] = atoms
         return data if data else None
+
+
+PLUGIN_BUNDLE = PluginBundle(
+    metadata=PluginMetadata(
+        key="population_sections",
+        name="Population Sections",
+        short_help="Built-in population-analysis parser sections owned by population.py.",
+        description=(
+            "Self-registering built-in parser sections for Mulliken, Loewdin, "
+            "Mayer, Hirshfeld, MBIS, and CHELPG analysis, plus the shared "
+            "charges/population/bonds aliases."
+        ),
+        docs_path="README.md",
+        examples=(
+            "orca_parser job.out --sections charges",
+            "orca_parser job.out --sections population bonds",
+        ),
+    ),
+    parser_sections=(
+        ParserSectionPlugin("mulliken", MullikenModule),
+        ParserSectionPlugin("loewdin", LoewdinModule),
+        ParserSectionPlugin("mayer", MayerModule),
+        ParserSectionPlugin("hirshfeld", HirshfeldModule),
+        ParserSectionPlugin("mbis", MBISModule),
+        ParserSectionPlugin("chelpg", CHELPGModule),
+    ),
+    parser_aliases=(
+        ParserSectionAlias(
+            name="charges",
+            section_keys=("mulliken", "loewdin", "hirshfeld", "mbis", "chelpg"),
+        ),
+        ParserSectionAlias(
+            name="population",
+            section_keys=("mulliken", "loewdin", "mayer"),
+        ),
+        ParserSectionAlias(
+            name="bonds",
+            section_keys=("mayer", "loewdin"),
+        ),
+    ),
+)

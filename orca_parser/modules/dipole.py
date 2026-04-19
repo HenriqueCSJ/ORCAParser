@@ -8,9 +8,13 @@ Extracts:
   - Dipole components along rotational axes
 """
 
+from __future__ import annotations
+
 import re
 from typing import Any, Dict, Optional
 
+from ..parser_section_plugin import ParserSectionAlias, ParserSectionPlugin
+from ..plugin_bundle import PluginBundle, PluginMetadata
 from .base import BaseModule
 
 
@@ -130,3 +134,26 @@ class DipoleMomentModule(BaseModule):
                     }
 
         return data if data else None
+
+
+PLUGIN_BUNDLE = PluginBundle(
+    metadata=PluginMetadata(
+        key="dipole_section",
+        name="Dipole Section",
+        short_help="Built-in dipole parser section owned by dipole.py.",
+        description=(
+            "Self-registering built-in parser section for dipole moments and "
+            "rotational-spectrum dipole metadata."
+        ),
+        docs_path="README.md",
+        examples=(
+            "orca_parser job.out --sections dipole",
+        ),
+    ),
+    parser_sections=(
+        ParserSectionPlugin("dipole", DipoleMomentModule),
+    ),
+    parser_aliases=(
+        ParserSectionAlias(name="dipole", section_keys=("dipole",)),
+    ),
+)

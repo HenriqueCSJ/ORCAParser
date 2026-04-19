@@ -18,22 +18,6 @@ from __future__ import annotations
 
 from typing import Optional
 
-from .modules import (
-    CHELPGModule,
-    DipoleMomentModule,
-    EPRModule,
-    HirshfeldModule,
-    LoewdinModule,
-    MBISModule,
-    MayerModule,
-    MullikenModule,
-    NBOModule,
-    OrbitalEnergiesModule,
-    QROModule,
-    SCFModule,
-    SolvationModule,
-)
-
 from .parser_section_plugin import ParserSectionAlias, ParserSectionPlugin
 
 
@@ -166,54 +150,3 @@ def iter_active_parser_section_plugins(
         if plugin.key in active_sections
     )
 
-
-register_parser_section_plugin(
-    ParserSectionPlugin("scf", SCFModule, always_include=True)
-)
-register_parser_section_plugin(
-    ParserSectionPlugin("orbital_energies", OrbitalEnergiesModule)
-)
-register_parser_section_plugin(ParserSectionPlugin("qro", QROModule))
-register_parser_section_plugin(ParserSectionPlugin("mulliken", MullikenModule))
-register_parser_section_plugin(ParserSectionPlugin("loewdin", LoewdinModule))
-register_parser_section_plugin(ParserSectionPlugin("mayer", MayerModule))
-register_parser_section_plugin(ParserSectionPlugin("hirshfeld", HirshfeldModule))
-register_parser_section_plugin(ParserSectionPlugin("mbis", MBISModule))
-register_parser_section_plugin(ParserSectionPlugin("chelpg", CHELPGModule))
-register_parser_section_plugin(ParserSectionPlugin("dipole", DipoleMomentModule))
-register_parser_section_plugin(ParserSectionPlugin("solvation", SolvationModule))
-register_parser_section_plugin(ParserSectionPlugin("nbo", NBOModule))
-register_parser_section_plugin(ParserSectionPlugin("epr", EPRModule))
-
-register_parser_section_alias(
-    ParserSectionAlias(
-        name="charges",
-        section_keys=("mulliken", "loewdin", "hirshfeld", "mbis", "chelpg"),
-    )
-)
-register_parser_section_alias(
-    ParserSectionAlias(
-        name="population",
-        section_keys=("mulliken", "loewdin", "mayer"),
-    )
-)
-register_parser_section_alias(
-    ParserSectionAlias(
-        name="mos",
-        section_keys=("orbital_energies", "qro"),
-    )
-)
-register_parser_section_alias(
-    ParserSectionAlias(
-        name="bonds",
-        section_keys=("mayer", "loewdin"),
-    )
-)
-register_parser_section_alias(ParserSectionAlias(name="nbo", section_keys=("nbo",)))
-register_parser_section_alias(
-    ParserSectionAlias(name="dipole", section_keys=("dipole",))
-)
-register_parser_section_alias(
-    ParserSectionAlias(name="solvation", section_keys=("solvation",))
-)
-register_parser_section_alias(ParserSectionAlias(name="epr", section_keys=("epr",)))

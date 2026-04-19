@@ -18,6 +18,8 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
+from ..parser_section_plugin import ParserSectionAlias, ParserSectionPlugin
+from ..plugin_bundle import PluginBundle, PluginMetadata
 from .base import BaseModule
 
 
@@ -657,3 +659,26 @@ class SolvationModule(BaseModule):
             return floating
 
         return cleaned
+
+
+PLUGIN_BUNDLE = PluginBundle(
+    metadata=PluginMetadata(
+        key="solvation_section",
+        name="Solvation Section",
+        short_help="Built-in implicit-solvation parser section owned by solvation.py.",
+        description=(
+            "Self-registering built-in parser section for CPCM, SMD, ALPB, "
+            "and COSMO-RS input/output metadata."
+        ),
+        docs_path="README.md",
+        examples=(
+            "orca_parser solvated.out --sections solvation",
+        ),
+    ),
+    parser_sections=(
+        ParserSectionPlugin("solvation", SolvationModule),
+    ),
+    parser_aliases=(
+        ParserSectionAlias(name="solvation", section_keys=("solvation",)),
+    ),
+)
