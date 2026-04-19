@@ -7,6 +7,7 @@ import re
 from typing import Any, Callable, Dict, List, Optional
 
 from ..job_family_registry import CalculationFamilyPlugin
+from ..parser_section_plugin import ParserSectionAlias, ParserSectionPlugin
 from ..plugin_bundle import PluginBundle, PluginMetadata
 from ..render_options import RenderOptions
 from .base import BaseModule
@@ -993,6 +994,31 @@ class BasisSetModule(BaseModule):
 
 
 PLUGIN_BUNDLES = (
+    PluginBundle(
+        metadata=PluginMetadata(
+            key="geometry_sections",
+            name="Geometry Core Sections",
+            short_help="Built-in metadata/geometry/basis parser sections owned by geometry.py.",
+            description=(
+                "Self-registering built-in parser sections for metadata, "
+                "final geometry, and basis-set composition, plus the "
+                "geometry section alias."
+            ),
+            docs_path="README.md",
+            examples=(
+                "orca_parser job.out --sections geometry",
+                "orca_parser job.out --sections metadata basis_set",
+            ),
+        ),
+        parser_sections=(
+            ParserSectionPlugin("metadata", MetadataModule, always_include=True),
+            ParserSectionPlugin("geometry", GeometryModule, always_include=True),
+            ParserSectionPlugin("basis_set", BasisSetModule, always_include=True),
+        ),
+        parser_aliases=(
+            ParserSectionAlias(name="geometry", section_keys=("geometry", "basis_set")),
+        ),
+    ),
     PluginBundle(
         metadata=PluginMetadata(
             key="deltascf",

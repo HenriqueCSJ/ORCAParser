@@ -17,6 +17,7 @@ import re
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from ..job_family_registry import CalculationFamilyPlugin
+from ..parser_section_plugin import ParserSectionAlias, ParserSectionPlugin
 from ..plugin_bundle import PluginBundle, PluginMetadata
 from ..render_options import RenderOptions
 from .base import BaseModule
@@ -1391,6 +1392,12 @@ PLUGIN_BUNDLES = (
                 csv_writers=(_write_excited_state_optimization_csv_sections,),
                 comparison_order=20,
             ),
+        ),
+        parser_sections=(
+            ParserSectionPlugin("tddft", TDDFTModule),
+        ),
+        parser_aliases=(
+            ParserSectionAlias(name="tddft", section_keys=("tddft",)),
         ),
     ),
 )

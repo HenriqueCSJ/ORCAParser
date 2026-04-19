@@ -19,23 +19,19 @@ from __future__ import annotations
 from typing import Optional
 
 from .modules import (
-    BasisSetModule,
     CHELPGModule,
     DipoleMomentModule,
     EPRModule,
-    GeometryModule,
     HirshfeldModule,
     LoewdinModule,
     MBISModule,
     MayerModule,
-    MetadataModule,
     MullikenModule,
     NBOModule,
     OrbitalEnergiesModule,
     QROModule,
     SCFModule,
     SolvationModule,
-    TDDFTModule,
 )
 
 from .parser_section_plugin import ParserSectionAlias, ParserSectionPlugin
@@ -172,15 +168,6 @@ def iter_active_parser_section_plugins(
 
 
 register_parser_section_plugin(
-    ParserSectionPlugin("metadata", MetadataModule, always_include=True)
-)
-register_parser_section_plugin(
-    ParserSectionPlugin("geometry", GeometryModule, always_include=True)
-)
-register_parser_section_plugin(
-    ParserSectionPlugin("basis_set", BasisSetModule, always_include=True)
-)
-register_parser_section_plugin(
     ParserSectionPlugin("scf", SCFModule, always_include=True)
 )
 register_parser_section_plugin(
@@ -195,7 +182,6 @@ register_parser_section_plugin(ParserSectionPlugin("mbis", MBISModule))
 register_parser_section_plugin(ParserSectionPlugin("chelpg", CHELPGModule))
 register_parser_section_plugin(ParserSectionPlugin("dipole", DipoleMomentModule))
 register_parser_section_plugin(ParserSectionPlugin("solvation", SolvationModule))
-register_parser_section_plugin(ParserSectionPlugin("tddft", TDDFTModule))
 register_parser_section_plugin(ParserSectionPlugin("nbo", NBOModule))
 register_parser_section_plugin(ParserSectionPlugin("epr", EPRModule))
 
@@ -229,11 +215,5 @@ register_parser_section_alias(
 )
 register_parser_section_alias(
     ParserSectionAlias(name="solvation", section_keys=("solvation",))
-)
-register_parser_section_alias(
-    ParserSectionAlias(name="tddft", section_keys=("tddft",))
-)
-register_parser_section_alias(
-    ParserSectionAlias(name="geometry", section_keys=("geometry", "basis_set"))
 )
 register_parser_section_alias(ParserSectionAlias(name="epr", section_keys=("epr",)))

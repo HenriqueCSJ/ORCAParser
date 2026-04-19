@@ -1102,11 +1102,16 @@ def test_builtin_families_are_discovered_from_their_modules() -> None:
         bundle.metadata.key for bundle in plugin_discovery.get_registered_plugin_bundles()
     }
 
+    assert "geometry_sections" in bundle_keys
     assert "deltascf" in bundle_keys
     assert "excited_state_optimization" in bundle_keys
     assert "goat" in bundle_keys
     assert "surface_scan" in bundle_keys
     assert "geom_opt" in bundle_keys
+    assert (
+        plugin_discovery.get_registered_plugin_source("geometry_sections")
+        == "orca_parser.modules.geometry"
+    )
     assert (
         plugin_discovery.get_registered_plugin_source("deltascf")
         == "orca_parser.modules.geometry"
