@@ -1,0 +1,16 @@
+#!/bin/sh
+
+set -eu
+
+REPO_ROOT=$(git rev-parse --show-toplevel)
+
+if command -v python >/dev/null 2>&1; then
+  exec python "$REPO_ROOT/tools/check_tracked_private_artifacts.py" --repo-root "$REPO_ROOT"
+fi
+
+if command -v py >/dev/null 2>&1; then
+  exec py -3 "$REPO_ROOT/tools/check_tracked_private_artifacts.py" --repo-root "$REPO_ROOT"
+fi
+
+echo "Privacy guardrails could not run because neither 'python' nor 'py -3' is available." >&2
+exit 1

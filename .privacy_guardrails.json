@@ -1,0 +1,36 @@
+{
+  "blocked_globs": [
+    {
+      "pattern": ".codex*",
+      "reason": "Codex scratch files can include private calculations, unpublished geometries, and local verification output."
+    },
+    {
+      "pattern": ".codex*/**",
+      "reason": "Codex scratch directories can include private calculations, unpublished geometries, and local verification output."
+    },
+    {
+      "pattern": ".pytest_tmp",
+      "reason": "Local pytest scratch directories should never be committed."
+    },
+    {
+      "pattern": ".pytest_tmp/**",
+      "reason": "Local pytest scratch directories should never be committed."
+    },
+    {
+      "pattern": ".pytest_cache",
+      "reason": "Local pytest cache directories should never be committed."
+    },
+    {
+      "pattern": ".pytest_cache/**",
+      "reason": "Local pytest cache directories should never be committed."
+    },
+    {
+      "pattern": "sample_md",
+      "reason": "Private reference markdown exports should stay local unless intentionally curated and reviewed."
+    },
+    {
+      "pattern": "sample_md/**",
+      "reason": "Private reference markdown exports should stay local unless intentionally curated and reviewed."
+    }
+  ]
+}
