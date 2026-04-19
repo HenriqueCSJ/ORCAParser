@@ -140,7 +140,7 @@ Examples
 import argparse
 import sys
 from pathlib import Path
-from typing import List
+from typing import Any, List
 
 from orca_parser.final_snapshot import (
     get_final_dipole as _get_final_dipole,
@@ -187,7 +187,8 @@ def _parse_goat_markdown_cutoff(value: str):
     return cutoff
 
 
-def parse_args():
+def parse_args() -> argparse.Namespace:
+    """Build and parse CLI arguments for ``orca_parser``."""
     _bootstrap_plugin_bundles()
     plugin_help = _build_plugin_help_section()
     p = argparse.ArgumentParser(
@@ -437,12 +438,119 @@ def _print_summary(data: dict, path: Path) -> None:
     print()
 
 
-def main():
-    args = parse_args()
+def _resolve_h5_compression(filter_name: str) -> str | None:
+    """Normalize the HDF5 compression argument for downstream writers."""
+    return None if filter_name.lower() == "none" else filter_name
+
+
+def _emit_write_status(path: Path, quiet: bool, *, label: str | None = None, end: str = "  ") -> None:
+    """Print a compact one-line status update for a written artifact."""
+    if quiet:
+        return
+    size_kb = path.stat().st_size / 1024
+    display_name = label or path.name
+    print(f"-> {display_name} ({size_kb:.1f} KB)", end=end, flush=True)
+
+
+def _parse_single_file(
+    fp: Path,
+    *,
+    sections: list[str] | None,
+    plugin_options: dict[str, Any],
+):
+    """Parse one ORCA output file and return the parser plus parsed data."""
     from orca_parser import ORCAParser
+
+    parser = ORCAParser(fp, plugin_options=plugin_options)
+    data = parser.parse(sections=sections)
+    return parser, data
+
+
+def _write_requested_outputs(
+    parser,
+    data: dict[str, Any],
+    fp: Path,
+    args: argparse.Namespace,
+    *,
+    goat_cutoff,
+    h5_compression: str | None,
+) -> None:
+    """Write all requested per-file outputs for one parsed job."""
+    outdir = Path(args.outdir) if args.outdir else fp.parent
+    stem = fp.stem
+
+    if args.write_json:
+        written = parser.to_json(
+            outdir / f"{stem}.json",
+            indent=0 if args.compact else args.indent,
+            strip_none=args.strip_none or args.compact,
+            compress=args.compress,
+        )
+        _emit_write_status(written, args.quiet)
+
+    if args.write_hdf5:
+        written = parser.to_hdf5(
+            outdir / f"{stem}.h5",
+            compression=h5_compression,
+            compression_opts=args.h5_level,
+        )
+        _emit_write_status(written, args.quiet)
+
+    if args.write_csv:
+        csv_dir = outdir / f"{stem}_csv"
+        parser.to_csv(csv_dir)
+        if not args.quiet:
+            table_count = sum(1 for _ in csv_dir.glob("*.csv"))
+            print(f"-> {csv_dir.name}/ ({table_count} tables)", end="  ", flush=True)
+
+    if args.write_markdown:
+        markdown_kwargs = {"detail_scope": args.detail_scope}
+        if goat_cutoff is not _GOAT_CUTOFF_UNSET:
+            markdown_kwargs["goat_max_relative_energy_kcal_mol"] = goat_cutoff
+        written = parser.to_markdown(
+            outdir / f"{stem}.md",
+            **markdown_kwargs,
+        )
+        _emit_write_status(written, args.quiet, end="")
+
+    if not args.quiet:
+        print()
+
+    if args.summary:
+        _print_summary(data, fp)
+
+
+def _write_comparison_output(
+    parsers: list[Any],
+    resolved_files: list[Path],
+    args: argparse.Namespace,
+    *,
+    goat_cutoff,
+) -> None:
+    """Write the multi-job comparison document when requested."""
+    if not args.write_compare or len(parsers) <= 1:
+        return
+
+    from orca_parser import ORCAParser
+
+    comp_outdir = Path(args.outdir) if args.outdir else resolved_files[0].parent
+    compare_kwargs = {"detail_scope": args.detail_scope}
+    if goat_cutoff is not _GOAT_CUTOFF_UNSET:
+        compare_kwargs["goat_max_relative_energy_kcal_mol"] = goat_cutoff
+    written = ORCAParser.compare(
+        parsers,
+        comp_outdir / "comparison.md",
+        **compare_kwargs,
+    )
+    _emit_write_status(written, args.quiet, label=f"comparison: {written.name}", end="\n")
+
+
+def main() -> None:
+    """Run the ``orca_parser`` command-line workflow."""
+    args = parse_args()
     plugin_options = _get_plugin_option_values(args)
 
-    h5_compression = None if args.h5_compression.lower() == "none" else args.h5_compression
+    h5_compression = _resolve_h5_compression(args.h5_compression)
     goat_cutoff = args.goat_max_relative_energy_kcal
     if args.write_compare:
         args.write_markdown = True
@@ -464,88 +572,31 @@ def main():
             print(f"Parsing {fp.name} [{sec_label}] ...", end=" ", flush=True)
 
         try:
-            parser = ORCAParser(fp, plugin_options=plugin_options)
-            data = parser.parse(sections=args.sections)
-            all_parsers.append(parser)
+            parser, data = _parse_single_file(
+                fp,
+                sections=args.sections,
+                plugin_options=plugin_options,
+            )
         except Exception as exc:
             print(f"[ERROR] {exc}", file=sys.stderr)
             continue
 
-        outdir = Path(args.outdir) if args.outdir else fp.parent
+        all_parsers.append(parser)
+        _write_requested_outputs(
+            parser,
+            data,
+            fp,
+            args,
+            goat_cutoff=goat_cutoff,
+            h5_compression=h5_compression,
+        )
 
-        # ── JSON ────────────────────────────────────────────────────
-        if args.write_json:
-            indent  = 0 if args.compact else args.indent
-            strip   = args.strip_none or args.compact
-            gzip_on = args.compress
-            json_path = outdir / (fp.stem + ".json")
-            written = parser.to_json(json_path, indent=indent,
-                                     strip_none=strip, compress=gzip_on)
-            if not args.quiet:
-                size = written.stat().st_size
-                print(f"-> {written.name} ({size/1024:.1f} KB)", end="  ", flush=True)
-
-        # ── HDF5 ────────────────────────────────────────────────────
-        if args.write_hdf5:
-            h5_path = outdir / (fp.stem + ".h5")
-            written = parser.to_hdf5(h5_path,
-                                     compression=h5_compression,
-                                     compression_opts=args.h5_level)
-            if not args.quiet:
-                size = written.stat().st_size
-                print(f"-> {written.name} ({size/1024:.1f} KB)", end="  ", flush=True)
-
-        # ── CSV ─────────────────────────────────────────────────────
-        if args.write_csv:
-            csv_dir = outdir / (fp.stem + "_csv")
-            files = parser.to_csv(csv_dir)
-            if not args.quiet:
-                print(f"-> {csv_dir.name}/ ({len(files)} tables)", end="  ", flush=True)
-
-        # ── Markdown (per file) ──────────────────────────────────────
-        if args.write_markdown:
-            md_path = outdir / (fp.stem + ".md")
-            if goat_cutoff is _GOAT_CUTOFF_UNSET:
-                written = parser.to_markdown(
-                    md_path,
-                    detail_scope=args.detail_scope,
-                )
-            else:
-                written = parser.to_markdown(
-                    md_path,
-                    goat_max_relative_energy_kcal_mol=goat_cutoff,
-                    detail_scope=args.detail_scope,
-                )
-            if not args.quiet:
-                size = written.stat().st_size
-                print(f"-> {written.name} ({size/1024:.1f} KB)", end="", flush=True)
-
-        if not args.quiet:
-            print()
-
-        if args.summary:
-            _print_summary(data, fp)
-
-    # ── Comparison document (all files) ─────────────────────────────
-    if args.write_compare and len(all_parsers) > 1:
-        comp_outdir = Path(args.outdir) if args.outdir else resolved_files[0].parent
-        comp_path   = comp_outdir / "comparison.md"
-        if goat_cutoff is _GOAT_CUTOFF_UNSET:
-            written = ORCAParser.compare(
-                all_parsers,
-                comp_path,
-                detail_scope=args.detail_scope,
-            )
-        else:
-            written = ORCAParser.compare(
-                all_parsers,
-                comp_path,
-                goat_max_relative_energy_kcal_mol=goat_cutoff,
-                detail_scope=args.detail_scope,
-            )
-        if not args.quiet:
-            size = written.stat().st_size
-            print(f"\n-> comparison: {written.name} ({size/1024:.1f} KB)")
+    _write_comparison_output(
+        all_parsers,
+        resolved_files,
+        args,
+        goat_cutoff=goat_cutoff,
+    )
 
 
 if __name__ == "__main__":

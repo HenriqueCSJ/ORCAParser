@@ -12,6 +12,7 @@ from orca_parser import ORCAParser
 import orca_parser.job_family_registry as family_registry
 import orca_parser.plugin_discovery as plugin_discovery
 import orca_parser.output.csv_section_registry as csv_section_registry
+import orca_parser.output.csv_writer as csv_writer
 import orca_parser.output.markdown_section_registry as markdown_section_registry
 import orca_parser.parser_section_registry as section_registry
 from orca_parser.job_family_registry import CalculationFamilyPlugin
@@ -1389,3 +1390,52 @@ def test_final_snapshot_remains_authoritative_for_markdown_and_csv() -> None:
     assert f"{real_dipole}" in dipole_csv
     assert f"{real_charge}" in mulliken_csv
     assert f"{real_bond}" in mayer_csv
+
+
+def test_csv_writer_warns_for_common_section_plugin_failures(
+    monkeypatch: pytest.MonkeyPatch,
+    tddft_parser: ORCAParser,
+    tmp_path: Path,
+) -> None:
+    def _broken_common_renderer(_data, _directory, _stem, _write_csv):
+        raise RuntimeError("common csv boom")
+
+    monkeypatch.setattr(
+        csv_section_registry,
+        "_CSV_SECTION_PLUGINS",
+        [CSVSectionPlugin(key="broken_common", order=1, render_files=_broken_common_renderer)],
+    )
+
+    with pytest.warns(RuntimeWarning, match=r"CSV section plugin 'broken_common'.*common csv boom"):
+        written = csv_writer.write_csvs(tddft_parser.data, tmp_path)
+
+    assert written == []
+
+
+def test_csv_writer_warns_for_family_writer_failures(
+    monkeypatch: pytest.MonkeyPatch,
+    tddft_parser: ORCAParser,
+    tmp_path: Path,
+) -> None:
+    family = tddft_parser.data["job_snapshot"]["calculation_family"]
+
+    def _broken_family_writer(_data, _directory, _stem, _write_csv):
+        raise RuntimeError("family csv boom")
+
+    plugin = CalculationFamilyPlugin(
+        family=family,
+        default_calculation_label="Broken CSV Family",
+        matcher=lambda *_args: False,
+        csv_writers=(_broken_family_writer,),
+    )
+
+    monkeypatch.setattr(csv_section_registry, "_CSV_SECTION_PLUGINS", [])
+    monkeypatch.setattr(family_registry, "_CALCULATION_FAMILY_PLUGINS", [plugin])
+
+    with pytest.warns(
+        RuntimeWarning,
+        match=rf"calculation family '{re.escape(family)}' writer '_broken_family_writer'.*family csv boom",
+    ):
+        written = csv_writer.write_csvs(tddft_parser.data, tmp_path)
+
+    assert written == []
