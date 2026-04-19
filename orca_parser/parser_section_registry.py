@@ -16,16 +16,13 @@ contract so the parser can discover sections instead of naming them by hand.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Optional, Sequence, TYPE_CHECKING
+from typing import Optional
 
 from .modules import (
     BasisSetModule,
     CHELPGModule,
     DipoleMomentModule,
     EPRModule,
-    GOATModule,
-    GeomOptModule,
     GeometryModule,
     HirshfeldModule,
     LoewdinModule,
@@ -38,38 +35,10 @@ from .modules import (
     QROModule,
     SCFModule,
     SolvationModule,
-    SurfaceScanModule,
     TDDFTModule,
 )
 
-if TYPE_CHECKING:
-    from .modules.base import BaseModule
-
-
-@dataclass(frozen=True)
-class ParserSectionPlugin:
-    """Plugin-like definition of one parser section.
-
-    A section plugin answers one parser-core question:
-
-        "Which module owns this logical output section?"
-
-    The parser only needs the section key, the module class, and whether the
-    section should always be included as part of the parser's core view.
-    Registration order is parse order.
-    """
-
-    key: str
-    module_class: type["BaseModule"]
-    always_include: bool = False
-
-
-@dataclass(frozen=True)
-class ParserSectionAlias:
-    """Named expansion for one or more parser sections."""
-
-    name: str
-    section_keys: Sequence[str]
+from .parser_section_plugin import ParserSectionAlias, ParserSectionPlugin
 
 
 _PARSER_SECTION_PLUGINS: list[ParserSectionPlugin] = []
@@ -229,9 +198,6 @@ register_parser_section_plugin(ParserSectionPlugin("solvation", SolvationModule)
 register_parser_section_plugin(ParserSectionPlugin("tddft", TDDFTModule))
 register_parser_section_plugin(ParserSectionPlugin("nbo", NBOModule))
 register_parser_section_plugin(ParserSectionPlugin("epr", EPRModule))
-register_parser_section_plugin(ParserSectionPlugin("goat", GOATModule))
-register_parser_section_plugin(ParserSectionPlugin("surface_scan", SurfaceScanModule))
-register_parser_section_plugin(ParserSectionPlugin("geom_opt", GeomOptModule))
 
 register_parser_section_alias(
     ParserSectionAlias(
@@ -271,10 +237,3 @@ register_parser_section_alias(
     ParserSectionAlias(name="geometry", section_keys=("geometry", "basis_set"))
 )
 register_parser_section_alias(ParserSectionAlias(name="epr", section_keys=("epr",)))
-register_parser_section_alias(ParserSectionAlias(name="goat", section_keys=("goat",)))
-register_parser_section_alias(
-    ParserSectionAlias(name="scan", section_keys=("surface_scan",))
-)
-register_parser_section_alias(
-    ParserSectionAlias(name="opt", section_keys=("geom_opt",))
-)

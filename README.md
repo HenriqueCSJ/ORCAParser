@@ -388,7 +388,7 @@ Example shape:
 ```python
 from orca_parser.modules.base import BaseModule
 from orca_parser.plugin_bundle import PluginBundle, PluginMetadata, PluginOption
-from orca_parser.parser_section_registry import ParserSectionAlias, ParserSectionPlugin
+from orca_parser.parser_section_plugin import ParserSectionAlias, ParserSectionPlugin
 
 
 class MyNewModule(BaseModule):

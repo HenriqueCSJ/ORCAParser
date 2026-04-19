@@ -232,29 +232,6 @@ def iter_active_comparison_family_plugins(
     return sorted(plugins, key=lambda plugin: (plugin.comparison_order, plugin.family))
 
 
-def _matches_goat(
-    meta: Dict[str, Any],
-    data: Dict[str, Any],
-    context: Dict[str, Any],
-    deltascf: Dict[str, Any],
-    excited_state_optimization: Dict[str, Any],
-) -> bool:
-    del deltascf, excited_state_optimization
-    calc_type = str(meta.get("calculation_type", "")).strip().lower()
-    return bool(data.get("goat") or context.get("is_goat") or "goat" in calc_type)
-
-
-def _matches_surface_scan(
-    meta: Dict[str, Any],
-    data: Dict[str, Any],
-    context: Dict[str, Any],
-    deltascf: Dict[str, Any],
-    excited_state_optimization: Dict[str, Any],
-) -> bool:
-    del deltascf, excited_state_optimization
-    return bool(data.get("surface_scan") or context.get("is_surface_scan"))
-
-
 def _matches_deltascf(
     meta: Dict[str, Any],
     data: Dict[str, Any],
@@ -276,18 +253,6 @@ def _matches_excited_state_optimization(
 ) -> bool:
     del data, context, deltascf
     return bool(excited_state_optimization)
-
-
-def _matches_geometry_optimization(
-    meta: Dict[str, Any],
-    data: Dict[str, Any],
-    context: Dict[str, Any],
-    deltascf: Dict[str, Any],
-    excited_state_optimization: Dict[str, Any],
-) -> bool:
-    del context, deltascf, excited_state_optimization
-    calc_type = str(meta.get("calculation_type", "")).strip().lower()
-    return bool(data.get("geom_opt") or "geometry optimization" in calc_type)
 
 
 def _matches_single_point(
@@ -417,77 +382,6 @@ def _render_excited_state_optimization_markdown_sections(
     return sections
 
 
-def _render_geometry_optimization_markdown_sections(
-    data: Dict[str, Any],
-    format_number: FormatNumber,
-    make_table: MakeTable,
-    render_options: RenderOptions,
-) -> List[MarkdownSection]:
-    """Render geometry-optimization history for the plain optimization family."""
-
-    from .job_series import get_geom_opt_series
-    from .output.markdown_sections_basic import render_geom_opt_section
-
-    geom_opt = get_geom_opt_series(data)
-    if not geom_opt:
-        return []
-
-    body = render_geom_opt_section(
-        geom_opt,
-        format_number=format_number,
-        make_table=make_table,
-        cycle_preview_count=render_options.geom_opt_cycle_preview_count,
-    )
-    return [("Geometry Optimization", body)] if body else []
-
-
-def _render_surface_scan_markdown_sections(
-    data: Dict[str, Any],
-    format_number: FormatNumber,
-    make_table: MakeTable,
-    render_options: RenderOptions,
-) -> List[MarkdownSection]:
-    """Render relaxed-scan history for the scan family."""
-    del render_options
-
-    from .job_series import get_surface_scan_series
-    from .output.markdown_sections_basic import render_surface_scan_section
-
-    surface_scan = get_surface_scan_series(data)
-    if not surface_scan:
-        return []
-
-    body = render_surface_scan_section(
-        surface_scan,
-        format_number=format_number,
-        make_table=make_table,
-    )
-    return [("Relaxed Surface Scan", body)] if body else []
-
-
-def _render_goat_markdown_sections(
-    data: Dict[str, Any],
-    format_number: FormatNumber,
-    make_table: MakeTable,
-    render_options: RenderOptions,
-) -> List[MarkdownSection]:
-    """Render GOAT ensemble sections for the GOAT family."""
-    from .job_series import get_goat_series
-    from .output.markdown_sections_basic import render_goat_section
-
-    goat = get_goat_series(data)
-    if not goat:
-        return []
-
-    body = render_goat_section(
-        goat,
-        format_number=format_number,
-        make_table=make_table,
-        max_relative_energy_kcal_mol=render_options.goat_max_relative_energy_kcal_mol,
-    )
-    return [("GOAT Conformer Search", body)] if body else []
-
-
 def _render_deltascf_comparison_sections(
     datasets: List[Dict[str, Any]],
     labels: List[str],
@@ -571,46 +465,6 @@ def _render_excited_state_optimization_comparison_sections(
     return [("Excited-State Optimization", make_table(rows))]
 
 
-def _render_surface_scan_comparison_sections(
-    datasets: List[Dict[str, Any]],
-    labels: List[str],
-    format_number: FormatNumber,
-    make_table: MakeTable,
-    render_options: RenderOptions,
-) -> List[MarkdownSection]:
-    """Render the comparison table for relaxed surface scans."""
-    del render_options
-
-    from .job_series import get_surface_scan_series
-
-    if not any(get_calculation_family_plugin(dataset).family == "surface_scan" for dataset in datasets):
-        return []
-
-    rows = [("", "mode", "parameters", "steps", "coordinates", "span (kcal/mol)")]
-    for label, dataset in zip(labels, datasets):
-        scan = get_surface_scan_series(dataset)
-        parameters = scan.get("parameters") or []
-        coordinate_summary = "; ".join(
-            (
-                f"{parameter.get('label', '?')} "
-                f"{format_number(parameter.get('start'))}->{format_number(parameter.get('end'))} "
-                f"({parameter.get('steps', '?')})"
-            )
-            if parameter.get("mode") != "values"
-            else f"{parameter.get('label', '?')} [{len(parameter.get('values') or [])} values]"
-            for parameter in parameters
-        ) or "—"
-        rows.append((
-            label,
-            scan.get("mode", "—"),
-            str(scan.get("n_parameters", "—")),
-            str(scan.get("n_constrained_optimizations", "—")),
-            coordinate_summary,
-            format_number(scan.get("actual_energy_span_kcal_mol")),
-        ))
-    return [("Surface Scans", make_table(rows))]
-
-
 def _write_deltascf_csv_sections(
     data: Dict[str, Any],
     directory: Path,
@@ -674,79 +528,6 @@ def _write_excited_state_optimization_csv_sections(
     return files
 
 
-def _write_geometry_optimization_csv_sections(
-    data: Dict[str, Any],
-    directory: Path,
-    stem: str,
-    write_csv: WriteCSV,
-) -> List[Path]:
-    """Write plain geometry-optimization CSV sections via the family hook."""
-    from .output.csv_sections_basic import write_geom_opt_section
-
-    return write_geom_opt_section(
-        data,
-        directory,
-        stem,
-        write_csv=write_csv,
-    )
-
-
-def _write_surface_scan_csv_sections(
-    data: Dict[str, Any],
-    directory: Path,
-    stem: str,
-    write_csv: WriteCSV,
-) -> List[Path]:
-    """Write relaxed-scan CSV sections via the family hook."""
-    from .output import job_state as _job_state
-    from .output.csv_sections_basic import write_surface_scan_section
-
-    return write_surface_scan_section(
-        data,
-        directory,
-        stem,
-        write_csv=write_csv,
-        format_simple_vector=_job_state.format_simple_vector,
-    )
-
-
-def _write_goat_csv_sections(
-    data: Dict[str, Any],
-    directory: Path,
-    stem: str,
-    write_csv: WriteCSV,
-) -> List[Path]:
-    """Write GOAT CSV sections via the family hook."""
-    from .output.csv_sections_basic import write_goat_section
-
-    return write_goat_section(
-        data,
-        directory,
-        stem,
-        write_csv=write_csv,
-    )
-
-
-register_calculation_family_plugin(
-    CalculationFamilyPlugin(
-        family="goat",
-        default_calculation_label="GOAT Conformer Search",
-        matcher=_matches_goat,
-        render_markdown_sections=_render_goat_markdown_sections,
-        csv_writers=(_write_goat_csv_sections,),
-    )
-)
-register_calculation_family_plugin(
-    CalculationFamilyPlugin(
-        family="surface_scan",
-        default_calculation_label="Relaxed Surface Scan",
-        matcher=_matches_surface_scan,
-        render_markdown_sections=_render_surface_scan_markdown_sections,
-        render_comparison_sections=_render_surface_scan_comparison_sections,
-        csv_writers=(_write_surface_scan_csv_sections,),
-        comparison_order=80,
-    )
-)
 register_calculation_family_plugin(
     CalculationFamilyPlugin(
         family="deltascf",
@@ -772,15 +553,6 @@ register_calculation_family_plugin(
         render_comparison_sections=_render_excited_state_optimization_comparison_sections,
         csv_writers=(_write_excited_state_optimization_csv_sections,),
         comparison_order=20,
-    )
-)
-register_calculation_family_plugin(
-    CalculationFamilyPlugin(
-        family="geometry_optimization",
-        default_calculation_label="Geometry Optimization",
-        matcher=_matches_geometry_optimization,
-        render_markdown_sections=_render_geometry_optimization_markdown_sections,
-        csv_writers=(_write_geometry_optimization_csv_sections,),
     )
 )
 register_calculation_family_plugin(

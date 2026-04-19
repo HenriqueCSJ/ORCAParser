@@ -23,7 +23,7 @@ from typing import Any, Callable, Optional, Sequence
 from .job_family_registry import CalculationFamilyPlugin
 from .output.csv_section_registry import CSVSectionPlugin
 from .output.markdown_section_registry import MarkdownSectionPlugin
-from .parser_section_registry import ParserSectionAlias, ParserSectionPlugin
+from .parser_section_plugin import ParserSectionAlias, ParserSectionPlugin
 
 
 @dataclass(frozen=True)

@@ -11,8 +11,14 @@ from __future__ import annotations
 
 import math
 import re
-from typing import Any, Dict, List, Optional
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional
 
+from ..job_family_registry import CalculationFamilyPlugin
+from ..job_series import get_geom_opt_series
+from ..parser_section_plugin import ParserSectionAlias, ParserSectionPlugin
+from ..plugin_bundle import PluginBundle, PluginMetadata
+from ..render_options import RenderOptions
 from .base import BaseModule
 
 # ── Regex patterns ────────────────────────────────────────────────────
@@ -255,6 +261,61 @@ def _parse_opt_setup(lines: list[str]) -> Dict[str, Dict[str, str]]:
     return result
 
 
+def _matches_geometry_optimization(
+    meta: Dict[str, Any],
+    data: Dict[str, Any],
+    context: Dict[str, Any],
+    deltascf: Dict[str, Any],
+    excited_state_optimization: Dict[str, Any],
+) -> bool:
+    """Match plain geometry optimizations from normalized metadata or parsed data."""
+
+    del context, deltascf, excited_state_optimization
+    calc_type = str(meta.get("calculation_type", "")).strip().lower()
+    return bool(data.get("geom_opt") or "geometry optimization" in calc_type)
+
+
+def _render_geometry_optimization_markdown_sections(
+    data: Dict[str, Any],
+    format_number: Callable[[Any, str], str],
+    make_table: Callable[[List[tuple]], str],
+    render_options: RenderOptions,
+) -> List[tuple[str, str]]:
+    """Render plain optimization history from the normalized geometry series."""
+
+    geom_opt = get_geom_opt_series(data)
+    if not geom_opt:
+        return []
+
+    from ..output.markdown_sections_basic import render_geom_opt_section
+
+    body = render_geom_opt_section(
+        geom_opt,
+        format_number=format_number,
+        make_table=make_table,
+        cycle_preview_count=render_options.geom_opt_cycle_preview_count,
+    )
+    return [("Geometry Optimization", body)] if body else []
+
+
+def _write_geometry_optimization_csv_sections(
+    data: Dict[str, Any],
+    directory: Path,
+    stem: str,
+    write_csv: Callable[[Path, str, List[Dict[str, Any]], List[str]], Path],
+) -> List[Path]:
+    """Write optimization-cycle CSV exports from the family plugin."""
+
+    from ..output.csv_sections_basic import write_geom_opt_section
+
+    return write_geom_opt_section(
+        data,
+        directory,
+        stem,
+        write_csv=write_csv,
+    )
+
+
 # ── Module class ─────────────────────────────────────────────────────
 
 class GeomOptModule(BaseModule):
@@ -406,3 +467,37 @@ class GeomOptModule(BaseModule):
                 if pat.search(bl):
                     return keyword
         return None
+
+
+PLUGIN_BUNDLE = PluginBundle(
+    metadata=PluginMetadata(
+        key="geom_opt",
+        name="Geometry Optimization",
+        short_help="Built-in geometry optimization parser family with cycle-history output hooks.",
+        description=(
+            "Self-registering built-in geometry optimization module. Owns the "
+            "parser section, the opt alias, the normalized geometry "
+            "optimization family matcher, and the family-specific markdown/CSV hooks."
+        ),
+        docs_path="README.md",
+        examples=(
+            "orca_parser optimization.out --sections opt --markdown --csv",
+            "orca_parser optimization.out --detail-scope full",
+        ),
+    ),
+    parser_sections=(
+        ParserSectionPlugin("geom_opt", GeomOptModule),
+    ),
+    parser_aliases=(
+        ParserSectionAlias(name="opt", section_keys=("geom_opt",)),
+    ),
+    calculation_families=(
+        CalculationFamilyPlugin(
+            family="geometry_optimization",
+            default_calculation_label="Geometry Optimization",
+            matcher=_matches_geometry_optimization,
+            render_markdown_sections=_render_geometry_optimization_markdown_sections,
+            csv_writers=(_write_geometry_optimization_csv_sections,),
+        ),
+    ),
+)
