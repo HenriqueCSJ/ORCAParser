@@ -2,9 +2,13 @@
 Modules for calculation metadata, geometry, and basis set information.
 """
 
+from pathlib import Path
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
+from ..job_family_registry import CalculationFamilyPlugin
+from ..plugin_bundle import PluginBundle, PluginMetadata
+from ..render_options import RenderOptions
 from .base import BaseModule
 
 
@@ -694,6 +698,122 @@ class MetadataModule(BaseModule):
         return sym
 
 
+def _matches_deltascf(
+    meta: Dict[str, Any],
+    data: Dict[str, Any],
+    context: Dict[str, Any],
+    deltascf: Dict[str, Any],
+    excited_state_optimization: Dict[str, Any],
+) -> bool:
+    """Match DeltaSCF jobs from the same module that parsed their metadata."""
+
+    del data, context, excited_state_optimization
+    calc_type = str(meta.get("calculation_type", "")).strip().lower()
+    return bool(deltascf or calc_type == "deltascf")
+
+
+def _build_deltascf_state_label(
+    meta: Dict[str, Any],
+    data: Dict[str, Any],
+    deltascf: Dict[str, Any],
+    excited_state_optimization: Dict[str, Any],
+) -> str:
+    del meta, data, deltascf, excited_state_optimization
+    return "DeltaSCF excited-state"
+
+
+def _render_deltascf_markdown_sections(
+    data: Dict[str, Any],
+    format_number: Callable[[Any, str], str],
+    make_table: Callable[[List[tuple]], str],
+    render_options: RenderOptions,
+) -> List[tuple[str, str]]:
+    """Render DeltaSCF markdown from the owning metadata module."""
+
+    del render_options
+
+    from ..output import job_state as _job_state
+    from ..output.markdown_sections_state import render_deltascf_section
+
+    formatter = lambda value: format_number(value)
+    body = render_deltascf_section(
+        data,
+        get_deltascf_data=_job_state.get_deltascf_data,
+        deltascf_target_summary=lambda deltascf: _job_state.deltascf_target_summary(
+            deltascf,
+            formatter=formatter,
+        ),
+        format_deltascf_vector=lambda values: _job_state.format_deltascf_vector(
+            values,
+            formatter=formatter,
+        ),
+        yes_no_unknown=_job_state.yes_no_unknown,
+        make_table=make_table,
+    )
+    return [("DeltaSCF / Excited-State Target", body)] if body else []
+
+
+def _render_deltascf_comparison_sections(
+    datasets: List[Dict[str, Any]],
+    labels: List[str],
+    format_number: Callable[[Any, str], str],
+    make_table: Callable[[List[tuple]], str],
+    render_options: RenderOptions,
+) -> List[tuple[str, str]]:
+    """Render DeltaSCF comparison sections from the owning module."""
+
+    del format_number, render_options
+
+    from ..job_family_registry import get_calculation_family_plugin
+    from ..output import job_state as _job_state
+
+    if not any(get_calculation_family_plugin(dataset).family == "deltascf" for dataset in datasets):
+        return []
+
+    rows = [("", "electronic state", "target", "metric", "keep ref")]
+    for label, dataset in zip(labels, datasets):
+        if get_calculation_family_plugin(dataset).family != "deltascf":
+            rows.append((label, "—", "—", "—", "—"))
+            continue
+        deltascf = _job_state.get_deltascf_data(dataset)
+        rows.append((
+            label,
+            _job_state.electronic_state_label(dataset, ground_state_label="ground-state") or "ground-state",
+            _job_state.deltascf_target_summary(deltascf) or "—",
+            deltascf.get("aufbau_metric") or "—",
+            _job_state.yes_no_unknown(deltascf.get("keep_initial_reference")),
+        ))
+    return [("DeltaSCF", make_table(rows))]
+
+
+def _write_deltascf_csv_sections(
+    data: Dict[str, Any],
+    directory: Path,
+    stem: str,
+    write_csv: Callable[[Path, str, List[Dict[str, Any]], List[str]], Path],
+) -> List[Path]:
+    """Write DeltaSCF CSV output from the owning metadata module."""
+
+    from ..output import job_state as _job_state
+    from ..output.csv_sections_state import write_deltascf_section
+
+    return write_deltascf_section(
+        data,
+        directory,
+        stem,
+        write_csv=write_csv,
+        electronic_state_label=lambda dataset: _job_state.electronic_state_label(
+            dataset,
+            ground_state_label="Ground-state",
+        ),
+        get_deltascf_data=_job_state.get_deltascf_data,
+        is_deltascf=_job_state.is_deltascf,
+        format_deltascf_target=_job_state.format_deltascf_target,
+        format_simple_vector=_job_state.format_simple_vector,
+        bool_to_label=_job_state.bool_to_label,
+    )
+
+
 class GeometryModule(BaseModule):
     """Extracts Cartesian coordinates (Å and a.u.) and internal coordinates."""
 
@@ -870,3 +990,37 @@ class BasisSetModule(BaseModule):
                 data["max_angular_momentum"] = int(m.group(1))
 
         return data if data else None
+
+
+PLUGIN_BUNDLES = (
+    PluginBundle(
+        metadata=PluginMetadata(
+            key="deltascf",
+            name="DeltaSCF Family",
+            short_help="Built-in DeltaSCF family behavior owned by the metadata module.",
+            description=(
+                "Owns normalized DeltaSCF family classification plus the "
+                "family-specific markdown and CSV hooks used by downstream "
+                "renderers."
+            ),
+            docs_path="README.md",
+            examples=(
+                "orca_parser excited_state.out --markdown",
+                "orca_parser *.out --compare",
+            ),
+        ),
+        calculation_families=(
+            CalculationFamilyPlugin(
+                family="deltascf",
+                default_calculation_label="DeltaSCF",
+                matcher=_matches_deltascf,
+                electronic_state_kind="deltascf_excited_state",
+                build_special_electronic_state_label=_build_deltascf_state_label,
+                render_markdown_sections=_render_deltascf_markdown_sections,
+                render_comparison_sections=_render_deltascf_comparison_sections,
+                csv_writers=(_write_deltascf_csv_sections,),
+                comparison_order=10,
+            ),
+        ),
+    ),
+)

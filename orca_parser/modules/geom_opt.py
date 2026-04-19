@@ -270,7 +270,9 @@ def _matches_geometry_optimization(
 ) -> bool:
     """Match plain geometry optimizations from normalized metadata or parsed data."""
 
-    del context, deltascf, excited_state_optimization
+    del context, deltascf
+    if excited_state_optimization:
+        return False
     calc_type = str(meta.get("calculation_type", "")).strip().lower()
     return bool(data.get("geom_opt") or "geometry optimization" in calc_type)
 

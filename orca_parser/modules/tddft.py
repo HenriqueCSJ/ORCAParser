@@ -12,9 +12,13 @@ Extracts:
 
 from __future__ import annotations
 
+from pathlib import Path
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from ..job_family_registry import CalculationFamilyPlugin
+from ..plugin_bundle import PluginBundle, PluginMetadata
+from ..render_options import RenderOptions
 from .base import BaseModule
 
 
@@ -1171,3 +1175,222 @@ class TDDFTModule(BaseModule):
         if not energy_cm1:
             return None
         return 1.0e7 / energy_cm1
+
+
+def _matches_excited_state_optimization(
+    meta: Dict[str, Any],
+    data: Dict[str, Any],
+    context: Dict[str, Any],
+    deltascf: Dict[str, Any],
+    excited_state_optimization: Dict[str, Any],
+) -> bool:
+    """Match excited-state optimizations from the same module that parses them."""
+
+    del meta, data, context, deltascf
+    return bool(excited_state_optimization)
+
+
+def _excited_state_target_label_from_payload(excopt: Dict[str, Any]) -> str:
+    """Return a compact target label such as S1/T2/root 3."""
+
+    label = str(excopt.get("target_state_label") or "").strip()
+    if label:
+        return label
+    root = excopt.get("target_root")
+    if root is None:
+        root = excopt.get("final_root")
+    if root is None:
+        return ""
+    return f"root {root}"
+
+
+def _build_excited_state_optimization_label(
+    meta: Dict[str, Any],
+    data: Dict[str, Any],
+    deltascf: Dict[str, Any],
+    excited_state_optimization: Dict[str, Any],
+) -> str:
+    del meta, data, deltascf
+    target = _excited_state_target_label_from_payload(excited_state_optimization)
+    if target:
+        return f"Excited-state optimization ({target})"
+    return "Excited-state optimization"
+
+
+def _build_excited_state_target_label(
+    meta: Dict[str, Any],
+    data: Dict[str, Any],
+    deltascf: Dict[str, Any],
+    excited_state_optimization: Dict[str, Any],
+) -> str:
+    del meta, data, deltascf
+    return _excited_state_target_label_from_payload(excited_state_optimization)
+
+
+def _render_excited_state_optimization_markdown_sections(
+    data: Dict[str, Any],
+    format_number: Callable[[Any, str], str],
+    make_table: Callable[[List[tuple]], str],
+    render_options: RenderOptions,
+) -> List[tuple[str, str]]:
+    """Render excited-state optimization sections from the owning TDDFT module."""
+
+    from ..job_series import get_geom_opt_series
+    from ..output import job_state as _job_state
+    from ..output.markdown_sections_basic import render_geom_opt_section
+    from ..output.markdown_sections_state import render_excited_state_opt_section
+
+    sections: List[tuple[str, str]] = []
+
+    excited_body = render_excited_state_opt_section(
+        data,
+        get_excited_state_opt_data=_job_state.get_excited_state_opt_data,
+        excited_state_target_label=_job_state.excited_state_target_label,
+        yes_no_unknown=_job_state.yes_no_unknown,
+        format_number=format_number,
+        make_table=make_table,
+    )
+    if excited_body:
+        sections.append(("Excited-State Geometry Optimization", excited_body))
+
+    geom_opt = get_geom_opt_series(data)
+    geom_opt_body = (
+        render_geom_opt_section(
+            geom_opt,
+            format_number=format_number,
+            make_table=make_table,
+            cycle_preview_count=render_options.geom_opt_cycle_preview_count,
+        )
+        if geom_opt
+        else ""
+    )
+    if geom_opt_body:
+        sections.append(("Geometry Optimization", geom_opt_body))
+
+    return sections
+
+
+def _render_excited_state_optimization_comparison_sections(
+    datasets: List[Dict[str, Any]],
+    labels: List[str],
+    format_number: Callable[[Any, str], str],
+    make_table: Callable[[List[tuple]], str],
+    render_options: RenderOptions,
+) -> List[tuple[str, str]]:
+    """Render excited-state optimization comparison output from the TDDFT module."""
+
+    del format_number, render_options
+
+    from ..job_family_registry import get_calculation_family_plugin
+    from ..output import job_state as _job_state
+
+    if not any(
+        get_calculation_family_plugin(dataset).family == "excited_state_optimization"
+        for dataset in datasets
+    ):
+        return []
+
+    rows = [("", "electronic state", "target", "input", "followiroot", "SOC grad", "final root")]
+    for label, dataset in zip(labels, datasets):
+        if get_calculation_family_plugin(dataset).family != "excited_state_optimization":
+            rows.append((label, "—", "—", "—", "—", "—", "—"))
+            continue
+        excited_state_optimization = _job_state.get_excited_state_opt_data(dataset)
+        rows.append((
+            label,
+            _job_state.electronic_state_label(dataset, ground_state_label="ground-state") or "ground-state",
+            _job_state.excited_state_target_label(excited_state_optimization) or "—",
+            (
+                f"%{excited_state_optimization.get('input_block')}"
+                if excited_state_optimization.get("input_block")
+                else "—"
+            ),
+            (
+                _job_state.yes_no_unknown(excited_state_optimization.get("followiroot"))
+                if "followiroot" in excited_state_optimization
+                else "—"
+            ),
+            (
+                _job_state.yes_no_unknown(excited_state_optimization.get("socgrad"))
+                if "socgrad" in excited_state_optimization
+                else "—"
+            ),
+            (
+                str(excited_state_optimization.get("final_root"))
+                if excited_state_optimization.get("final_root") is not None
+                else "—"
+            ),
+        ))
+    return [("Excited-State Optimization", make_table(rows))]
+
+
+def _write_excited_state_optimization_csv_sections(
+    data: Dict[str, Any],
+    directory: Path,
+    stem: str,
+    write_csv: Callable[[Path, str, List[Dict[str, Any]], List[str]], Path],
+) -> List[Path]:
+    """Write excited-state optimization CSV output from the TDDFT module."""
+
+    from ..output import job_state as _job_state
+    from ..output.csv_sections_basic import write_geom_opt_section
+    from ..output.csv_sections_state import write_excited_state_optimization_section
+
+    files = write_excited_state_optimization_section(
+        data,
+        directory,
+        stem,
+        write_csv=write_csv,
+        electronic_state_label=lambda dataset: _job_state.electronic_state_label(
+            dataset,
+            ground_state_label="Ground-state",
+        ),
+        get_excited_state_opt_data=_job_state.get_excited_state_opt_data,
+        excited_state_target_label=_job_state.excited_state_target_label,
+        bool_to_label=_job_state.bool_to_label,
+        format_simple_vector=_job_state.format_simple_vector,
+    )
+    files.extend(
+        write_geom_opt_section(
+            data,
+            directory,
+            stem,
+            write_csv=write_csv,
+        )
+    )
+    return files
+
+
+PLUGIN_BUNDLES = (
+    PluginBundle(
+        metadata=PluginMetadata(
+            key="excited_state_optimization",
+            name="Excited-State Optimization Family",
+            short_help="Built-in excited-state optimization family behavior owned by the TDDFT module.",
+            description=(
+                "Owns normalized excited-state-optimization family "
+                "classification plus the family-specific markdown and CSV "
+                "hooks used by downstream renderers."
+            ),
+            docs_path="README.md",
+            examples=(
+                "orca_parser excited_opt.out --markdown",
+                "orca_parser *.out --compare",
+            ),
+        ),
+        calculation_families=(
+            CalculationFamilyPlugin(
+                family="excited_state_optimization",
+                default_calculation_label="Excited-State Geometry Optimization",
+                matcher=_matches_excited_state_optimization,
+                electronic_state_kind="excited_state_optimization",
+                build_special_electronic_state_label=_build_excited_state_optimization_label,
+                build_state_target_label=_build_excited_state_target_label,
+                render_markdown_sections=_render_excited_state_optimization_markdown_sections,
+                render_comparison_sections=_render_excited_state_optimization_comparison_sections,
+                csv_writers=(_write_excited_state_optimization_csv_sections,),
+                comparison_order=20,
+            ),
+        ),
+    ),
+)
