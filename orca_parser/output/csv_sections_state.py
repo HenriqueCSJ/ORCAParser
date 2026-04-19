@@ -65,6 +65,8 @@ def write_metadata_section(
         "calculation_family": snapshot.get("calculation_family", ""),
         "electronic_state": electronic_state_label(data),
         "hf_type": snapshot.get("hf_type", meta.get("hf_type", "")),
+        "reference_type": snapshot.get("reference_type", meta.get("reference_type", "")),
+        "is_unrestricted": bool_to_label(snapshot.get("is_unrestricted", data.get("context", {}).get("is_unrestricted"))),
         "method": snapshot.get("method", meta.get("method", "")),
         "functional": snapshot.get("functional", meta.get("functional", "")),
         "level_of_theory": snapshot.get("level_of_theory", meta.get("level_of_theory", "")),

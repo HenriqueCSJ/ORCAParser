@@ -6,6 +6,11 @@ from pathlib import Path
 import re
 from typing import Any, Callable, Dict, List, Optional
 
+from ..input_semantics import (
+    detect_input_symmetry_request,
+    infer_reference_type,
+    is_unrestricted_reference,
+)
 from ..job_family_registry import CalculationFamilyPlugin
 from ..output.csv_section_registry import GEOMETRY_CSV_SECTION_PLUGIN
 from ..output.markdown_section_registry import (
@@ -67,7 +72,7 @@ class MetadataModule(BaseModule):
                     data["calculation_type"] = "Frequency"
                     break
 
-        # SCF type (RHF/UHF)
+        # SCF spin-treatment label from ORCA output (e.g. RHF/UHF/ROHF)
         for ln in lines:
             m = re.search(r"Hartree-Fock type\s+HFTyp\s+\.\.\.\.\s+(\w+)", ln)
             if m:
@@ -261,10 +266,24 @@ class MetadataModule(BaseModule):
             if deltascf:
                 data["deltascf"] = deltascf
 
-        # Set context flags based on parsed data
-        hf_type = data.get("hf_type", "RHF")
-        self.context["is_uhf"] = hf_type.upper() == "UHF"
-        self.context["hf_type"] = hf_type
+        # Normalize reference semantics once here so every downstream module
+        # gets the same answer for RHF/RKS/UHF/UKS-style decisions.
+        reference_type = infer_reference_type(
+            bang_tokens=(self.context.get("input_echo") or {}).get("bang_tokens", []),
+            hf_type=data.get("hf_type", self.context.get("hf_type", "RHF")),
+            method=data.get("method"),
+            functional=data.get("functional"),
+            reported_functional=data.get("reported_functional"),
+        ) or "RHF"
+        is_unrestricted = is_unrestricted_reference(reference_type)
+
+        data["reference_type"] = reference_type
+        self.context["reference_type"] = reference_type
+        self.context["is_unrestricted"] = is_unrestricted
+        # ``is_uhf`` remains as a compatibility alias for existing parser and
+        # rendering code that still uses the older name.
+        self.context["is_uhf"] = is_unrestricted
+        self.context["hf_type"] = data.get("hf_type", self.context.get("hf_type", "RHF"))
 
         return data if data else None
 
@@ -497,12 +516,16 @@ class MetadataModule(BaseModule):
         return excited_state or None
 
     def _derive_input_symmetry_requested(self, input_echo: Dict[str, Any]) -> Optional[bool]:
-        """Detect explicit symmetry enable/disable requests from the input."""
-        tokens_upper = {token.upper() for token in input_echo.get("bang_tokens") or []}
-        if "USESYM" in tokens_upper:
-            return True
-        if "NOUSESYM" in tokens_upper:
-            return False
+        """Detect normalized symmetry intent from the input.
+
+        ORCA defaults to not using symmetry unless ``UseSym`` (or the
+        equivalent ``%sym`` setting) turns it on.  We therefore normalize the
+        absence of a symmetry request to ``False`` instead of leaving it
+        unknown.
+        """
+        token_request = detect_input_symmetry_request(input_echo.get("bang_tokens") or [])
+        if token_request is not None:
+            return token_request
 
         sym_block = (input_echo.get("blocks") or {}).get("sym") or {}
         for raw_line in sym_block.get("raw_lines") or []:
@@ -513,7 +536,7 @@ class MetadataModule(BaseModule):
                 return False
             if "true" in lowered or "on" in lowered:
                 return True
-        return None
+        return False
 
     def _input_echo_contains_geom_scan(self) -> bool:
         """Detect ``%geom ... scan`` in the shared echoed-input payload."""

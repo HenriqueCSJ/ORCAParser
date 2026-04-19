@@ -344,6 +344,7 @@ def _print_summary(data: dict, path: Path) -> None:
     print(f"  Job          : {_get_job_name(data) or 'N/A'}")
     print(f"  Calc type    : {_calculation_type_label(data) or 'N/A'}")
     print(f"  State        : {state_label}")
+    print(f"  Reference    : {ctx.get('reference_type', ctx.get('hf_type', 'N/A'))}")
     print(f"  HF type      : {ctx.get('hf_type', 'N/A')}")
     print(f"  Method       : {_get_method_header_label(data)}")
     print(f"  Basis        : {_get_basis_set(data) or 'N/A'}")

@@ -17,6 +17,7 @@ TDDFT_SYM_OUT = REPO_ROOT / "sample_outs" / "R2SCAN-QIDH" / "F3CNO.out"
 TDDFT_NBO_OUT = REPO_ROOT / "sample_outs" / "Diox" / "TDDFT" / "RDB_vinyl_a_TDDFT_Diox.out"
 S1_OPT_OUT = REPO_ROOT / "sample_outs" / "Diox" / "S1" / "RDB_vinyl_a_S1_Diox.out"
 SCAN_OUT = REPO_ROOT / "sample_outs" / "Scan" / "F3CNO.out"
+OPT_NOSYM_OUT = REPO_ROOT / "sample_outs" / "N" / "OPT_NoSymb" / "NC.out"
 
 
 @pytest.fixture(scope="session")
@@ -61,9 +62,50 @@ def surface_scan_parser() -> ORCAParser:
     return parser
 
 
+@pytest.fixture(scope="session")
+def opt_nosym_parser() -> ORCAParser:
+    parser = ORCAParser(OPT_NOSYM_OUT)
+    parser.parse()
+    return parser
+
+
 def _read_csv_rows(path: Path) -> list[dict[str, str]]:
     with path.open("r", encoding="utf-8", newline="") as handle:
         return list(csv.DictReader(handle))
+
+
+def _write_minimal_orca_output(
+    path: Path,
+    *,
+    input_name: str,
+    echoed_input_lines: list[str],
+    body_lines: list[str],
+) -> Path:
+    """Create a tiny ORCA-like output for parser-level normalization tests."""
+
+    lines = [
+        "-------------------------",
+        "Program Version 6.1.0",
+        "An Ab Initio, DFT and Semiempirical electronic structure package",
+        "================================================================================",
+        "                                       INPUT FILE",
+        "================================================================================",
+        f"NAME = {input_name}",
+    ]
+    for idx, content in enumerate(echoed_input_lines, start=1):
+        lines.append(f"| {idx:2d}> {content}")
+    lines.extend([
+        "",
+        "                         ****END OF INPUT****",
+        "================================================================================",
+    ])
+    lines.extend(body_lines)
+    lines.extend([
+        "ORCA TERMINATED NORMALLY",
+        "TOTAL RUN TIME: 0 days 0 hours 0 minutes 1 seconds",
+    ])
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
 
 
 def test_auxiliary_atom_outputs_are_rejected(tmp_path: Path) -> None:
@@ -81,10 +123,12 @@ def test_use_sym_metadata_and_irreps_are_preserved(sp_sym_parser: ORCAParser) ->
     sym = meta["symmetry"]
     geom = data["geometry"]
     orbitals = data["orbital_energies"]
+    snapshot = data["job_snapshot"]
 
     assert meta["point_group"] == "Ih"
     assert meta["reduced_point_group"] == "D2h"
     assert meta["orbital_irrep_group"] == "D2h"
+    assert meta["reference_type"] == "UKS"
     assert sym["use_sym"] is True
     assert sym["n_irreps"] == 8
     assert sym["initial_guess_irrep"] == "4-B3u"
@@ -92,6 +136,11 @@ def test_use_sym_metadata_and_irreps_are_preserved(sp_sym_parser: ORCAParser) ->
     assert len(geom["symmetry_cartesian_angstrom"]) == 61
     assert orbitals["alpha_occupied_per_irrep"]["B3u"] == 25
     assert orbitals["beta_occupied_per_irrep"]["B3u"] == 24
+    assert data["context"]["reference_type"] == "UKS"
+    assert data["context"]["is_unrestricted"] is True
+    assert data["context"]["is_uhf"] is True
+    assert snapshot["reference_type"] == "UKS"
+    assert snapshot["is_unrestricted"] is True
 
 
 def test_markdown_calls_out_symmetry_and_deltascf(
@@ -216,6 +265,13 @@ def test_tddft_symmetry_and_dominant_excitations_are_preserved(
     assert spectra["absorption_electric_dipole"]["transition_count"] == 80
     assert spectra["cd_electric_dipole"]["transition_count"] == 80
     assert spectra["cd_velocity_dipole"]["transition_count"] == 80
+    assert data["metadata"]["reference_type"] == "RKS"
+    assert data["metadata"]["input_use_sym"] is True
+    assert data["context"]["reference_type"] == "RKS"
+    assert data["context"]["is_unrestricted"] is False
+    assert data["job_snapshot"]["reference_type"] == "RKS"
+    assert data["job_snapshot"]["is_unrestricted"] is False
+    assert data["job_snapshot"]["symmetry"]["input_use_sym"] is True
 
     markdown_path = tmp_path / "tddft_sym.md"
     tddft_sym_parser.to_markdown(markdown_path)
@@ -232,6 +288,51 @@ def test_tddft_symmetry_and_dominant_excitations_are_preserved(
     assert "### CD Spectrum (Electric Dipole)" in text
     assert "### CD Spectrum (Velocity Dipole)" in text
     assert "0-1A' -> 1-1A\"" in text
+
+
+def test_reference_type_and_nosym_are_normalized_from_input_and_output(tmp_path: Path) -> None:
+    out_path = _write_minimal_orca_output(
+        tmp_path / "synthetic_uks_nosym.out",
+        input_name="synthetic_uks_nosym.inp",
+        echoed_input_lines=[
+            "! B3LYP UKS NoSym TightSCF",
+            "* xyz 0 2",
+            "H 0.000000 0.000000 0.000000",
+            "H 0.000000 0.000000 0.740000",
+            "*",
+        ],
+        body_lines=[
+            "Hartree-Fock type                 HFTyp .... UKS",
+            "Functional name                       .... B3LYP exchange-correlation functional",
+            "Total Charge                     Charge .... 0",
+            "Multiplicity                     Mult .... 2",
+            "Number of atoms                     ... 2",
+        ],
+    )
+
+    parser = ORCAParser(out_path)
+    data = parser.parse(sections=["metadata"])
+
+    assert data["metadata"]["reference_type"] == "UKS"
+    assert data["metadata"]["input_use_sym"] is False
+    assert data["context"]["reference_type"] == "UKS"
+    assert data["context"]["is_unrestricted"] is True
+    assert data["context"]["is_uhf"] is True
+    assert data["context"]["input_use_sym"] is False
+    assert data["job_snapshot"]["reference_type"] == "UKS"
+    assert data["job_snapshot"]["is_unrestricted"] is True
+    assert data["job_snapshot"]["symmetry"]["input_use_sym"] is False
+
+
+def test_unspecified_symmetry_defaults_to_off(opt_nosym_parser: ORCAParser) -> None:
+    data = opt_nosym_parser.data
+
+    assert data["metadata"]["reference_type"] == "UKS"
+    assert data["metadata"]["input_use_sym"] is False
+    assert data["context"]["reference_type"] == "UKS"
+    assert data["context"]["is_unrestricted"] is True
+    assert data["job_snapshot"]["reference_type"] == "UKS"
+    assert data["job_snapshot"]["symmetry"]["input_use_sym"] is False
 
 
 def test_nbo_electron_configurations_and_cmo_indices_are_aligned(

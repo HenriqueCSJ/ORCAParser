@@ -354,7 +354,7 @@ def get_method_header_label(data: Dict[str, Any]) -> str:
         return str(meta["level_of_theory"])
     functional = meta.get("functional", "?")
     basis = meta.get("basis_set", "?")
-    return f"{context.get('hf_type', '?')} {functional}/{basis}"
+    return f"{context.get('reference_type', context.get('hf_type', '?'))} {functional}/{basis}"
 
 
 def get_method_table_label(data: Dict[str, Any]) -> str:
@@ -368,4 +368,5 @@ def get_method_table_label(data: Dict[str, Any]) -> str:
         return str(meta["method"])
     if meta.get("functional"):
         return str(meta["functional"])
-    return str(data.get("context", {}).get("hf_type", "?"))
+    context = data.get("context", {})
+    return str(context.get("reference_type", context.get("hf_type", "?")))

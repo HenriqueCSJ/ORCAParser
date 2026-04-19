@@ -108,10 +108,10 @@ def _method_header_label(meta: Dict[str, Any], context: Dict[str, Any]) -> str:
     if method:
         return str(method)
 
-    hf_type = context.get("hf_type", "?")
+    reference_type = context.get("reference_type") or context.get("hf_type", "?")
     functional = meta.get("functional", "?")
     basis = meta.get("basis_set", "?")
-    return f"{hf_type} {functional}/{basis}"
+    return f"{reference_type} {functional}/{basis}"
 
 
 def _method_table_label(meta: Dict[str, Any], context: Dict[str, Any]) -> str:
@@ -120,7 +120,7 @@ def _method_table_label(meta: Dict[str, Any], context: Dict[str, Any]) -> str:
         return str(meta["method"])
     if meta.get("functional"):
         return str(meta["functional"])
-    return str(context.get("hf_type", "?"))
+    return str(context.get("reference_type") or context.get("hf_type", "?"))
 
 
 @dataclass
@@ -141,6 +141,8 @@ class JobSnapshot:
     basis_set: str
     aux_basis_set: str
     hf_type: str
+    reference_type: str
+    is_unrestricted: bool
     charge: Any
     multiplicity: Any
     is_deltascf: bool = False
@@ -171,6 +173,8 @@ class JobSnapshot:
             "basis_set": self.basis_set,
             "aux_basis_set": self.aux_basis_set,
             "hf_type": self.hf_type,
+            "reference_type": self.reference_type,
+            "is_unrestricted": self.is_unrestricted,
             "charge": self.charge,
             "multiplicity": self.multiplicity,
             "is_deltascf": self.is_deltascf,
@@ -251,6 +255,8 @@ def build_job_snapshot(
         basis_set=str(meta.get("basis_set", "")),
         aux_basis_set=str(meta.get("aux_basis_set", "")),
         hf_type=str(meta.get("hf_type", context.get("hf_type", ""))),
+        reference_type=str(meta.get("reference_type", context.get("reference_type", ""))),
+        is_unrestricted=bool(context.get("is_unrestricted", context.get("is_uhf", False))),
         charge=meta.get("charge", context.get("charge", "")),
         multiplicity=meta.get("multiplicity", context.get("multiplicity", "")),
         is_deltascf=is_deltascf,
