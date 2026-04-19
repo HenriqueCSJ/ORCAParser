@@ -25,6 +25,17 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Optional
 
+from ..output.csv_section_registry import (
+    NBI_MATRIX_CSV_SECTION_PLUGIN,
+    NBO_E2_CSV_SECTION_PLUGIN,
+    NBO_LEWIS_CSV_SECTION_PLUGIN,
+    NBO_NAO_CSV_SECTION_PLUGIN,
+    NBO_NLMO_BOND_ORDER_CSV_SECTION_PLUGIN,
+    NBO_NLMO_HYBRIDIZATION_CSV_SECTION_PLUGIN,
+    NBO_NLMO_STERIC_CSV_SECTION_PLUGIN,
+    NBO_NPA_CSV_SECTION_PLUGIN,
+    WIBERG_MATRIX_CSV_SECTION_PLUGIN,
+)
 from ..parser_section_plugin import ParserSectionAlias, ParserSectionPlugin
 from ..plugin_bundle import PluginBundle, PluginMetadata
 from .base import BaseModule
@@ -1282,5 +1293,16 @@ PLUGIN_BUNDLE = PluginBundle(
     ),
     parser_aliases=(
         ParserSectionAlias(name="nbo", section_keys=("nbo",)),
+    ),
+    csv_sections=(
+        NBO_NAO_CSV_SECTION_PLUGIN,
+        NBO_NPA_CSV_SECTION_PLUGIN,
+        NBO_LEWIS_CSV_SECTION_PLUGIN,
+        NBO_E2_CSV_SECTION_PLUGIN,
+        NBO_NLMO_HYBRIDIZATION_CSV_SECTION_PLUGIN,
+        NBO_NLMO_BOND_ORDER_CSV_SECTION_PLUGIN,
+        NBO_NLMO_STERIC_CSV_SECTION_PLUGIN,
+        WIBERG_MATRIX_CSV_SECTION_PLUGIN,
+        NBI_MATRIX_CSV_SECTION_PLUGIN,
     ),
 )

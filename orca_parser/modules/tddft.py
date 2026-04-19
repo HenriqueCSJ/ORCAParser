@@ -17,6 +17,8 @@ import re
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from ..job_family_registry import CalculationFamilyPlugin
+from ..output.csv_section_registry import TDDFT_CSV_SECTION_PLUGIN
+from ..output.markdown_section_registry import TDDFT_MARKDOWN_SECTION_PLUGIN
 from ..parser_section_plugin import ParserSectionAlias, ParserSectionPlugin
 from ..plugin_bundle import PluginBundle, PluginMetadata
 from ..render_options import RenderOptions
@@ -1398,6 +1400,12 @@ PLUGIN_BUNDLES = (
         ),
         parser_aliases=(
             ParserSectionAlias(name="tddft", section_keys=("tddft",)),
+        ),
+        markdown_sections=(
+            TDDFT_MARKDOWN_SECTION_PLUGIN,
+        ),
+        csv_sections=(
+            TDDFT_CSV_SECTION_PLUGIN,
         ),
     ),
 )

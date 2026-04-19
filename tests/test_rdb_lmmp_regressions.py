@@ -1098,9 +1098,11 @@ def test_plugin_bundle_autodiscovery_registers_drop_in_module_capabilities(
 
 
 def test_builtin_families_are_discovered_from_their_modules() -> None:
-    bundle_keys = {
-        bundle.metadata.key for bundle in plugin_discovery.get_registered_plugin_bundles()
+    bundles = {
+        bundle.metadata.key: bundle
+        for bundle in plugin_discovery.get_registered_plugin_bundles()
     }
+    bundle_keys = set(bundles)
 
     assert "geometry_sections" in bundle_keys
     assert "scf_section" in bundle_keys
@@ -1167,6 +1169,21 @@ def test_builtin_families_are_discovered_from_their_modules() -> None:
         plugin_discovery.get_registered_plugin_source("geom_opt")
         == "orca_parser.modules.geom_opt"
     )
+
+    assert bundles["orbital_sections"].markdown_sections
+    assert bundles["orbital_sections"].csv_sections
+    assert bundles["geometry_sections"].markdown_sections
+    assert bundles["geometry_sections"].csv_sections
+    assert bundles["dipole_section"].markdown_sections
+    assert bundles["dipole_section"].csv_sections
+    assert bundles["solvation_section"].markdown_sections
+    assert bundles["solvation_section"].csv_sections
+    assert bundles["population_sections"].csv_sections
+    assert bundles["nbo_section"].csv_sections
+    assert bundles["epr_section"].markdown_sections
+    assert bundles["epr_section"].csv_sections
+    assert bundles["excited_state_optimization"].markdown_sections
+    assert bundles["excited_state_optimization"].csv_sections
 
 
 def test_goat_markdown_cutoff_can_be_overridden(goat_full_parser: ORCAParser) -> None:

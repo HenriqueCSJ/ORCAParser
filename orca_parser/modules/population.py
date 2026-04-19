@@ -7,6 +7,14 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, Iterable, List, Optional
 
+from ..output.csv_section_registry import (
+    CHELPG_CSV_SECTION_PLUGIN,
+    HIRSHFELD_CSV_SECTION_PLUGIN,
+    LOEWDIN_CSV_SECTION_PLUGIN,
+    MAYER_CSV_SECTION_PLUGIN,
+    MBIS_CSV_SECTION_PLUGIN,
+    MULLIKEN_CSV_SECTION_PLUGIN,
+)
 from ..parser_section_plugin import ParserSectionAlias, ParserSectionPlugin
 from ..plugin_bundle import PluginBundle, PluginMetadata
 from .base import BaseModule
@@ -570,5 +578,13 @@ PLUGIN_BUNDLE = PluginBundle(
             name="bonds",
             section_keys=("mayer", "loewdin"),
         ),
+    ),
+    csv_sections=(
+        MULLIKEN_CSV_SECTION_PLUGIN,
+        LOEWDIN_CSV_SECTION_PLUGIN,
+        MAYER_CSV_SECTION_PLUGIN,
+        HIRSHFELD_CSV_SECTION_PLUGIN,
+        MBIS_CSV_SECTION_PLUGIN,
+        CHELPG_CSV_SECTION_PLUGIN,
     ),
 )

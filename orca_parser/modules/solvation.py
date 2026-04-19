@@ -18,6 +18,8 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
+from ..output.csv_section_registry import SOLVATION_CSV_SECTION_PLUGIN
+from ..output.markdown_section_registry import SOLVATION_MARKDOWN_SECTION_PLUGIN
 from ..parser_section_plugin import ParserSectionAlias, ParserSectionPlugin
 from ..plugin_bundle import PluginBundle, PluginMetadata
 from .base import BaseModule
@@ -680,5 +682,11 @@ PLUGIN_BUNDLE = PluginBundle(
     ),
     parser_aliases=(
         ParserSectionAlias(name="solvation", section_keys=("solvation",)),
+    ),
+    markdown_sections=(
+        SOLVATION_MARKDOWN_SECTION_PLUGIN,
+    ),
+    csv_sections=(
+        SOLVATION_CSV_SECTION_PLUGIN,
     ),
 )

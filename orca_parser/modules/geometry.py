@@ -7,6 +7,11 @@ import re
 from typing import Any, Callable, Dict, List, Optional
 
 from ..job_family_registry import CalculationFamilyPlugin
+from ..output.csv_section_registry import GEOMETRY_CSV_SECTION_PLUGIN
+from ..output.markdown_section_registry import (
+    BASIS_SET_MARKDOWN_SECTION_PLUGIN,
+    GEOMETRY_MARKDOWN_SECTION_PLUGIN,
+)
 from ..parser_section_plugin import ParserSectionAlias, ParserSectionPlugin
 from ..plugin_bundle import PluginBundle, PluginMetadata
 from ..render_options import RenderOptions
@@ -1017,6 +1022,13 @@ PLUGIN_BUNDLES = (
         ),
         parser_aliases=(
             ParserSectionAlias(name="geometry", section_keys=("geometry", "basis_set")),
+        ),
+        markdown_sections=(
+            BASIS_SET_MARKDOWN_SECTION_PLUGIN,
+            GEOMETRY_MARKDOWN_SECTION_PLUGIN,
+        ),
+        csv_sections=(
+            GEOMETRY_CSV_SECTION_PLUGIN,
         ),
     ),
     PluginBundle(

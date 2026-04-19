@@ -13,6 +13,8 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, Optional
 
+from ..output.csv_section_registry import DIPOLE_CSV_SECTION_PLUGIN
+from ..output.markdown_section_registry import DIPOLE_MARKDOWN_SECTION_PLUGIN
 from ..parser_section_plugin import ParserSectionAlias, ParserSectionPlugin
 from ..plugin_bundle import PluginBundle, PluginMetadata
 from .base import BaseModule
@@ -155,5 +157,11 @@ PLUGIN_BUNDLE = PluginBundle(
     ),
     parser_aliases=(
         ParserSectionAlias(name="dipole", section_keys=("dipole",)),
+    ),
+    markdown_sections=(
+        DIPOLE_MARKDOWN_SECTION_PLUGIN,
+    ),
+    csv_sections=(
+        DIPOLE_CSV_SECTION_PLUGIN,
     ),
 )
