@@ -74,12 +74,11 @@ def write_hdf5(
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    _cmp = {"compression": compression, "compression_opts": compression_opts} \
-        if compression else {}
+    _cmp = _compression_kwargs(compression, compression_opts)
 
     with h5py.File(path, "w") as hf:
         hf.attrs["source_file"] = str(data.get("source_file", ""))
-        hf.attrs["orca_parser_version"] = "0.1.0"
+        hf.attrs["orca_parser_version"] = _package_version()
 
         for section, value in data.items():
             if section in ("source_file",) or value is None:
@@ -92,6 +91,31 @@ def write_hdf5(
 # ─────────────────────────────────────────────────────────────────
 # Internal helpers
 # ─────────────────────────────────────────────────────────────────
+
+def _compression_kwargs(compression: Optional[str], compression_opts: int) -> dict[str, Any]:
+    """Return h5py dataset compression kwargs for supported CLI filters."""
+    if compression is None:
+        return {}
+
+    filter_name = compression.lower()
+    if filter_name in ("", "none"):
+        return {}
+    if filter_name == "gzip":
+        return {"compression": "gzip", "compression_opts": compression_opts}
+    if filter_name == "lzf":
+        return {"compression": "lzf"}
+
+    raise ValueError(f"Unsupported HDF5 compression filter: {compression}")
+
+
+def _package_version() -> str:
+    """Read the package version without letting HDF5 metadata drift stale."""
+    try:
+        from .. import __version__
+    except Exception:
+        return "unknown"
+    return __version__
+
 
 def _write_section(parent, name: str, value: Any, cmp: dict) -> None:
     """Dispatch a top-level section value into the HDF5 hierarchy."""

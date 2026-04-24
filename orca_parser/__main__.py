@@ -556,6 +556,7 @@ def main() -> None:
         args.write_markdown = True
 
     all_parsers = []
+    failed_files = 0
     resolved_files = _resolve_files(args.files)
 
     if not resolved_files:
@@ -565,6 +566,7 @@ def main() -> None:
     for fp in resolved_files:
         if not fp.exists():
             print(f"[ERROR] File not found: {fp}", file=sys.stderr)
+            failed_files += 1
             continue
 
         if not args.quiet:
@@ -579,6 +581,7 @@ def main() -> None:
             )
         except Exception as exc:
             print(f"[ERROR] {exc}", file=sys.stderr)
+            failed_files += 1
             continue
 
         all_parsers.append(parser)
@@ -597,6 +600,9 @@ def main() -> None:
         args,
         goat_cutoff=goat_cutoff,
     )
+
+    if failed_files or not all_parsers:
+        sys.exit(1)
 
 
 if __name__ == "__main__":
