@@ -336,7 +336,8 @@ def test_casscf_markdown_renders_full_configs_nevpt2_and_raw_blocks(tmp_path: Pa
     assert "N(occ)" in text
     assert "Final-printing iterations are bold" in text
     assert "DOING ONE FINAL ITERATION FOR PRINTING" not in text
-    assert "0.32772 012000" in text
+    assert "0.32772 -> 012000" in text
+    assert "0.28237 -> 210000" in text
     assert "[    24]" not in text
     assert "210000" in text
     assert "SA-CASSCF State Energies and Configurations" in text

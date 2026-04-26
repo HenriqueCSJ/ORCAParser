@@ -242,7 +242,7 @@ The CASSCF module treats active-space convergence as a history, not just a final
 
 - Every macro-iteration keeps `E(CAS)`, `DE`, Ext-Act/Act-Int gaps, active occupations, `||g||`, `Max(G)`, rotation labels, FreezeAct/related option metrics, orbital-update mode, and SuperCI details when printed.
 - CAS-SCF state blocks preserve ORCA block, multiplicity, root, absolute energy, relative energy, and configuration weights/occupation strings.
-- Markdown reports join SA-CASSCF transition rows to the matching CAS-SCF root/configuration data, so rows expose state, root, multiplicity, transition energy, absolute energy, dominant configuration, and all printed configuration weights/occupation strings such as `210000`.
+- Markdown reports join SA-CASSCF transition rows to the matching CAS-SCF root/configuration data, so rows expose state, root, multiplicity, transition energy, absolute energy, dominant configuration, and all printed configuration weights as explicit `weight -> configuration` pairs such as `0.28237 -> 210000`.
 - NEVPT2 and QD-NEVPT2 reports join transition energies, transition-energy corrections, total energies, root energy corrections, and corrected CI configurations into digestible state tables instead of raw Van Vleck text dumps.
 - Density and spin-density matrices are exported as JSON-safe row/column/matrix structures rather than NumPy objects.
 - QD-NEVPT2 corrected density/spin-density matrices, corrected reduced active MOs, and state-specific natural-orbital occupations/files are parsed separately from the uncorrected CASSCF values.

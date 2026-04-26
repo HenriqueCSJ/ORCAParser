@@ -2168,11 +2168,11 @@ def _format_configuration(config: Dict[str, Any], helpers: MarkdownRenderHelpers
 
 
 def _format_configuration_digest(config: Dict[str, Any], helpers: MarkdownRenderHelpers) -> str:
-    """Format one CI configuration for scientific tables without ORCA's CI row id."""
+    """Format one CI configuration as an unambiguous weight-to-occupation pair."""
     if not config:
         return "n/a"
     return (
-        f"{helpers.format_number(config.get('weight'), '.5f')} "
+        f"{helpers.format_number(config.get('weight'), '.5f')} -> "
         f"{config.get('occupation_string', '')}"
     ).strip()
 
@@ -2227,7 +2227,7 @@ def _state_assignment_rows(
         header.extend(["corr Eh", "corr eV", "corr cm^-1"])
     if include_root_corrections:
         header.extend(["root dE Eh", "E0 Eh"])
-    header.extend(["dominant config", "config weights"])
+    header.extend(["dominant weight -> config", "weights -> configurations"])
     rows: List[tuple] = [tuple(header)]
 
     for assignment in assignments:
@@ -2844,9 +2844,9 @@ def _casscf_comparison_blocks(
 
 
 def _configuration_summary_plain(configurations: Sequence[Dict[str, Any]]) -> str:
-    """Return CI configurations as plain CSV-friendly weight/config pairs."""
+    """Return CI configurations as plain CSV-friendly weight->occupation pairs."""
     return ";".join(
-        f"{config.get('weight')} {config.get('occupation_string')}"
+        f"{config.get('weight')}->{config.get('occupation_string')}"
         for config in configurations
     )
 
