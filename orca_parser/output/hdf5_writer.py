@@ -38,7 +38,37 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-import numpy as np
+np = None
+_h5py_module = None
+
+
+def _require_hdf5_dependencies():
+    """Import optional HDF5 dependencies only when HDF5 export is requested."""
+    global np, _h5py_module
+
+    if np is None:
+        try:
+            import numpy as numpy_module
+        except ImportError as exc:
+            raise RuntimeError(
+                "HDF5 export requires optional dependencies: numpy and h5py. "
+                "Install them with `pip install 'orca_parser[hdf5]'`, or from "
+                "a checkout with `pip install -e '.[hdf5]'`."
+            ) from exc
+        np = numpy_module
+
+    if _h5py_module is None:
+        try:
+            import h5py as h5py_module
+        except ImportError as exc:
+            raise RuntimeError(
+                "HDF5 export requires optional dependencies: numpy and h5py. "
+                "Install them with `pip install 'orca_parser[hdf5]'`, or from "
+                "a checkout with `pip install -e '.[hdf5]'`."
+            ) from exc
+        _h5py_module = h5py_module
+
+    return _h5py_module
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -69,7 +99,7 @@ def write_hdf5(
     Path
         The path that was written.
     """
-    import h5py  # lazy import — not in stdlib
+    h5py = _require_hdf5_dependencies()
 
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -249,6 +279,6 @@ def h5py_string_dtype():
     """Return h5py variable-length UTF-8 string dtype (cached)."""
     global _h5py_str_dtype
     if _h5py_str_dtype is None:
-        import h5py
+        h5py = _require_hdf5_dependencies()
         _h5py_str_dtype = h5py.string_dtype(encoding="utf-8")
     return _h5py_str_dtype

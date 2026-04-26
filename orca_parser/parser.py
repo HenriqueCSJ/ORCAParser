@@ -551,6 +551,14 @@ class ORCAParser:
         if not isinstance(meta, dict):
             return
 
+        casscf = results.get("casscf")
+        if isinstance(casscf, dict):
+            casscf_summary = casscf.get("summary") if isinstance(casscf.get("summary"), dict) else {}
+            method_label = casscf_summary.get("method_label") or "CASSCF"
+            meta["method"] = "CASSCF"
+            meta["functional"] = ""
+            meta["level_of_theory"] = str(method_label)
+
         tddft = results.get("tddft")
         excited_state_opt: Dict[str, Any] = {}
         if isinstance(tddft, dict):

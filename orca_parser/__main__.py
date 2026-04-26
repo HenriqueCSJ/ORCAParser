@@ -32,6 +32,10 @@ Notes
   * GOAT conformer searches are parsed as dedicated GOAT jobs, including the
     final ensemble table, global-minimum xyz, conformer window counts, and
     ensemble thermochemistry.
+  * CASSCF/NEVPT2 jobs preserve active-space convergence histories, joined
+    CAS-SCF/NEVPT2/QD-NEVPT2 state assignments, active-space matrices,
+    spectra, QDPT eigenvectors, g tensors, D tensors, and perturbative
+    correction summaries.
   * Relaxed surface scans are parsed as scan jobs, not collapsed into a
     single geometry optimization. Scan coordinates, per-step energies, and
     discovered ``relaxscan*.dat`` / ``allxyz`` sidecars are exported.
@@ -53,6 +57,8 @@ Section aliases
   geometry   geometry, basis_set
   epr        epr (ZFS, g-tensor, hyperfine/EFG)
   goat       goat (GOAT final ensemble, minimum, Sconf/Gconf)
+  casscf     casscf, mulliken, loewdin, mayer, hirshfeld, mbis, chelpg
+  nevpt2     casscf, mulliken, loewdin, mayer, hirshfeld, mbis, chelpg
   opt        geom_opt (optimization cycles, convergence, RMSD)
   scan       surface_scan (relaxed scan coordinates, per-step energies)
 
@@ -71,6 +77,7 @@ Examples
   orca_parser water.out --compact --gzip --no-csv
 
   # Export to HDF5 format only (no JSON, no CSV)
+  # Requires optional dependencies: python -m pip install ".[hdf5]"
   orca_parser water.out --hdf5 --no-json --no-csv
 
   # HDF5 with LZF compression instead of default gzip
@@ -120,6 +127,12 @@ Examples
 
   # Parse a GOAT conformer search and export the final ensemble
   orca_parser conformers.out --sections goat --markdown --csv
+
+  # Parse CASSCF/NEVPT2 active-space states, corrections, spectra, and QDPT tensors
+  orca_parser casscf.out --sections casscf --markdown --csv
+
+  # Increase the CASSCF orbital-energy / Loewdin active-window range
+  orca_parser casscf.out --sections casscf --casscf-orbital-window 50 --markdown
 
   # Limit GOAT markdown tables to conformers within 3 kcal/mol
   orca_parser conformers.out --sections goat --markdown --goat-max-relative-energy-kcal 3
@@ -197,8 +210,9 @@ def parse_args() -> argparse.Namespace:
             "Parse ORCA quantum chemistry output files into JSON, CSV, "
             "HDF5, and Markdown. Handles ground-state, DeltaSCF excited-state, "
             "TDDFT/CIS excited-state optimization, GOAT conformer-search, "
-            "UseSym/symmetry-aware, EPR, relaxed surface-scan, and "
-            "geometry-optimization jobs, using normalized final-state and "
+            "CASSCF/NEVPT2 active-space, UseSym/symmetry-aware, EPR, "
+            "relaxed surface-scan, and geometry-optimization jobs, using "
+            "normalized final-state and "
             "job-metadata summaries for downstream output. TDDFT output keeps "
             "ORCA root numbering intact and adds explicit energy-rank "
             "annotations when roots are not printed in ascending energy order."
@@ -216,7 +230,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--sections", nargs="+", metavar="SEC", default=None,
                    help="Sections / aliases to parse (default: all). "
                         "Examples: --sections charges mos dipole, "
-                        "--sections epr, --sections goat, --sections opt, --sections scan")
+                        "--sections epr, --sections goat, --sections casscf, "
+                        "--sections opt, --sections scan")
 
     # ── Output format flags ─────────────────────────────────────────
     p.add_argument("--json",    dest="write_json", action="store_true",  default=True,
@@ -228,7 +243,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--no-csv",  dest="write_csv",  action="store_false",
                    help="Disable CSV output")
     p.add_argument("--hdf5",    dest="write_hdf5",     action="store_true",  default=False,
-                   help="Write HDF5 output (.h5)")
+                   help="Write HDF5 output (.h5). Requires optional "
+                        "dependencies: python -m pip install '.[hdf5]'")
     p.add_argument("--no-hdf5", dest="write_hdf5",     action="store_false",
                    help="Disable HDF5 output")
     p.add_argument("--markdown", dest="write_markdown", action="store_true",  default=False,
@@ -237,6 +253,7 @@ def parse_args() -> argparse.Namespace:
                         "labeling, TDDFT root/energy-rank summaries, "
                         "significant CI (>=10%%) / NTO (n>=0.10) tables, "
                         "root-follow summaries, GOAT ensemble summaries, "
+                        "CASSCF/NEVPT2 active-space summaries, "
                         "and surface-scan summaries")
     p.add_argument("--no-markdown", dest="write_markdown", action="store_false",
                    help="Disable markdown output")
@@ -294,7 +311,8 @@ def parse_args() -> argparse.Namespace:
                         "normalized job labels, basic symmetry/spin "
                         "diagnostics, final frontier orbitals/dipole when "
                         "available, TDDFT root-order diagnostics when "
-                        "available, and scan info when applicable")
+                        "available, CASSCF/NEVPT2 active-space status, and "
+                        "scan info when applicable")
     p.add_argument("--quiet", action="store_true",
                    help="Suppress progress messages")
 

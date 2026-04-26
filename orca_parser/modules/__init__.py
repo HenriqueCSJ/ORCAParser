@@ -13,6 +13,7 @@ from .epr import EPRModule
 from .geom_opt import GeomOptModule
 from .goat import GOATModule
 from .surface_scan import SurfaceScanModule
+from .casscf import CASSCFModule
 
 __all__ = [
     "MetadataModule", "GeometryModule", "BasisSetModule",
@@ -28,4 +29,5 @@ __all__ = [
     "GeomOptModule",
     "GOATModule",
     "SurfaceScanModule",
+    "CASSCFModule",
 ]

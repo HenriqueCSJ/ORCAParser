@@ -4,7 +4,7 @@ Structured parsing for [ORCA](https://orcaforum.kofo.mpg.de/) quantum-chemistry 
 
 `orca_parser` turns ORCA jobs into clean JSON, CSV, HDF5, and Markdown so the results are easier to inspect, compare, automate, and feed into downstream analysis pipelines.
 
-It is designed for real multistep ORCA outputs, not just ideal single-point jobs. That includes excited-state optimizations, GOAT conformer searches, relaxed surface scans, DeltaSCF jobs, symmetry-aware calculations, and spin-resolved wavefunctions.
+It is designed for real multistep ORCA outputs, not just ideal single-point jobs. That includes excited-state optimizations, GOAT conformer searches, relaxed surface scans, DeltaSCF jobs, CASSCF/NEVPT2 active-space calculations, symmetry-aware calculations, and spin-resolved wavefunctions.
 
 ## Why this project exists
 
@@ -19,6 +19,7 @@ It is designed for real multistep ORCA outputs, not just ideal single-point jobs
 - 4 output formats: JSON, CSV, HDF5, and Markdown
 - RHF/RKS and UHF/UKS support, including spin-resolved data
 - GOAT ensemble parsing with populations, energy windows, global minimum, and ensemble thermochemistry
+- CASSCF / SC-NEVPT2 / QD-NEVPT2 parsing with active-space convergence histories, CAS roots, transition-energy assignments, density matrices, spectra, QDPT relativistic properties, and active-MO compositions
 - Excited-state geometry optimization support with target-root tracking and root-follow metadata
 - TDDFT/NTO handling that preserves ORCA root numbering while also exposing energy rank
 - Symmetry-aware parsing for UseSym jobs, with explicit no-symmetry normalization when ORCA defaults symmetry off
@@ -36,26 +37,40 @@ It is designed for real multistep ORCA outputs, not just ideal single-point jobs
 | Ground-state geometry optimization | Per-cycle energies, convergence criteria, trust radii, RMSD, final geometry |
 | Relaxed surface scan | Scan coordinates, mode, per-step energies, sidecar trajectories |
 | GOAT conformer search | Final ensemble table, populations, relative energies, thermochemistry, xyz references |
+| CASSCF / NEVPT2 | Macro-iteration convergence history, active occupations, CAS-SCF roots/configurations joined to SA-CASSCF/NEVPT2/QD-NEVPT2 state assignments, density/spin-density matrices, Loewdin active MOs, UV/CD spectra, QDPT eigenvectors, g tensors, and D tensors |
 | UseSym / symmetry-cleanup jobs | Point group, reduced/orbital irrep groups, symmetry-perfected geometries when printed |
 
 ## Requirements
 
 - Python 3.10+
+- Base JSON, CSV, and Markdown parsing uses the Python standard library
 - Optional: `numpy` for Kabsch-aligned RMSD during geometry optimization analysis
-- Optional: `h5py` for HDF5 export
+- Optional: `numpy` and `h5py` for HDF5 export
 
 ## Installation
 
 Standard install:
 
 ```bash
-pip install .
+python -m pip install .
 ```
 
 Editable install for development:
 
 ```bash
-pip install -e .
+python -m pip install -e .
+```
+
+Install optional HDF5 support:
+
+```bash
+python -m pip install ".[hdf5]"
+```
+
+Editable development install with test dependencies:
+
+```bash
+python -m pip install -e ".[test]"
 ```
 
 ## Privacy guardrails
@@ -110,6 +125,12 @@ orca_parser relaxscan.out --sections scan --markdown --csv
 
 # Excited-state optimization
 orca_parser excited_opt.out --sections tddft opt --markdown --csv
+
+# CASSCF / NEVPT2 active-space report
+orca_parser casscf.out --sections casscf --markdown --csv
+
+# Keep a wider CASSCF orbital-energy / Loewdin active-window range
+orca_parser casscf.out --sections casscf --casscf-orbital-window 50 --markdown
 ```
 
 ### Python API
@@ -164,6 +185,8 @@ orca_parser water.out --no-csv
 
 ### HDF5
 
+Requires the optional HDF5 dependencies (`python -m pip install ".[hdf5]"`).
+
 ```bash
 orca_parser water.out --hdf5 --no-json --no-csv
 orca_parser water.out --hdf5 --h5-compression lzf
@@ -212,6 +235,23 @@ Fixed parser-level thresholds:
 - NTO pairs: keep all pairs with `n >= 0.10`
 - Oscillator strengths: always keep the printed value, including dark states
 - Lowest-root safety margin: expose at least the lowest 5 roots in the TDDFT summary helpers
+
+## CASSCF / NEVPT2 reporting policy
+
+The CASSCF module treats active-space convergence as a history, not just a final number.
+
+- Every macro-iteration keeps `E(CAS)`, `DE`, Ext-Act/Act-Int gaps, active occupations, `||g||`, `Max(G)`, rotation labels, FreezeAct/related option metrics, orbital-update mode, and SuperCI details when printed.
+- CAS-SCF state blocks preserve ORCA block, multiplicity, root, absolute energy, relative energy, and configuration weights/occupation strings.
+- Markdown reports join SA-CASSCF transition rows to the matching CAS-SCF root/configuration data, so rows expose state, root, multiplicity, transition energy, absolute energy, dominant configuration, and all printed configuration weights/occupation strings such as `210000`.
+- NEVPT2 and QD-NEVPT2 reports join transition energies, transition-energy corrections, total energies, root energy corrections, and corrected CI configurations into digestible state tables instead of raw Van Vleck text dumps.
+- Density and spin-density matrices are exported as JSON-safe row/column/matrix structures rather than NumPy objects.
+- QD-NEVPT2 corrected density/spin-density matrices, corrected reduced active MOs, and state-specific natural-orbital occupations/files are parsed separately from the uncorrected CASSCF values.
+- CASSCF, CASSCF with NEVPT2 diagonal energies, and QD-NEVPT2 UV/CD spectra are parsed into transition tables.
+- QDPT relativistic sections are parsed into level, eigenvector-component, g-matrix, and zero-field-splitting summary tables for each printed energy model.
+- Ordinary Mulliken/Loewdin/Mayer/Hirshfeld/MBIS/CHELPG population analysis is still handled by the existing population modules. The `casscf` alias expands to those modules automatically.
+- The CASSCF module only owns CASSCF-specific population-like tables: Loewdin reduced active MOs, QD-NEVPT2 corrected reduced active MOs, and a bounded Loewdin orbital-composition window around the active space.
+- Markdown keeps CASSCF orbital-energy tables centered on the active/frontier window; it does not print the full orbital list by default.
+- `--casscf-orbital-window N` (alias: `--casscf-orbital-energy-window N`) controls how many orbitals below and above the active/frontier range are retained from CASSCF orbital-energy and Loewdin active-window tables. The default is `30`.
 
 ## Common recipes
 
@@ -266,6 +306,7 @@ These are always included.
 | `qro` | Quasi-restricted orbitals for UHF calculations |
 | `solvation` | CPCM/SMD, ALPB, COSMO-RS, and `%cpcm` / `%cosmors` metadata |
 | `tddft` | Excited states, spectra, CI contributions, NTOs, energy-rank metadata, excited-state optimization metadata |
+| `casscf` | CASSCF convergence history, active-space setup, joined CAS-SCF/NEVPT2/QD-NEVPT2 state assignments, matrices, energy components, active-MO compositions, spectra, QDPT eigenvectors, g tensors, and D tensors |
 | `goat` | Final ensemble, populations, relative energies, thermochemistry, minimum/ensemble xyz references |
 | `surface_scan` | Scan definitions, mode, coordinates, energies, optimized xyz files, sidecar files |
 | `mulliken` | Charges, spin populations, reduced orbital charges |
@@ -292,6 +333,8 @@ These are always included.
 | `dipole` | `dipole` |
 | `solvation` | `solvation` |
 | `tddft` | `tddft` |
+| `casscf` | `casscf`, `mulliken`, `loewdin`, `mayer`, `hirshfeld`, `mbis`, `chelpg` |
+| `nevpt2` | `casscf`, `mulliken`, `loewdin`, `mayer`, `hirshfeld`, `mbis`, `chelpg` |
 | `geometry` | `geometry`, `basis_set` |
 | `epr` | `epr` |
 | `goat` | `goat` |
@@ -323,6 +366,7 @@ Output formats:
 Markdown/report controls:
   --detail-scope auto|full|compact
   --goat-max-relative-energy-kcal N|all
+  --casscf-orbital-window N / --casscf-orbital-energy-window N
 
 JSON options:
   --indent N
