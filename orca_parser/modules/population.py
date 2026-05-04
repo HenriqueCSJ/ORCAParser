@@ -24,6 +24,9 @@ from .base import BaseModule
 # Helper: parse a block of "atom charge [spin]" rows
 # ---------------------------------------------------------------------------
 
+_FLOAT_RE = r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[Ee][-+]?\d+)?"
+
+
 def _parse_atomic_values(lines: List[str], start: int, n_cols: int = 1):
     """
     Parse rows like:
@@ -34,7 +37,7 @@ def _parse_atomic_values(lines: List[str], start: int, n_cols: int = 1):
     atoms = []
     for ln in lines[start:]:
         # Match: index  Symbol  :  val1  [val2]
-        m = re.match(r"\s+(\d+)\s+(\w+)\s*:\s+([-\d.]+)(?:\s+([-\d.]+))?", ln)
+        m = re.match(rf"\s+(\d+)\s+(\w+)\s*:\s+({_FLOAT_RE})(?:\s+({_FLOAT_RE}))?", ln)
         if m:
             entry = {"index": int(m.group(1)), "symbol": m.group(2), "charge": float(m.group(3))}
             if n_cols == 2 and m.group(4):
@@ -78,6 +81,11 @@ def _find_last_label_starting_with(lines: List[str], label_prefix: str, start: i
         if lines[i].strip().upper().startswith(target):
             return i
     return -1
+
+
+def _charge_header_has_spin(lines: List[str], idx: int) -> bool:
+    """Return whether an atomic-charge header carries spin populations/densities."""
+    return idx != -1 and "SPIN" in lines[idx].strip().upper()
 
 
 def _parse_reduced_orbital_charges(
@@ -177,18 +185,14 @@ class MullikenModule(BaseModule):
         data = {}
         is_uhf = self.context.get("is_uhf", False)
 
-        # --- Atomic charges (and spin for UHF) ---
-        if is_uhf:
-            header = "MULLIKEN ATOMIC CHARGES AND SPIN POPULATIONS"
-        else:
-            header = "MULLIKEN ATOMIC CHARGES"
-
-        idx = _find_last_exact_label(lines, header)
+        # --- Atomic charges (and spin for UHF/open-shell CASSCF) ---
+        idx = _find_last_label_starting_with(lines, "MULLIKEN ATOMIC CHARGES")
         if idx == -1:
             return None
+        has_spin = is_uhf or _charge_header_has_spin(lines, idx)
 
         # Skip separator line
-        atoms = _parse_atomic_values(lines, idx + 2, n_cols=2 if is_uhf else 1)
+        atoms = _parse_atomic_values(lines, idx + 2, n_cols=2 if has_spin else 1)
         data["atomic_charges"] = atoms
 
         # Sum check
@@ -196,10 +200,14 @@ class MullikenModule(BaseModule):
             m = re.search(r"Sum of atomic charges\s*:\s*([-\d.e+]+)", ln)
             if m:
                 data["sum_of_charges"] = float(m.group(1))
+            m_spin = re.search(r"Sum of atomic spin (?:populations|densities)\s*:\s*([-\d.e+]+)", ln, re.I)
+            if m_spin:
+                data["sum_of_spin_populations"] = float(m_spin.group(1))
 
         # --- Reduced orbital charges ---
         idx_red = _find_last_label_starting_with(lines, "MULLIKEN REDUCED ORBITAL CHARGES")
         if idx_red != -1:
+            has_reduced_spin = is_uhf or _charge_header_has_spin(lines, idx_red)
             idx_charge = _find_exact_label(lines, "CHARGE", idx_red)
             charge_start = idx_charge + 1 if idx_charge != -1 else idx_red + 2
             blocks = _parse_reduced_orbital_charges(
@@ -207,7 +215,7 @@ class MullikenModule(BaseModule):
                 charge_start,
                 stop_exact={"SPIN"},
             )
-            if is_uhf:
+            if has_reduced_spin:
                 if blocks:
                     data["reduced_orbital_charges"] = blocks
                 idx_spin = _find_exact_label(lines, "SPIN", idx_red)
@@ -289,16 +297,24 @@ class LoewdinModule(BaseModule):
         data = {}
         is_uhf = self.context.get("is_uhf", False)
 
-        header = "LOEWDIN ATOMIC CHARGES AND SPIN POPULATIONS" if is_uhf else "LOEWDIN ATOMIC CHARGES"
-        idx = _find_last_exact_label(lines, header)
+        idx = _find_last_label_starting_with(lines, "LOEWDIN ATOMIC CHARGES")
         if idx == -1:
             return None
+        has_spin = is_uhf or _charge_header_has_spin(lines, idx)
 
-        atoms = _parse_atomic_values(lines, idx + 2, n_cols=2 if is_uhf else 1)
+        atoms = _parse_atomic_values(lines, idx + 2, n_cols=2 if has_spin else 1)
         data["atomic_charges"] = atoms
+        for ln in lines[idx: idx + len(atoms) + 10]:
+            m = re.search(r"Sum of atomic charges\s*:\s*([-\d.e+]+)", ln)
+            if m:
+                data["sum_of_charges"] = float(m.group(1))
+            m_spin = re.search(r"Sum of atomic spin (?:populations|densities)\s*:\s*([-\d.e+]+)", ln, re.I)
+            if m_spin:
+                data["sum_of_spin_populations"] = float(m_spin.group(1))
 
         idx_red = _find_last_label_starting_with(lines, "LOEWDIN REDUCED ORBITAL CHARGES")
         if idx_red != -1:
+            has_reduced_spin = is_uhf or _charge_header_has_spin(lines, idx_red)
             idx_charge = _find_exact_label(lines, "CHARGE", idx_red)
             charge_start = idx_charge + 1 if idx_charge != -1 else idx_red + 2
             blocks = _parse_reduced_orbital_charges(
@@ -306,7 +322,7 @@ class LoewdinModule(BaseModule):
                 charge_start,
                 stop_exact={"SPIN"},
             )
-            if is_uhf:
+            if has_reduced_spin:
                 if blocks:
                     data["reduced_orbital_charges"] = blocks
                 idx_spin = _find_exact_label(lines, "SPIN", idx_red)

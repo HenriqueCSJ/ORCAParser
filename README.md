@@ -246,10 +246,11 @@ The CASSCF module treats active-space convergence as a history, not just a final
 - NEVPT2 and QD-NEVPT2 reports join transition energies, transition-energy corrections, total energies, root energy corrections, and corrected CI configurations into digestible state tables instead of raw Van Vleck text dumps.
 - Density and spin-density matrices are exported as JSON-safe row/column/matrix structures rather than NumPy objects.
 - QD-NEVPT2 corrected density/spin-density matrices, corrected reduced active MOs, and state-specific natural-orbital occupations/files are parsed separately from the uncorrected CASSCF values.
-- CASSCF, CASSCF with NEVPT2 diagonal energies, and QD-NEVPT2 UV/CD spectra are parsed into transition tables.
-- QDPT relativistic sections are parsed into level, eigenvector-component, g-matrix, and zero-field-splitting summary tables for each printed energy model.
-- Ordinary Mulliken/Loewdin/Mayer/Hirshfeld/MBIS/CHELPG population analysis is still handled by the existing population modules. The `casscf` alias expands to those modules automatically.
-- The CASSCF module only owns CASSCF-specific population-like tables: Loewdin reduced active MOs, QD-NEVPT2 corrected reduced active MOs, and a bounded Loewdin orbital-composition window around the active space.
+- CASSCF, CASSCF with NEVPT2 diagonal energies, QD-NEVPT2, and SOC-corrected QDPT UV/CD spectra are parsed into transition tables using the shared TDDFT spectrum row parser.
+- QDPT relativistic sections are parsed into level, eigenvector-component, g-matrix, zero-field-splitting, and SOC-corrected spectrum summary tables for each printed energy model.
+- Ordinary Mulliken/Loewdin/Mayer/Hirshfeld/MBIS/CHELPG population analysis is handled by the existing population modules. The `casscf` alias expands to those modules automatically, and repeated CASSCF/QD-NEVPT2 population-analysis passes are stored as structured per-pass summaries rather than raw text.
+- The CASSCF module only owns CASSCF-specific population-like tables: Loewdin reduced active MOs, QD-NEVPT2 corrected reduced active MOs, state-specific QD-NEVPT2 natural-orbital occupations, and a bounded Loewdin orbital-composition window around the active space.
+- Raw ORCA report blocks are not embedded in normal JSON/HDF5/Markdown output; long Van Vleck, spectra, and relativistic sections are represented by parsed tables.
 - Markdown keeps CASSCF orbital-energy tables centered on the active/frontier window; it does not print the full orbital list by default.
 - `--casscf-orbital-window N` (alias: `--casscf-orbital-energy-window N`) controls how many orbitals below and above the active/frontier range are retained from CASSCF orbital-energy and Loewdin active-window tables. The default is `30`.
 
@@ -306,7 +307,7 @@ These are always included.
 | `qro` | Quasi-restricted orbitals for UHF calculations |
 | `solvation` | CPCM/SMD, ALPB, COSMO-RS, and `%cpcm` / `%cosmors` metadata |
 | `tddft` | Excited states, spectra, CI contributions, NTOs, energy-rank metadata, excited-state optimization metadata |
-| `casscf` | CASSCF convergence history, active-space setup, joined CAS-SCF/NEVPT2/QD-NEVPT2 state assignments, matrices, energy components, active-MO compositions, spectra, QDPT eigenvectors, g tensors, and D tensors |
+| `casscf` | CASSCF convergence history, active-space setup, joined CAS-SCF/NEVPT2/QD-NEVPT2 state assignments, matrices, energy components, active-MO compositions, repeated population-analysis passes, spectra including SOC-corrected QDPT tables, QDPT eigenvectors, g tensors, and D tensors |
 | `goat` | Final ensemble, populations, relative energies, thermochemistry, minimum/ensemble xyz references |
 | `surface_scan` | Scan definitions, mode, coordinates, energies, optimized xyz files, sidecar files |
 | `mulliken` | Charges, spin populations, reduced orbital charges |

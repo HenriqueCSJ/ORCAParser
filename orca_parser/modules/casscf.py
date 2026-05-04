@@ -23,6 +23,15 @@ from ..parser_section_plugin import ParserSectionAlias, ParserSectionPlugin
 from ..plugin_bundle import PluginBundle, PluginMetadata, PluginOption
 from ..render_options import RenderOptions
 from .base import BaseModule
+from .population import (
+    CHELPGModule,
+    HirshfeldModule,
+    LoewdinModule,
+    MayerModule,
+    MBISModule,
+    MullikenModule,
+)
+from .tddft import TDDFTModule
 
 
 _FLOAT_RE = r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[Ee][-+]?\d+)?"
@@ -131,13 +140,6 @@ _TIMING_RE = re.compile(
     rf"(?P<seconds>{_FLOAT_RE})\s+sec(?:\s+\(\s*(?P<percent>{_FLOAT_RE})%\))?",
     re.I,
 )
-_SPECTRUM_ROW_RE = re.compile(
-    rf"^\s*(?P<from>\S+)\s*->\s*(?P<to>\S+)\s+"
-    rf"(?P<energy_ev>{_FLOAT_RE})\s+(?P<energy_cm>{_FLOAT_RE})\s+"
-    rf"(?P<wavelength_nm>{_FLOAT_RE})\s+(?P<a>{_FLOAT_RE})\s+"
-    rf"(?P<b>{_FLOAT_RE})\s+(?P<c>{_FLOAT_RE})\s+(?P<d>{_FLOAT_RE})"
-    rf"(?:\s+(?P<e>{_FLOAT_RE}))?\s*$"
-)
 _TRANSITION_LABEL_RE = re.compile(
     r"^(?P<root>\d+)-(?P<mult>\d+(?:\.\d+)?)(?P<irrep>[A-Za-z]*)$"
 )
@@ -159,6 +161,15 @@ _GFACTORS_RE = re.compile(
 )
 _D_VALUE_RE = re.compile(rf"^\s*D\s*=\s*(?P<d>{_FLOAT_RE})\s*cm-1", re.I)
 _E_OVER_D_RE = re.compile(rf"^\s*E/D\s*=\s*(?P<e_over_d>{_FLOAT_RE})", re.I)
+
+_POPULATION_MODULES: tuple[tuple[str, type[BaseModule]], ...] = (
+    ("mulliken", MullikenModule),
+    ("loewdin", LoewdinModule),
+    ("mayer", MayerModule),
+    ("hirshfeld", HirshfeldModule),
+    ("mbis", MBISModule),
+    ("chelpg", CHELPGModule),
+)
 
 
 def _to_float(value: str | None) -> Optional[float]:
@@ -362,6 +373,10 @@ class CASSCFModule(BaseModule):
         if nevpt2:
             data["nevpt2"] = nevpt2
 
+        population_analyses = self._parse_population_analyses(lines)
+        if population_analyses:
+            data["population_analyses"] = population_analyses
+
         spectra = self._parse_spectra(lines)
         if spectra:
             data["spectra"] = spectra
@@ -369,10 +384,6 @@ class CASSCFModule(BaseModule):
         relativistic = self._parse_relativistic_properties(lines)
         if relativistic:
             data["relativistic"] = relativistic
-
-        raw_report_sections = self._parse_raw_report_sections(lines)
-        if raw_report_sections:
-            data["raw_report_sections"] = raw_report_sections
 
         self._attach_state_assignments(data)
 
@@ -1198,6 +1209,72 @@ class CASSCFModule(BaseModule):
             "contribution_threshold_percent": contribution_threshold,
         } if parsed_orbitals else {}
 
+    def _parse_population_analyses(self, lines: Sequence[str]) -> List[Dict[str, Any]]:
+        """Parse each ORCA population-analysis pass by delegating to the population modules."""
+        starts = [
+            index
+            for index, line in enumerate(lines)
+            if line.strip() == "ORCA POPULATION ANALYSIS"
+        ]
+        analyses: List[Dict[str, Any]] = []
+        for block_index, start in enumerate(starts):
+            end = starts[block_index + 1] if block_index + 1 < len(starts) else len(lines)
+            block_lines = list(lines[start:end])
+            sections: Dict[str, Any] = {}
+            for key, module_cls in _POPULATION_MODULES:
+                parsed = module_cls(self.context).parse(block_lines)
+                if parsed:
+                    sections[key] = parsed
+            if not sections:
+                continue
+            context = self._infer_population_analysis_context(lines, start, block_index)
+            analyses.append(
+                {
+                    "block_index": block_index,
+                    "start_line": start + 1,
+                    "end_line": end,
+                    "section_keys": list(sections),
+                    "sections": sections,
+                    **context,
+                }
+            )
+        return analyses
+
+    def _infer_population_analysis_context(
+        self,
+        lines: Sequence[str],
+        start: int,
+        block_index: int,
+    ) -> Dict[str, Any]:
+        """Attach a compact CASSCF/NEVPT2 context label to one population pass."""
+        window = lines[max(0, start - 160):start]
+        context: Dict[str, Any] = {}
+        label = "casscf_population_analysis" if block_index == 0 else f"population_analysis_{block_index}"
+        if any("QD-NEVPT2: Repeating the population analysis with the corrected densities" in line for line in window):
+            label = "qd_nevpt2_corrected_density"
+        elif any("State-specific QD-NEVPT2 population analysis" in line for line in window):
+            label = "qd_nevpt2_state_specific"
+        elif any("Storing electron density after QD-SOC" in line for line in window):
+            label = "qd_soc_state_density"
+
+        for line in reversed(window):
+            root_match = re.match(r"^\s*Root\s+(?P<root>\d+)\s*:", line, re.I)
+            if root_match and "root" not in context:
+                context["root"] = int(root_match.group("root"))
+            block_match = re.match(
+                r"^\s*BLOCK\s+(?P<block>\d+)\s+\(Multiplicity\s+(?P<mult>\d+)\):",
+                line,
+                re.I,
+            )
+            if block_match:
+                context.setdefault("state_block", int(block_match.group("block")))
+                context.setdefault("multiplicity", int(block_match.group("mult")))
+            if "root" in context and "multiplicity" in context:
+                break
+
+        context["label"] = label
+        return context
+
     def _parse_nevpt2(self, lines: Sequence[str]) -> Dict[str, Any]:
         """Parse SC-NEVPT2 and QD-NEVPT2 summaries printed inside CASSCF jobs."""
         if _find_exact(lines, "NEVPT2 Results") == -1 and _find_exact(lines, "QD-NEVPT2 Results") == -1:
@@ -1234,12 +1311,12 @@ class CASSCFModule(BaseModule):
         if qd_density_idx != -1:
             qd_density = self._parse_matrix_at(lines, qd_density_idx, trace_kind="electron")
             if qd_density:
-                qd["density_matrix"] = qd_density
+                qd["corrected_density_matrix"] = qd_density
         qd_spin_idx = _find_exact(lines, "SPIN-DENSITY MATRIX (QD-NEVPT2 CORRECTED)")
         if qd_spin_idx != -1:
             qd_spin = self._parse_matrix_at(lines, qd_spin_idx, trace_kind="spin")
             if qd_spin:
-                qd["spin_density_matrix"] = qd_spin
+                qd["corrected_spin_density_matrix"] = qd_spin
         corrected_population_idx = _find_line_containing(
             lines,
             "QD-NEVPT2: Repeating the population analysis with the corrected densities",
@@ -1554,13 +1631,14 @@ class CASSCFModule(BaseModule):
         return rows
 
     def _parse_spectra(self, lines: Sequence[str]) -> List[Dict[str, Any]]:
-        """Parse CASSCF, NEVPT2-diagonal, and QD-NEVPT2 UV/CD spectra tables."""
+        """Parse CASSCF, NEVPT2-diagonal, QD-NEVPT2, and SOC-corrected spectra tables."""
         headings = [
             ("casscf", "CASSCF UV, CD spectra and dipole moments"),
             ("casscf_nevpt2_diagonal", "CASSCF (NEVPT2 diagonal energies) UV, CD spectra and dipole moments"),
             ("qd_nevpt2", "QD-NEVPT2 UV, CD spectra and dipole moments"),
         ]
         sections: List[Dict[str, Any]] = []
+
         for key, heading in headings:
             start = _find_exact(lines, heading)
             if start == -1:
@@ -1575,70 +1653,166 @@ class CASSCFModule(BaseModule):
                 possible_ends.append(rel_start)
             end_candidates = [item for item in possible_ends if item != -1]
             end = min(end_candidates) if end_candidates else len(lines)
-            absorption: List[Dict[str, Any]] = []
-            cd: List[Dict[str, Any]] = []
-            mode = ""
-            for line in lines[start + 1:end]:
-                if "ABSORPTION SPECTRUM" in line:
-                    mode = "absorption"
-                    continue
-                if "CD SPECTRUM" in line:
-                    mode = "cd"
-                    continue
-                row = self._parse_spectrum_row(line, mode)
-                if not row:
-                    continue
-                if mode == "absorption":
-                    absorption.append(row)
-                elif mode == "cd":
-                    cd.append(row)
-            if absorption or cd:
-                sections.append(
-                    {
-                        "key": key,
-                        "title": heading,
-                        "absorption": absorption,
-                        "cd": cd,
-                    }
-                )
+            section = self._parse_spectrum_range(lines, start, end, key, heading)
+            if section:
+                sections.append(section)
+
+        rel_start = _find_exact(lines, "CASSCF RELATIVISTIC PROPERTIES")
+        if rel_start != -1:
+            rel_end = _find_line_containing(lines, "EPR properties:", rel_start + 1)
+            if rel_end == -1:
+                rel_end = _find_line_containing(lines, "ORCA TERMINATED NORMALLY", rel_start + 1)
+            if rel_end == -1:
+                rel_end = len(lines)
+            qdpt_starts: List[int] = []
+            for index in range(rel_start + 1, rel_end):
+                if _QDPT_HEADING_RE.match(lines[index]):
+                    qdpt_starts.append(index)
+            for offset, start in enumerate(qdpt_starts):
+                next_start = qdpt_starts[offset + 1] if offset + 1 < len(qdpt_starts) else rel_end
+                match = _QDPT_HEADING_RE.match(lines[start])
+                label = match.group("label").strip() if match else f"QDPT {offset + 1}"
+                key = "qdpt_" + re.sub(r"[^a-z0-9]+", "_", label.lower()).strip("_")
+                title = f"QDPT {label} SOC-corrected spectra"
+                section = self._parse_spectrum_range(lines, start, next_start, key, title)
+                if section:
+                    section["qdpt_label"] = label
+                    sections.append(section)
         return sections
 
-    def _parse_spectrum_row(self, line: str, mode: str) -> Optional[Dict[str, Any]]:
-        """Parse one absorption or CD spectrum row."""
-        if mode not in {"absorption", "cd"}:
-            return None
-        match = _SPECTRUM_ROW_RE.match(line)
-        if not match:
-            return None
-        row: Dict[str, Any] = {
-            "from": match.group("from"),
-            "to": match.group("to"),
-            "energy_eV": float(match.group("energy_ev")),
-            "energy_cm-1": float(match.group("energy_cm")),
-            "wavelength_nm": float(match.group("wavelength_nm")),
+    def _parse_spectrum_range(
+        self,
+        lines: Sequence[str],
+        start: int,
+        end: int,
+        key: str,
+        title: str,
+    ) -> Dict[str, Any]:
+        """Parse all shared-format ORCA spectrum tables inside one CASSCF-owned range."""
+        section: Dict[str, Any] = {
+            "key": key,
+            "title": title,
+            "absorption": [],
+            "cd": [],
         }
-        row.update(self._parse_transition_label("from", match.group("from")))
-        row.update(self._parse_transition_label("to", match.group("to")))
+        index = start + 1
+        tddft = TDDFTModule(self.context)
+        while index < end:
+            table_info = self._spectrum_table_info(lines[index])
+            if table_info is None:
+                index += 1
+                continue
+            mode, kind, value_fields, table_title, soc_corrected = table_info
+            rows, next_index = self._parse_shared_spectrum_table(
+                lines,
+                index,
+                end,
+                mode,
+                kind,
+                value_fields,
+                table_title,
+                soc_corrected,
+                tddft,
+            )
+            if rows:
+                section[mode].extend(rows)
+            index = max(next_index, index + 1)
+        return section if section["absorption"] or section["cd"] else {}
+
+    def _spectrum_table_info(self, line: str) -> Optional[tuple[str, str, List[str], str, bool]]:
+        """Return shared TDDFT spectrum metadata for an ORCA spectrum title line."""
+        table_title = line.strip()
+        upper = table_title.upper()
+        soc_corrected = False
+        if upper.startswith("SOC CORRECTED "):
+            upper = upper[len("SOC CORRECTED "):]
+            soc_corrected = True
+        if upper not in TDDFTModule._SPECTRUM_TABLES:
+            return None
+        kind, value_fields = TDDFTModule._SPECTRUM_TABLES[upper]
+        if kind.startswith("absorption"):
+            mode = "absorption"
+        elif kind.startswith("cd"):
+            mode = "cd"
+        else:
+            return None
+        return mode, kind, value_fields, table_title, soc_corrected
+
+    def _parse_shared_spectrum_table(
+        self,
+        lines: Sequence[str],
+        start: int,
+        end: int,
+        mode: str,
+        kind: str,
+        value_fields: List[str],
+        table_title: str,
+        soc_corrected: bool,
+        tddft: TDDFTModule,
+    ) -> tuple[List[Dict[str, Any]], int]:
+        """Use the TDDFT spectrum row parser, then normalize rows to CASSCF keys."""
+        rows: List[Dict[str, Any]] = []
+        index = start + 1
+        started = False
+        while index < end:
+            stripped = lines[index].strip()
+            if not stripped:
+                if started:
+                    break
+                index += 1
+                continue
+            if self._spectrum_table_info(lines[index]) is not None:
+                break
+            parsed = tddft._parse_spectrum_row(lines[index], value_fields)
+            if parsed is not None:
+                rows.append(self._convert_tddft_spectrum_row(parsed, mode, kind, table_title, soc_corrected))
+                started = True
+            index += 1
+        return rows, index
+
+    def _convert_tddft_spectrum_row(
+        self,
+        row: Dict[str, Any],
+        mode: str,
+        kind: str,
+        table_title: str,
+        soc_corrected: bool,
+    ) -> Dict[str, Any]:
+        """Convert a shared TDDFT spectrum row into the CASSCF report schema."""
+        from_label = row.get("from_state_label", "")
+        to_label = row.get("to_state_label", "")
+        converted: Dict[str, Any] = {
+            "from": from_label,
+            "to": to_label,
+            "energy_eV": row.get("energy_eV"),
+            "energy_cm-1": row.get("energy_cm1"),
+            "wavelength_nm": row.get("wavelength_nm"),
+            "spectrum_kind": kind,
+            "source_table": table_title,
+            "soc_corrected": soc_corrected,
+        }
+        converted.update(self._parse_transition_label("from", from_label))
+        converted.update(self._parse_transition_label("to", to_label))
         if mode == "absorption":
-            row.update(
+            converted.update(
                 {
-                    "oscillator_strength": float(match.group("a")),
-                    "dipole_strength_au2": float(match.group("b")),
-                    "transition_dipole_x_au": float(match.group("c")),
-                    "transition_dipole_y_au": float(match.group("d")),
-                    "transition_dipole_z_au": float(match.group("e")) if match.group("e") is not None else None,
+                    "oscillator_strength": row.get("oscillator_strength"),
+                    "dipole_strength_au2": row.get("dipole_strength_au2", row.get("velocity_strength_au2")),
+                    "transition_dipole_x_au": row.get("dx_au", row.get("px_au")),
+                    "transition_dipole_y_au": row.get("dy_au", row.get("py_au")),
+                    "transition_dipole_z_au": row.get("dz_au", row.get("pz_au")),
                 }
             )
         else:
-            row.update(
+            converted.update(
                 {
-                    "rotatory_strength_1e40_cgs": float(match.group("a")),
-                    "magnetic_dipole_x_au": float(match.group("b")),
-                    "magnetic_dipole_y_au": float(match.group("c")),
-                    "magnetic_dipole_z_au": float(match.group("d")),
+                    "rotatory_strength_1e40_cgs": row.get("rotatory_strength_cgs"),
+                    "magnetic_dipole_x_au": row.get("mx_au"),
+                    "magnetic_dipole_y_au": row.get("my_au"),
+                    "magnetic_dipole_z_au": row.get("mz_au"),
                 }
             )
-        return row
+        return converted
 
     def _parse_transition_label(self, prefix: str, label: str) -> Dict[str, Any]:
         """Break ORCA labels like ``0-4A`` into root, multiplicity, and irrep."""
@@ -2023,43 +2197,6 @@ class CASSCFModule(BaseModule):
             row["transition_correction_cm-1"] = correction.get("delta_energy_cm-1")
         return row
 
-    def _parse_raw_report_sections(self, lines: Sequence[str]) -> List[Dict[str, Any]]:
-        """Preserve long ORCA report blocks whose layout carries scientific context."""
-        sections: List[Dict[str, Any]] = []
-
-        def add_block(key: str, title: str, start: int, end: int) -> None:
-            if start == -1 or end == -1 or end <= start:
-                return
-            block_lines = [line.rstrip() for line in lines[start:end]]
-            if not any(line.strip() for line in block_lines):
-                return
-            sections.append(
-                {
-                    "key": key,
-                    "title": title,
-                    "start_line": start + 1,
-                    "end_line": end,
-                    "n_lines": len(block_lines),
-                    "lines": block_lines,
-                }
-            )
-
-        qd_start = _find_exact(lines, "QD-NEVPT2 Results")
-        qd_end = _find_exact(lines, "QD-NEVPT2 TOTAL ENERGIES", qd_start + 1) if qd_start != -1 else -1
-        add_block("qd_nevpt2_van_vleck", "QD-NEVPT2 Van Vleck Results", qd_start, qd_end)
-
-        spectra_start = _find_exact(lines, "CASSCF UV, CD spectra and dipole moments")
-        spectra_end = _find_exact(lines, "CASSCF RELATIVISTIC PROPERTIES", spectra_start + 1) if spectra_start != -1 else -1
-        add_block("casscf_uv_cd_spectra", "CASSCF / NEVPT2 UV, CD Spectra and Dipole Moments", spectra_start, spectra_end)
-
-        rel_start = _find_exact(lines, "CASSCF RELATIVISTIC PROPERTIES")
-        rel_end = _find_line_containing(lines, "EPR properties:", rel_start + 1) if rel_start != -1 else -1
-        if rel_end == -1 and rel_start != -1:
-            rel_end = _find_line_containing(lines, "ORCA TERMINATED NORMALLY", rel_start + 1)
-        add_block("casscf_relativistic_properties", "CASSCF Relativistic Properties", rel_start, rel_end)
-
-        return sections
-
     def _build_summary(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Build compact CASSCF metadata for job labels, reports, and comparisons."""
         summary: Dict[str, Any] = {
@@ -2113,6 +2250,13 @@ class CASSCFModule(BaseModule):
         transitions = data.get("transition_energies") or {}
         if transitions.get("states"):
             summary["transition_count"] = len(transitions["states"])
+
+        population_analyses = data.get("population_analyses") or []
+        if population_analyses:
+            summary["population_analysis_count"] = len(population_analyses)
+            summary["population_analysis_sections"] = sorted(
+                {key for analysis in population_analyses for key in analysis.get("section_keys", [])}
+            )
 
         nevpt2 = data.get("nevpt2") or {}
         if nevpt2:
@@ -2623,18 +2767,21 @@ def _casscf_markdown_blocks(
         blocks.append(f"{h3} SA-CASSCF State Energies and Configurations\n{helpers.make_table(rows)}")
 
     state_blocks = casscf.get("state_blocks") or []
-    if False and state_blocks and not assignments:
-        rows = [("block", "mult", "root", "E Eh", "rel eV", "dominant configuration")]
+    if state_blocks and not assignments:
+        rows = [(
+            "block",
+            "mult",
+            "root",
+            "E Eh",
+            "rel eV",
+            "dominant weight -> config",
+            "weights -> configurations",
+        )]
         for block in state_blocks:
             for root in block.get("roots", []):
                 dominant = root.get("dominant_configuration") or {}
-                label = "—"
-                if dominant:
-                    label = (
-                        f"{helpers.format_number(dominant.get('weight'), '.5f')} "
-                        f"[{dominant.get('configuration_index')}] "
-                        f"{dominant.get('occupation_string')}"
-                    )
+                label = _format_configuration_digest(dominant, helpers)
+                configurations_label = _configuration_digest(root.get("configurations") or [], helpers, limit=None)
                 rows.append(
                     (
                         block.get("block_index"),
@@ -2643,6 +2790,7 @@ def _casscf_markdown_blocks(
                         helpers.format_number(root.get("energy_Eh"), ".10f"),
                         helpers.format_number(root.get("relative_energy_eV"), ".3f"),
                         label,
+                        configurations_label,
                     )
                 )
         blocks.append(f"{h3} CAS-SCF States\n{helpers.make_table(rows)}")
@@ -2690,6 +2838,22 @@ def _casscf_markdown_blocks(
             max_contributions=None if render_options.is_full else 5,
         )
         blocks.append(f"{h3} Loewdin Reduced Active MOs\n{helpers.make_table(rows)}")
+
+    population_analyses = casscf.get("population_analyses") or []
+    if population_analyses:
+        rows = [("block", "label", "state block", "mult", "root", "sections")]
+        for analysis in population_analyses:
+            rows.append(
+                (
+                    analysis.get("block_index"),
+                    analysis.get("label", ""),
+                    analysis.get("state_block", ""),
+                    analysis.get("multiplicity", ""),
+                    analysis.get("root", ""),
+                    ", ".join(analysis.get("section_keys") or []),
+                )
+            )
+        blocks.append(f"{h3} CASSCF Population Analysis Passes\n{helpers.make_table(rows)}")
 
     nevpt2 = casscf.get("nevpt2") or {}
     if nevpt2:
@@ -2887,6 +3051,9 @@ def _spectrum_csv_rows(section: Dict[str, Any], mode: str) -> List[Dict[str, Any
         base = {
             "spectrum": section.get("key"),
             "title": section.get("title"),
+            "spectrum_kind": row.get("spectrum_kind"),
+            "source_table": row.get("source_table"),
+            "soc_corrected": row.get("soc_corrected"),
             "transition_from": row.get("from_label"),
             "transition_to": row.get("to_label"),
             "from_root": row.get("from_root"),
@@ -2949,6 +3116,7 @@ def _write_casscf_csv_files(
                     "converged_iteration",
                     "state_count",
                     "transition_count",
+                    "population_analysis_count",
                     "has_nevpt2",
                     "has_qd_nevpt2",
                 ],
@@ -3134,6 +3302,30 @@ def _write_casscf_csv_files(
             )
         )
 
+    population_rows = []
+    for analysis in casscf.get("population_analyses") or []:
+        population_rows.append(
+            {
+                "block_index": analysis.get("block_index"),
+                "label": analysis.get("label"),
+                "state_block": analysis.get("state_block", ""),
+                "multiplicity": analysis.get("multiplicity", ""),
+                "root": analysis.get("root", ""),
+                "start_line": analysis.get("start_line"),
+                "end_line": analysis.get("end_line"),
+                "sections": ",".join(analysis.get("section_keys") or []),
+            }
+        )
+    if population_rows:
+        files.append(
+            write_csv(
+                directory,
+                f"{stem}_casscf_population_analyses.csv",
+                population_rows,
+                ["block_index", "label", "state_block", "multiplicity", "root", "start_line", "end_line", "sections"],
+            )
+        )
+
     absorption_rows: List[Dict[str, Any]] = []
     cd_rows: List[Dict[str, Any]] = []
     for section in casscf.get("spectra") or []:
@@ -3148,6 +3340,9 @@ def _write_casscf_csv_files(
                 [
                     "spectrum",
                     "title",
+                    "spectrum_kind",
+                    "source_table",
+                    "soc_corrected",
                     "transition_from",
                     "transition_to",
                     "from_root",
@@ -3174,6 +3369,9 @@ def _write_casscf_csv_files(
                 [
                     "spectrum",
                     "title",
+                    "spectrum_kind",
+                    "source_table",
+                    "soc_corrected",
                     "transition_from",
                     "transition_to",
                     "from_root",
@@ -3228,6 +3426,16 @@ def _write_casscf_csv_files(
                 assignment_columns,
             )
         )
+
+    for key, filename in (
+        ("corrected_density_matrix", f"{stem}_qd_nevpt2_corrected_density_matrix.csv"),
+        ("corrected_spin_density_matrix", f"{stem}_qd_nevpt2_corrected_spin_density_matrix.csv"),
+    ):
+        matrix = qd.get(key) or {}
+        rows = _matrix_to_rows(matrix)
+        if rows:
+            columns = ["row"] + [f"col_{column}" for column in matrix.get("columns", [])]
+            files.append(write_csv(directory, filename, rows, columns))
 
     natural_rows = []
     for row in qd.get("state_specific_natural_orbitals") or []:
@@ -3346,10 +3554,14 @@ PLUGIN_BUNDLE = PluginBundle(
     metadata=PluginMetadata(
         key="casscf",
         name="CASSCF / NEVPT2",
-        short_help="Parse CASSCF convergence, active-space states, matrices, Loewdin active MOs, and NEVPT2 summaries.",
+        short_help=(
+            "Parse CASSCF convergence, active-space states, matrices, repeated population passes, "
+            "NEVPT2/QD-NEVPT2 summaries, spectra, and QDPT properties."
+        ),
         description=(
-            "Self-registering CASSCF parser section with bounded active/frontier "
-            "Loewdin orbital-composition parsing and CASSCF-owned NEVPT2/QD-NEVPT2 summaries."
+            "Self-registering CASSCF parser section with bounded active/frontier Loewdin "
+            "orbital-composition parsing, reused population/spectrum parsers, and "
+            "CASSCF-owned NEVPT2/QD-NEVPT2/QDPT summaries."
         ),
         docs_path="README.md",
         examples=(
