@@ -51,3 +51,36 @@ def test_hdf5_lzf_compression_does_not_pass_gzip_level(tmp_path: Path) -> None:
     with h5py.File(h5_path, "r") as handle:
         assert handle["values"]["values"].compression == "lzf"
         assert handle.attrs["orca_parser_version"] == __version__
+
+
+def test_hdf5_nested_record_columns_are_json_encoded(tmp_path: Path) -> None:
+    h5py = pytest.importorskip("h5py")
+    h5_path = tmp_path / "nested_records.h5"
+
+    write_hdf5(
+        {
+            "source_file": "synthetic.out",
+            "casscf": {
+                "state_assignments": [
+                    {
+                        "state": 1,
+                        "configurations": [
+                            {"weight": 0.9, "occupation_string": "111000"},
+                            {"weight": 0.1, "occupation_string": "110100"},
+                        ],
+                    }
+                ]
+            },
+        },
+        h5_path,
+        compression=None,
+    )
+
+    with h5py.File(h5_path, "r") as handle:
+        dataset = handle["casscf"]["state_assignments"]["configurations"]
+        encoded = dataset.asstr()[0]
+        json_encoded = dataset.attrs["json_encoded"]
+
+    assert json_encoded == 1
+    assert encoded.startswith("[{")
+    assert '"occupation_string":"111000"' in encoded

@@ -2,13 +2,22 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from orca_parser import ORCAParser
 from orca_parser.modules.casscf import CASSCFModule
+from orca_parser.modules.spectrum_parser import parse_spectrum_table
 from orca_parser.parser_section_registry import get_parser_section_alias_map
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CASSCF_SAMPLE = REPO_ROOT / "sample_outs" / "CASSCFb2" / "NC.out"
+
+
+def _require_private_casscf_sample() -> Path:
+    if not CASSCF_SAMPLE.exists():
+        pytest.skip("local private CASSCF sample is not present")
+    return CASSCF_SAMPLE
 
 
 def _casscf_context() -> dict:
@@ -347,6 +356,20 @@ def test_casscf_markdown_renders_full_configs_nevpt2_and_raw_blocks(tmp_path: Pa
     ]
     casscf = CASSCFModule(_casscf_context()).parse(lines)
     assert casscf is not None
+    casscf["loewdin_orbital_compositions"] = {
+        "selected_min_index": 181,
+        "selected_max_index": 184,
+        "orbitals": [
+            {
+                "index": 182,
+                "energy_Eh": -0.3,
+                "occupation": 0.8,
+                "contributions": [
+                    {"atom_index": 0, "element": "N", "ao_label": "px", "percent": 95.0}
+                ],
+            }
+        ],
+    }
 
     out_path = tmp_path / "casscf.md"
     write_markdown({"source_file": "synthetic.out", "casscf": casscf}, out_path)
@@ -369,12 +392,44 @@ def test_casscf_markdown_renders_full_configs_nevpt2_and_raw_blocks(tmp_path: Pa
     assert "QD-NEVPT2 Corrected Spin-Density Matrix" in text
     assert "QD-NEVPT2 Corrected Loewdin Reduced Active MOs" in text
     assert "QD-NEVPT2 State-Specific Natural Orbitals" in text
+    assert "Loewdin Orbital Compositions (181-184)" in text
     assert "CASSCF UV, CD spectra and dipole moments - Absorption" in text
     assert "SOC-corrected spectra - Absorption" in text
     assert "SOC-corrected spectra - CD" in text
     assert "QDPT CASSCF DIAGONAL ENERGIES Relativistic Levels" in text
     assert "g-Matrix Summary" in text
     assert "Zero-Field Splitting Summary" in text
+
+
+def test_shared_spectrum_parser_handles_soc_corrected_orca_tables() -> None:
+    lines = [
+        "SOC CORRECTED ABSORPTION SPECTRUM VIA TRANSITION ELECTRIC DIPOLE MOMENTS",
+        "  0-4.0A  ->  1-4.0A    3.012090   24294.2   411.6   0.000000000   0.00000   0.00000   0.00000   0.00000",
+        "SOC CORRECTED CD SPECTRUM VIA TRANSITION ELECTRIC DIPOLE MOMENTS",
+    ]
+
+    table, next_index = parse_spectrum_table(lines, 0)
+
+    assert table is not None
+    assert table["mode"] == "absorption"
+    assert table["kind"] == "absorption_electric_dipole"
+    assert table["soc_corrected"] is True
+    assert table["transition_count"] == 1
+    assert next_index == 2
+    transition = table["transitions"][0]
+    assert transition["from_state_label"] == "0-4.0A"
+    assert transition["from_root"] == 0
+    assert transition["from_state_suffix"] == "4.0A"
+    assert transition["to_state_label"] == "1-4.0A"
+    assert transition["energy_eV"] == 3.01209
+
+
+def test_casscf_uses_shared_spectrum_parser_instead_of_tddft_private_helpers() -> None:
+    source = (REPO_ROOT / "orca_parser" / "modules" / "casscf.py").read_text(encoding="utf-8")
+
+    assert "TDDFTModule" not in source
+    assert "_parse_spectrum_row" not in source
+    assert "parse_spectrum_table(" in source
 
 
 def test_casscf_alias_reuses_existing_population_sections() -> None:
@@ -431,8 +486,30 @@ def test_casscf_alias_parses_spin_density_population_headings(tmp_path: Path) ->
     assert data["casscf"]["population_analyses"][0]["section_keys"] == ["mulliken", "loewdin"]
 
 
+def test_casscf_population_pass_stops_before_molecular_orbitals() -> None:
+    lines = [
+        "ORCA-CASSCF",
+        "ORCA POPULATION ANALYSIS",
+        "MULLIKEN ATOMIC CHARGES",
+        "-----------------------",
+        "   0 N :    0.000000",
+        "Sum of atomic charges       :    0.0000000",
+        "MOLECULAR ORBITALS",
+        "MULLIKEN ATOMIC CHARGES",
+        "-----------------------",
+        "   0 N :    99.000000",
+    ]
+
+    data = CASSCFModule(_casscf_context()).parse(lines)
+
+    assert data is not None
+    analysis = data["population_analyses"][0]
+    assert analysis["end_line"] == 6
+    assert analysis["sections"]["mulliken"]["atomic_charges"][0]["charge"] == 0.0
+
+
 def test_real_casscf_sample_keeps_corrected_and_reused_outputs() -> None:
-    data = ORCAParser(CASSCF_SAMPLE).parse(sections=["casscf", "mulliken", "loewdin"])
+    data = ORCAParser(_require_private_casscf_sample()).parse(sections=["casscf", "mulliken", "loewdin"])
     casscf = data["casscf"]
     qd = casscf["nevpt2"]["qd_nevpt2"]
 

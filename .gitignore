@@ -13,3 +13,4 @@ sample_outs/
 .pytest_tmp/
 .pytest_cache/
 sample_md/
+codex_eval_tmp_privacy/

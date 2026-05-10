@@ -80,7 +80,7 @@ artifacts and private reference outputs do not quietly leak into git history.
 
 - CI runs [`tools/check_tracked_private_artifacts.py`](tools/check_tracked_private_artifacts.py) on pushes and pull requests
 - blocked patterns live in [`.privacy_guardrails.json`](.privacy_guardrails.json)
-- the current guardrail blocks tracked `.codex*`, `.pytest_tmp`, `.pytest_cache`, and `sample_md` paths
+- the current guardrail blocks tracked `.codex*`, `.pytest_tmp`, `.pytest_cache`, `sample_md`, `sample_outs`, and `codex_eval_tmp_privacy` paths
 
 To enable the local pre-commit hook:
 
@@ -246,7 +246,7 @@ The CASSCF module treats active-space convergence as a history, not just a final
 - NEVPT2 and QD-NEVPT2 reports join transition energies, transition-energy corrections, total energies, root energy corrections, and corrected CI configurations into digestible state tables instead of raw Van Vleck text dumps.
 - Density and spin-density matrices are exported as JSON-safe row/column/matrix structures rather than NumPy objects.
 - QD-NEVPT2 corrected density/spin-density matrices, corrected reduced active MOs, and state-specific natural-orbital occupations/files are parsed separately from the uncorrected CASSCF values.
-- CASSCF, CASSCF with NEVPT2 diagonal energies, QD-NEVPT2, and SOC-corrected QDPT UV/CD spectra are parsed into transition tables using the shared TDDFT spectrum row parser.
+- CASSCF, CASSCF with NEVPT2 diagonal energies, QD-NEVPT2, TDDFT/CIS, and SOC-corrected QDPT UV/CD spectra are parsed through the shared ORCA spectrum table parser.
 - QDPT relativistic sections are parsed into level, eigenvector-component, g-matrix, zero-field-splitting, and SOC-corrected spectrum summary tables for each printed energy model.
 - Ordinary Mulliken/Loewdin/Mayer/Hirshfeld/MBIS/CHELPG population analysis is handled by the existing population modules. The `casscf` alias expands to those modules automatically, and repeated CASSCF/QD-NEVPT2 population-analysis passes are stored as structured per-pass summaries rather than raw text.
 - The CASSCF module only owns CASSCF-specific population-like tables: Loewdin reduced active MOs, QD-NEVPT2 corrected reduced active MOs, state-specific QD-NEVPT2 natural-orbital occupations, and a bounded Loewdin orbital-composition window around the active space.

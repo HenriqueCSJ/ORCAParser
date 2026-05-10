@@ -68,3 +68,31 @@ def test_privacy_guardrails_fail_for_blocked_codex_files(tmp_path: Path) -> None
     assert result.returncode == 1
     assert blocked.name in result.stdout
     assert ".codex*" in result.stdout
+
+
+def test_privacy_guardrails_fail_for_private_sample_outputs(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path)
+    blocked = repo / "sample_outs" / "private" / "NC.out"
+    blocked.parent.mkdir(parents=True)
+    blocked.write_text("private ORCA output\n", encoding="utf-8")
+    _git(repo, "add", str(blocked.relative_to(repo)))
+
+    result = _run_guard(repo)
+
+    assert result.returncode == 1
+    assert "sample_outs/private/NC.out" in result.stdout
+    assert "sample_outs/**" in result.stdout
+
+
+def test_privacy_guardrails_fail_for_codex_privacy_outputs(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path)
+    blocked = repo / "codex_eval_tmp_privacy" / "local.json"
+    blocked.parent.mkdir()
+    blocked.write_text("private check output\n", encoding="utf-8")
+    _git(repo, "add", str(blocked.relative_to(repo)))
+
+    result = _run_guard(repo)
+
+    assert result.returncode == 1
+    assert "codex_eval_tmp_privacy/local.json" in result.stdout
+    assert "codex_eval_tmp_privacy/**" in result.stdout

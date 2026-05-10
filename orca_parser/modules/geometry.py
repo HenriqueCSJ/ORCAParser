@@ -31,16 +31,17 @@ class MetadataModule(BaseModule):
     def parse(self, lines):
         data: Dict[str, Any] = {}
         self._apply_input_echo_metadata(data)
+        header_lines = lines[:5000] if len(lines) > 5000 else lines
 
         # ORCA version
-        for ln in lines:
+        for ln in header_lines:
             m = re.search(r"Program Version\s+([\d.]+)", ln)
             if m:
                 data["orca_version"] = m.group(1)
                 break
 
         # Job name from input filename
-        for ln in lines:
+        for ln in header_lines:
             m = re.search(r"NAME\s*=\s*(\S+)", ln)
             if m:
                 data.setdefault("input_name", m.group(1))
@@ -48,7 +49,7 @@ class MetadataModule(BaseModule):
                 break
 
         # Host, date, working directory
-        for ln in lines:
+        for ln in header_lines:
             m = re.search(r"Host name:\s+(\S+)", ln)
             if m:
                 data["host"] = m.group(1)
@@ -61,7 +62,7 @@ class MetadataModule(BaseModule):
 
         # Calculation type
         if "calculation_type" not in data:
-            for ln in lines:
+            for ln in header_lines:
                 if "Single Point Calculation" in ln:
                     data["calculation_type"] = "Single Point"
                     break
@@ -73,14 +74,14 @@ class MetadataModule(BaseModule):
                     break
 
         # SCF spin-treatment label from ORCA output (e.g. RHF/UHF/ROHF)
-        for ln in lines:
+        for ln in header_lines:
             m = re.search(r"Hartree-Fock type\s+HFTyp\s+\.\.\.\.\s+(\w+)", ln)
             if m:
                 data["hf_type"] = m.group(1)
                 break
 
         # Functional
-        for ln in lines:
+        for ln in header_lines:
             m = re.search(r"Functional name\s+\.\.\.\.\s+(.+)", ln)
             if m:
                 reported_functional = m.group(1).strip()
@@ -89,7 +90,7 @@ class MetadataModule(BaseModule):
                 break
 
         # Charge and multiplicity
-        for ln in lines:
+        for ln in header_lines:
             m = re.search(r"Total Charge\s+Charge\s+\.\.\.\.\s+(-?\d+)", ln)
             if m:
                 data["charge"] = int(m.group(1))
@@ -101,7 +102,7 @@ class MetadataModule(BaseModule):
                 data["n_electrons"] = int(m.group(1))
 
         # Basis set
-        for ln in lines:
+        for ln in header_lines:
             m = re.search(r"Your calculation utilizes the basis:\s+(.+)", ln)
             if m:
                 reported_basis = m.group(1).strip()
@@ -110,20 +111,20 @@ class MetadataModule(BaseModule):
                 break
 
         # Basis dimension
-        for ln in lines:
+        for ln in header_lines:
             m = re.search(r"Basis Dimension\s+Dim\s+\.\.\.\.\s+(\d+)", ln)
             if m:
                 data["n_basis_functions"] = int(m.group(1))
                 break
 
         # Nuclear repulsion
-        for ln in lines:
+        for ln in header_lines:
             m = re.search(r"Nuclear Repulsion\s+ENuc\s+\.\.\.\.\s+([\d.]+)", ln)
             if m:
                 data["nuclear_repulsion_Eh"] = float(m.group(1))
                 break
 
-        symmetry = self._parse_symmetry(lines)
+        symmetry = self._parse_symmetry(header_lines)
         input_use_sym = data.get("input_use_sym")
         if symmetry:
             if input_use_sym is not None and "use_sym" not in symmetry:
@@ -157,7 +158,7 @@ class MetadataModule(BaseModule):
             self.context["has_symmetry"] = False
 
         # Relativistic method
-        for ln in lines:
+        for ln in header_lines:
             m = re.search(r"Relativistic Method\s+\.\.\.\s+(\S+)", ln)
             if m:
                 data["relativistic_method"] = m.group(1)
@@ -166,8 +167,8 @@ class MetadataModule(BaseModule):
         # ── Input keywords (from echoed input "! ..." lines) ─────────
         input_keywords = data.get("input_keywords") or []
         is_surface_scan = (
-            any("Relaxed Surface Scan" in ln for ln in lines[:5000])
-            or self._input_contains_geom_scan(lines)
+            any("Relaxed Surface Scan" in ln for ln in header_lines)
+            or self._input_contains_geom_scan(header_lines)
             or self._input_echo_contains_geom_scan()
         )
         if is_surface_scan:
@@ -850,6 +851,7 @@ class GeometryModule(BaseModule):
 
     def parse(self, lines):
         data = {}
+        header_lines = lines[:5000] if len(lines) > 5000 else lines
 
         # Geometry optimizations print this block for every step; prefer the
         # converged geometry instead of the input/start structure.
@@ -920,14 +922,14 @@ class GeometryModule(BaseModule):
             self.context["atom_symbols"] = [a["symbol"] for a in data["cartesian_angstrom"]]
 
         # Symmetry coordinates
-        idx = self.find_line(lines, "Symmetry-perfected Cartesians for point group")
+        idx = self.find_line(header_lines, "Symmetry-perfected Cartesians for point group")
         if idx != -1:
-            m = re.search(r"point group\s+(\w+)", lines[idx])
+            m = re.search(r"point group\s+(\w+)", header_lines[idx])
             if m:
                 data["symmetry_point_group"] = m.group(1)
                 data["symmetry_perfected_point_group"] = m.group(1)
                 sym_atoms = []
-                for ln in lines[idx + 1:]:
+                for ln in header_lines[idx + 1:]:
                     if "Symmetry-perfected Cartesians" in ln and "; Ang" in ln:
                         break
                     m2 = re.match(r"\s+(\d+)\s+(\w+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)", ln)
@@ -946,7 +948,7 @@ class GeometryModule(BaseModule):
 
                 sym_atoms_ang = []
                 ang_header_seen = False
-                for ln in lines[idx + 1:]:
+                for ln in header_lines[idx + 1:]:
                     if "Symmetry-perfected Cartesians" in ln and "; Ang" in ln:
                         ang_header_seen = True
                         continue
@@ -976,27 +978,31 @@ class BasisSetModule(BaseModule):
 
     def parse(self, lines):
         data = {}
+        header_lines = lines[:5000] if len(lines) > 5000 else lines
 
         # Groups
-        idx = self.find_line(lines, "BASIS SET INFORMATION")
+        idx = self.find_line(header_lines, "BASIS SET INFORMATION")
         if idx == -1:
             return None
 
         # Number of distinct groups
-        m = re.search(r"There are (\d+) groups of distinct atoms", lines[idx + 2] if idx + 2 < len(lines) else "")
+        m = re.search(
+            r"There are (\d+) groups of distinct atoms",
+            header_lines[idx + 2] if idx + 2 < len(header_lines) else "",
+        )
         if m:
             data["n_groups"] = int(m.group(1))
 
         # Parse group descriptions
         groups = {}
-        for ln in lines[idx:idx + 30]:
+        for ln in header_lines[idx:idx + 30]:
             m = re.match(r"\s+Group\s+(\d+)\s+Type\s+(\w+)\s+:\s+(.+)", ln)
             if m:
                 groups[int(m.group(1))] = {"element": m.group(2), "description": m.group(3).strip()}
 
         # Atom -> group mapping (read until blank line after data)
         atom_groups = {}
-        for ln in lines[idx:]:
+        for ln in header_lines[idx:]:
             m = re.match(r"Atom\s+(\d+)(\w+)\s+basis set group =>\s+(\d+)", ln)
             if m:
                 atom_groups[f"{m.group(1)}{m.group(2)}"] = int(m.group(3))
@@ -1007,7 +1013,7 @@ class BasisSetModule(BaseModule):
         data["atom_group_mapping"] = atom_groups
 
         # Number of basis functions, shells, etc.
-        for ln in lines:
+        for ln in header_lines:
             m = re.search(r"Number of basis functions\s+\.\.\.\s+(\d+)", ln)
             if m:
                 data["n_basis_functions"] = int(m.group(1))

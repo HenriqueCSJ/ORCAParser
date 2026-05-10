@@ -13,6 +13,7 @@ blocked-path policy without editing code.
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import json
 import subprocess
 import sys
@@ -96,16 +97,28 @@ def find_blocked_paths(
     violations: list[Violation] = []
     for tracked_path in tracked_paths:
         pure_path = PurePosixPath(_normalize_git_path(tracked_path))
+        path_text = str(pure_path)
         for blocked in blocked_globs:
-            if pure_path.match(blocked.pattern):
+            if _path_matches_blocked_glob(path_text, pure_path, blocked.pattern):
                 violations.append(
                     Violation(
-                        path=str(pure_path),
+                        path=path_text,
                         pattern=blocked.pattern,
                         reason=blocked.reason,
                     )
                 )
     return tuple(violations)
+
+
+def _path_matches_blocked_glob(path_text: str, pure_path: PurePosixPath, pattern: str) -> bool:
+    """Return whether a normalized git path matches one blocked pattern."""
+
+    normalized_pattern = _normalize_git_path(pattern)
+    if normalized_pattern.endswith("/**"):
+        directory = normalized_pattern[:-3].rstrip("/")
+        if path_text == directory or path_text.startswith(f"{directory}/"):
+            return True
+    return pure_path.match(normalized_pattern) or fnmatch.fnmatchcase(path_text, normalized_pattern)
 
 
 def _default_repo_root() -> Path:

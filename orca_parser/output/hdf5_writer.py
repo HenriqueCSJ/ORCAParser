@@ -35,6 +35,7 @@ Design rules
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -252,10 +253,16 @@ def _write_array(grp, name: str, lst: list, cmp: dict) -> None:
         grp.create_dataset(name, data=arr, **cmp)
         return
 
-    # Mixed or string → variable-length UTF-8 strings
-    str_arr = np.array([str(v) if v is not None else "" for v in lst],
-                       dtype=h5py_string_dtype())
-    grp.create_dataset(name, data=str_arr)
+    # Mixed or string → variable-length UTF-8 strings. Nested structures are
+    # JSON-encoded so downstream readers do not have to parse Python repr text.
+    has_nested = any(isinstance(v, (dict, list, tuple)) for v in clean)
+    str_arr = np.array(
+        [_stringify_hdf5_value(v, json_encode=has_nested) for v in lst],
+        dtype=h5py_string_dtype(),
+    )
+    ds = grp.create_dataset(name, data=str_arr)
+    if has_nested:
+        ds.attrs["json_encoded"] = 1
 
 
 def _write_dataset(grp, name: str, arr: np.ndarray, cmp: dict) -> None:
@@ -271,6 +278,15 @@ def _scalar(val):
     if isinstance(val, np.floating):
         return float(val)
     return val
+
+
+def _stringify_hdf5_value(value: Any, *, json_encode: bool) -> str:
+    """Return a stable string representation for variable-length HDF5 columns."""
+    if value is None:
+        return ""
+    if json_encode:
+        return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return str(value)
 
 
 _h5py_str_dtype = None

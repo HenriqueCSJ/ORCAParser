@@ -31,7 +31,7 @@ from .population import (
     MBISModule,
     MullikenModule,
 )
-from .tddft import TDDFTModule
+from .spectrum_parser import parse_spectrum_table
 
 
 _FLOAT_RE = r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[Ee][-+]?\d+)?"
@@ -170,6 +170,14 @@ _POPULATION_MODULES: tuple[tuple[str, type[BaseModule]], ...] = (
     ("mbis", MBISModule),
     ("chelpg", CHELPGModule),
 )
+_POPULATION_MODULE_MARKERS: Dict[str, tuple[str, ...]] = {
+    "mulliken": ("MULLIKEN ATOMIC CHARGES", "MULLIKEN REDUCED ORBITAL CHARGES"),
+    "loewdin": ("LOEWDIN ATOMIC CHARGES", "LOEWDIN REDUCED ORBITAL CHARGES"),
+    "mayer": ("MAYER POPULATION ANALYSIS",),
+    "hirshfeld": ("HIRSHFELD ANALYSIS",),
+    "mbis": ("MBIS ANALYSIS",),
+    "chelpg": ("CHELPG CHARGES GENERATION",),
+}
 
 
 def _to_float(value: str | None) -> Optional[float]:
@@ -261,6 +269,17 @@ def _find_line_containing(lines: Sequence[str], text: str, start: int = 0) -> in
         if target in lines[index].lower():
             return index
     return -1
+
+
+def _detect_population_modules(lines: Sequence[str]) -> set[str]:
+    """Return population module keys whose section headers appear in one block."""
+    scan_lines = lines[:20000] if len(lines) > 20000 else lines
+    text = "\n".join(scan_lines).upper()
+    return {
+        key
+        for key, markers in _POPULATION_MODULE_MARKERS.items()
+        if any(marker in text for marker in markers)
+    }
 
 
 def _is_dashed(line: str) -> bool:
@@ -1218,10 +1237,14 @@ class CASSCFModule(BaseModule):
         ]
         analyses: List[Dict[str, Any]] = []
         for block_index, start in enumerate(starts):
-            end = starts[block_index + 1] if block_index + 1 < len(starts) else len(lines)
+            next_start = starts[block_index + 1] if block_index + 1 < len(starts) else len(lines)
+            end = self._population_analysis_end(lines, start, next_start)
             block_lines = list(lines[start:end])
             sections: Dict[str, Any] = {}
+            present_modules = _detect_population_modules(block_lines)
             for key, module_cls in _POPULATION_MODULES:
+                if key not in present_modules:
+                    continue
                 parsed = module_cls(self.context).parse(block_lines)
                 if parsed:
                     sections[key] = parsed
@@ -1239,6 +1262,23 @@ class CASSCFModule(BaseModule):
                 }
             )
         return analyses
+
+    def _population_analysis_end(self, lines: Sequence[str], start: int, fallback_end: int) -> int:
+        """Return the end line for one ORCA population-analysis pass."""
+        stop_exact = {
+            "CASSCF UV, CD spectra and dipole moments",
+            "CASSCF (NEVPT2 diagonal energies) UV, CD spectra and dipole moments",
+            "QD-NEVPT2 UV, CD spectra and dipole moments",
+            "CASSCF RELATIVISTIC PROPERTIES",
+            "MOLECULAR ORBITALS",
+            "ORBITAL ENERGIES",
+            "ORCA TERMINATED NORMALLY",
+        }
+        for index in range(start + 1, fallback_end):
+            stripped = lines[index].strip()
+            if stripped in stop_exact or stripped.startswith("EPR properties:"):
+                return index
+        return fallback_end
 
     def _infer_population_analysis_context(
         self,
@@ -1696,91 +1736,35 @@ class CASSCFModule(BaseModule):
             "cd": [],
         }
         index = start + 1
-        tddft = TDDFTModule(self.context)
         while index < end:
-            table_info = self._spectrum_table_info(lines[index])
-            if table_info is None:
-                index += 1
-                continue
-            mode, kind, value_fields, table_title, soc_corrected = table_info
-            rows, next_index = self._parse_shared_spectrum_table(
+            table, next_index = parse_spectrum_table(
                 lines,
                 index,
                 end,
-                mode,
-                kind,
-                value_fields,
-                table_title,
-                soc_corrected,
-                tddft,
             )
+            if table is None:
+                index = max(next_index, index + 1)
+                continue
+            mode = table["mode"]
+            rows = [
+                self._convert_shared_spectrum_row(row, table)
+                for row in table.get("transitions", [])
+            ]
             if rows:
                 section[mode].extend(rows)
             index = max(next_index, index + 1)
         return section if section["absorption"] or section["cd"] else {}
 
-    def _spectrum_table_info(self, line: str) -> Optional[tuple[str, str, List[str], str, bool]]:
-        """Return shared TDDFT spectrum metadata for an ORCA spectrum title line."""
-        table_title = line.strip()
-        upper = table_title.upper()
-        soc_corrected = False
-        if upper.startswith("SOC CORRECTED "):
-            upper = upper[len("SOC CORRECTED "):]
-            soc_corrected = True
-        if upper not in TDDFTModule._SPECTRUM_TABLES:
-            return None
-        kind, value_fields = TDDFTModule._SPECTRUM_TABLES[upper]
-        if kind.startswith("absorption"):
-            mode = "absorption"
-        elif kind.startswith("cd"):
-            mode = "cd"
-        else:
-            return None
-        return mode, kind, value_fields, table_title, soc_corrected
-
-    def _parse_shared_spectrum_table(
-        self,
-        lines: Sequence[str],
-        start: int,
-        end: int,
-        mode: str,
-        kind: str,
-        value_fields: List[str],
-        table_title: str,
-        soc_corrected: bool,
-        tddft: TDDFTModule,
-    ) -> tuple[List[Dict[str, Any]], int]:
-        """Use the TDDFT spectrum row parser, then normalize rows to CASSCF keys."""
-        rows: List[Dict[str, Any]] = []
-        index = start + 1
-        started = False
-        while index < end:
-            stripped = lines[index].strip()
-            if not stripped:
-                if started:
-                    break
-                index += 1
-                continue
-            if self._spectrum_table_info(lines[index]) is not None:
-                break
-            parsed = tddft._parse_spectrum_row(lines[index], value_fields)
-            if parsed is not None:
-                rows.append(self._convert_tddft_spectrum_row(parsed, mode, kind, table_title, soc_corrected))
-                started = True
-            index += 1
-        return rows, index
-
-    def _convert_tddft_spectrum_row(
+    def _convert_shared_spectrum_row(
         self,
         row: Dict[str, Any],
-        mode: str,
-        kind: str,
-        table_title: str,
-        soc_corrected: bool,
+        table: Dict[str, Any],
     ) -> Dict[str, Any]:
-        """Convert a shared TDDFT spectrum row into the CASSCF report schema."""
+        """Convert a shared ORCA spectrum row into the CASSCF report schema."""
         from_label = row.get("from_state_label", "")
         to_label = row.get("to_state_label", "")
+        mode = table.get("mode", "")
+        kind = table.get("kind", "")
         converted: Dict[str, Any] = {
             "from": from_label,
             "to": to_label,
@@ -1788,8 +1772,8 @@ class CASSCFModule(BaseModule):
             "energy_cm-1": row.get("energy_cm1"),
             "wavelength_nm": row.get("wavelength_nm"),
             "spectrum_kind": kind,
-            "source_table": table_title,
-            "soc_corrected": soc_corrected,
+            "source_table": table.get("title", ""),
+            "soc_corrected": bool(table.get("soc_corrected")),
         }
         converted.update(self._parse_transition_label("from", from_label))
         converted.update(self._parse_transition_label("to", to_label))
@@ -2839,6 +2823,21 @@ def _casscf_markdown_blocks(
         )
         blocks.append(f"{h3} Loewdin Reduced Active MOs\n{helpers.make_table(rows)}")
 
+    orbital_compositions = casscf.get("loewdin_orbital_compositions") or {}
+    if orbital_compositions.get("orbitals"):
+        rows = _loewdin_mo_rows(
+            orbital_compositions,
+            helpers,
+            max_contributions=None if render_options.is_full else 5,
+        )
+        title = "Loewdin Orbital Compositions"
+        if orbital_compositions.get("selected_min_index") is not None:
+            title += (
+                f" ({orbital_compositions.get('selected_min_index')}-"
+                f"{orbital_compositions.get('selected_max_index')})"
+            )
+        blocks.append(f"{h3} {title}\n{helpers.make_table(rows)}")
+
     population_analyses = casscf.get("population_analyses") or []
     if population_analyses:
         rows = [("block", "label", "state block", "mult", "root", "sections")]
@@ -3087,6 +3086,22 @@ def _spectrum_csv_rows(section: Dict[str, Any], mode: str) -> List[Dict[str, Any
     return rows
 
 
+def _loewdin_contribution_csv_rows(section: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Flatten one parsed Loewdin MO-composition section for CSV export."""
+    rows: List[Dict[str, Any]] = []
+    for orbital in (section or {}).get("orbitals") or []:
+        for contribution in orbital.get("contributions", []):
+            rows.append(
+                {
+                    "orbital_index": orbital.get("index"),
+                    "orbital_energy_Eh": orbital.get("energy_Eh"),
+                    "orbital_occupation": orbital.get("occupation"),
+                    **contribution,
+                }
+            )
+    return rows
+
+
 def _write_casscf_csv_files(
     data: Dict[str, Any],
     directory: Path,
@@ -3281,24 +3296,34 @@ def _write_casscf_csv_files(
             columns = ["row"] + [f"col_{column}" for column in matrix.get("columns", [])]
             files.append(write_csv(directory, filename, rows, columns))
 
-    active_rows = []
-    for orbital in (casscf.get("loewdin_reduced_active_mos") or {}).get("orbitals") or []:
-        for contribution in orbital.get("contributions", []):
-            active_rows.append(
-                {
-                    "orbital_index": orbital.get("index"),
-                    "orbital_energy_Eh": orbital.get("energy_Eh"),
-                    "orbital_occupation": orbital.get("occupation"),
-                    **contribution,
-                }
-            )
+    loewdin_columns = [
+        "orbital_index",
+        "orbital_energy_Eh",
+        "orbital_occupation",
+        "atom_index",
+        "element",
+        "ao_label",
+        "percent",
+    ]
+    active_rows = _loewdin_contribution_csv_rows(casscf.get("loewdin_reduced_active_mos") or {})
     if active_rows:
         files.append(
             write_csv(
                 directory,
                 f"{stem}_casscf_loewdin_reduced_active_mos.csv",
                 active_rows,
-                ["orbital_index", "orbital_energy_Eh", "orbital_occupation", "atom_index", "element", "ao_label", "percent"],
+                loewdin_columns,
+            )
+        )
+
+    orbital_composition_rows = _loewdin_contribution_csv_rows(casscf.get("loewdin_orbital_compositions") or {})
+    if orbital_composition_rows:
+        files.append(
+            write_csv(
+                directory,
+                f"{stem}_casscf_loewdin_orbital_compositions.csv",
+                orbital_composition_rows,
+                loewdin_columns,
             )
         )
 

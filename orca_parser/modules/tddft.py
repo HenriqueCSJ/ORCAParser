@@ -23,6 +23,12 @@ from ..parser_section_plugin import ParserSectionAlias, ParserSectionPlugin
 from ..plugin_bundle import PluginBundle, PluginMetadata
 from ..render_options import RenderOptions
 from .base import BaseModule
+from .spectrum_parser import (
+    SPECTRUM_TABLES,
+    parse_spectrum_row,
+    parse_spectrum_table,
+    split_state_label,
+)
 
 
 _HARTREE_TO_EV = 27.211386245988
@@ -132,46 +138,7 @@ class TDDFTModule(BaseModule):
         re.I,
     )
 
-    _SPECTRUM_TABLES: Dict[str, Tuple[str, List[str]]] = {
-        "ABSORPTION SPECTRUM VIA TRANSITION ELECTRIC DIPOLE MOMENTS": (
-            "absorption_electric_dipole",
-            [
-                "oscillator_strength",
-                "dipole_strength_au2",
-                "dx_au",
-                "dy_au",
-                "dz_au",
-            ],
-        ),
-        "ABSORPTION SPECTRUM VIA TRANSITION VELOCITY DIPOLE MOMENTS": (
-            "absorption_velocity_dipole",
-            [
-                "oscillator_strength",
-                "velocity_strength_au2",
-                "px_au",
-                "py_au",
-                "pz_au",
-            ],
-        ),
-        "CD SPECTRUM VIA TRANSITION ELECTRIC DIPOLE MOMENTS": (
-            "cd_electric_dipole",
-            [
-                "rotatory_strength_cgs",
-                "mx_au",
-                "my_au",
-                "mz_au",
-            ],
-        ),
-        "CD SPECTRUM VIA TRANSITION VELOCITY DIPOLE MOMENTS": (
-            "cd_velocity_dipole",
-            [
-                "rotatory_strength_cgs",
-                "mx_au",
-                "my_au",
-                "mz_au",
-            ],
-        ),
-    }
+    _SPECTRUM_TABLES = SPECTRUM_TABLES
 
     def parse(self, lines):
         data: Dict[str, Any] = {}
@@ -645,50 +612,26 @@ class TDDFTModule(BaseModule):
                     "z": float(com_match.group(3)),
                 }
 
-            title = lines[i].strip().upper()
-            if title not in self._SPECTRUM_TABLES:
-                i += 1
+            table, next_index = parse_spectrum_table(
+                lines,
+                i,
+                len(lines),
+                stop_phrases=(self._TOTAL_ENERGY_HEADER,),
+                allow_soc_prefix=False,
+            )
+            if table is None:
+                i = max(next_index, i + 1)
                 continue
 
-            kind, value_fields = self._SPECTRUM_TABLES[title]
-            table: Dict[str, Any] = {
-                "kind": kind,
-                "title": lines[i].strip(),
-                "transitions": [],
-            }
             if last_center_of_mass is not None:
                 table["center_of_mass"] = dict(last_center_of_mass)
 
-            started = False
-            j = i + 1
-            while j < len(lines):
-                stripped = lines[j].strip()
-                upper = stripped.upper()
-
-                if not stripped:
-                    if started:
-                        break
-                    j += 1
-                    continue
-
-                if upper in self._SPECTRUM_TABLES and j != i:
-                    break
-                if self._TOTAL_ENERGY_HEADER in upper:
-                    break
-
-                row = self._parse_spectrum_row(lines[j], value_fields)
-                if row is not None:
-                    started = True
-                    table["transitions"].append(row)
-
-                j += 1
-
             if table["transitions"]:
-                table["transition_count"] = len(table["transitions"])
+                kind = table["kind"]
                 spectra[kind] = table
                 spectra_history.append(dict(table))
 
-            i = j
+            i = max(next_index, i + 1)
 
         return spectra, spectra_history
 
@@ -1028,44 +971,7 @@ class TDDFTModule(BaseModule):
     def _parse_spectrum_row(
         self, line: str, value_fields: List[str]
     ) -> Optional[Dict[str, Any]]:
-        match = re.match(
-            r"^\s*(?P<from_state>\S+)\s*->\s*(?P<to_state>\S+)\s+(?P<rest>.+)$",
-            line,
-        )
-        if not match:
-            return None
-
-        parts = match.group("rest").split()
-        expected = 3 + len(value_fields)
-        if len(parts) != expected:
-            return None
-
-        values = [self.safe_float(part) for part in parts]
-        if any(value is None for value in values):
-            return None
-
-        row: Dict[str, Any] = {
-            "from_state_label": match.group("from_state"),
-            "to_state_label": match.group("to_state"),
-            "energy_eV": float(values[0]),
-            "energy_cm1": float(values[1]),
-            "wavelength_nm": float(values[2]),
-        }
-        for field, value in zip(value_fields, values[3:]):
-            row[field] = float(value)
-
-        from_root, from_label = self._split_state_label(row["from_state_label"])
-        to_root, to_label = self._split_state_label(row["to_state_label"])
-        if from_root is not None:
-            row["from_root"] = from_root
-        if from_label is not None:
-            row["from_state_suffix"] = from_label
-        if to_root is not None:
-            row["to_root"] = to_root
-        if to_label is not None:
-            row["to_state_suffix"] = to_label
-
-        return row
+        return parse_spectrum_row(line, value_fields)
 
     def _is_excited_state_boundary(self, stripped: str) -> bool:
         upper = stripped.upper()
@@ -1093,10 +999,7 @@ class TDDFTModule(BaseModule):
         return int(match.group("index")), match.group("spin").lower()
 
     def _split_state_label(self, label: str) -> Tuple[Optional[int], Optional[str]]:
-        match = re.match(r"(?P<root>\d+)-(?P<label>.+)$", label.strip())
-        if not match:
-            return None, None
-        return int(match.group("root")), match.group("label")
+        return split_state_label(label)
 
     def _parse_scalar(self, value: str) -> Any:
         cleaned = value.strip().strip('"').strip("'")

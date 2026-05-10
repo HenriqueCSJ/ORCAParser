@@ -31,6 +31,22 @@
     {
       "pattern": "sample_md/**",
       "reason": "Private reference markdown exports should stay local unless intentionally curated and reviewed."
+    },
+    {
+      "pattern": "sample_outs",
+      "reason": "Private ORCA reference outputs should stay local unless intentionally curated and reviewed."
+    },
+    {
+      "pattern": "sample_outs/**",
+      "reason": "Private ORCA reference outputs should stay local unless intentionally curated and reviewed."
+    },
+    {
+      "pattern": "codex_eval_tmp_privacy",
+      "reason": "Local Codex privacy-evaluation outputs should never be committed."
+    },
+    {
+      "pattern": "codex_eval_tmp_privacy/**",
+      "reason": "Local Codex privacy-evaluation outputs should never be committed."
     }
   ]
 }
