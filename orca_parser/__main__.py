@@ -34,8 +34,8 @@ Notes
     ensemble thermochemistry.
   * CASSCF/NEVPT2 jobs preserve active-space convergence histories, joined
     CAS-SCF/NEVPT2/QD-NEVPT2 state assignments, active-space matrices,
-    spectra, QDPT eigenvectors, g tensors, D tensors, and perturbative
-    correction summaries.
+    UV/CD spectra through the shared ORCA spectrum parser, QDPT eigenvectors,
+    g tensors, D tensors, and perturbative correction summaries.
   * Relaxed surface scans are parsed as scan jobs, not collapsed into a
     single geometry optimization. Scan coordinates, per-step energies, and
     discovered ``relaxscan*.dat`` / ``allxyz`` sidecars are exported.
@@ -215,7 +215,9 @@ def parse_args() -> argparse.Namespace:
             "normalized final-state and "
             "job-metadata summaries for downstream output. TDDFT output keeps "
             "ORCA root numbering intact and adds explicit energy-rank "
-            "annotations when roots are not printed in ascending energy order."
+            "annotations when roots are not printed in ascending energy order; "
+            "TDDFT/CIS, CASSCF, NEVPT2, QD-NEVPT2, and SOC-corrected QDPT "
+            "UV/CD spectra share one ORCA spectrum-table parser."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__ + plugin_help,
@@ -253,7 +255,8 @@ def parse_args() -> argparse.Namespace:
                         "labeling, TDDFT root/energy-rank summaries, "
                         "significant CI (>=10%%) / NTO (n>=0.10) tables, "
                         "root-follow summaries, GOAT ensemble summaries, "
-                        "CASSCF/NEVPT2 active-space summaries, "
+                        "CASSCF/NEVPT2 active-space, spectra, and QDPT tensor "
+                        "summaries, "
                         "and surface-scan summaries")
     p.add_argument("--no-markdown", dest="write_markdown", action="store_false",
                    help="Disable markdown output")

@@ -5,6 +5,11 @@ iterations, orbital rotations, active-space occupations, and state-averaged
 roots are often more important than a single final number.  This module keeps
 those histories in JSON-safe structures so JSON, CSV, HDF5, and markdown can
 all expose the same parse-time authority.
+
+Shared ORCA table grammars stay outside this module when possible. Ordinary
+population analyses are delegated to the existing population modules, and
+UV/CD spectra are delegated to ``modules.spectrum_parser`` for the same row
+grammar used by TDDFT/CIS.
 """
 
 from __future__ import annotations
@@ -3581,12 +3586,12 @@ PLUGIN_BUNDLE = PluginBundle(
         name="CASSCF / NEVPT2",
         short_help=(
             "Parse CASSCF convergence, active-space states, matrices, repeated population passes, "
-            "NEVPT2/QD-NEVPT2 summaries, spectra, and QDPT properties."
+            "NEVPT2/QD-NEVPT2 summaries, shared-format spectra, and QDPT properties."
         ),
         description=(
             "Self-registering CASSCF parser section with bounded active/frontier Loewdin "
-            "orbital-composition parsing, reused population/spectrum parsers, and "
-            "CASSCF-owned NEVPT2/QD-NEVPT2/QDPT summaries."
+            "orbital-composition parsing, reused population modules, shared ORCA spectrum "
+            "table parsing, and CASSCF-owned NEVPT2/QD-NEVPT2/QDPT summaries."
         ),
         docs_path="README.md",
         examples=(

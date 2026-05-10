@@ -5,7 +5,7 @@ Extracts:
   - %tddft / %cis input settings from the echoed input block
   - Excited-state manifolds and per-state excitation amplitudes
   - Natural transition orbital (NTO) blocks
-  - Absorption and CD spectra tables
+  - Absorption and CD spectra tables via the shared ORCA spectrum parser
   - CIS/TDDFT total-energy summary
   - Excited-state geometry-optimization targets and root-follow metadata
 """
