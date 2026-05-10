@@ -434,9 +434,20 @@ def test_casscf_uses_shared_spectrum_parser_instead_of_tddft_private_helpers() -
 
 def test_casscf_alias_reuses_existing_population_sections() -> None:
     alias = get_parser_section_alias_map()["casscf"]
+    nevpt2_alias = get_parser_section_alias_map()["nevpt2"]
 
     assert alias[0] == "casscf"
-    assert {"mulliken", "loewdin", "mayer", "hirshfeld", "mbis", "chelpg"}.issubset(alias)
+    assert {"mulliken", "loewdin", "mayer", "hirshfeld", "mbis", "chelpg", "nbo"}.issubset(alias)
+    assert {"mulliken", "loewdin", "mayer", "hirshfeld", "mbis", "chelpg", "nbo"}.issubset(nevpt2_alias)
+
+
+def test_casscf_reuses_population_dispatcher_without_private_population_modules() -> None:
+    source = (REPO_ROOT / "orca_parser" / "modules" / "casscf.py").read_text(encoding="utf-8")
+
+    assert "parse_population_sections(" in source
+    assert "MullikenModule" not in source
+    assert "LoewdinModule" not in source
+    assert "_POPULATION_MODULES" not in source
 
 
 def test_casscf_alias_parses_spin_density_population_headings(tmp_path: Path) -> None:

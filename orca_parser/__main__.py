@@ -57,8 +57,8 @@ Section aliases
   geometry   geometry, basis_set
   epr        epr (ZFS, g-tensor, hyperfine/EFG)
   goat       goat (GOAT final ensemble, minimum, Sconf/Gconf)
-  casscf     casscf, mulliken, loewdin, mayer, hirshfeld, mbis, chelpg
-  nevpt2     casscf, mulliken, loewdin, mayer, hirshfeld, mbis, chelpg
+  casscf     casscf, mulliken, loewdin, mayer, hirshfeld, mbis, chelpg, nbo
+  nevpt2     casscf, mulliken, loewdin, mayer, hirshfeld, mbis, chelpg, nbo
   opt        geom_opt (optimization cycles, convergence, RMSD)
   scan       surface_scan (relaxed scan coordinates, per-step energies)
 

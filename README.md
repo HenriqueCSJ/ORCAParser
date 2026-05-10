@@ -248,7 +248,7 @@ The CASSCF module treats active-space convergence as a history, not just a final
 - QD-NEVPT2 corrected density/spin-density matrices, corrected reduced active MOs, and state-specific natural-orbital occupations/files are parsed separately from the uncorrected CASSCF values.
 - CASSCF, CASSCF with NEVPT2 diagonal energies, QD-NEVPT2, TDDFT/CIS, and SOC-corrected QDPT UV/CD spectra are parsed through the shared ORCA spectrum table parser.
 - QDPT relativistic sections are parsed into level, eigenvector-component, g-matrix, zero-field-splitting, and SOC-corrected spectrum summary tables for each printed energy model.
-- Ordinary Mulliken/Loewdin/Mayer/Hirshfeld/MBIS/CHELPG population analysis is handled by the existing population modules. The `casscf` alias expands to those modules automatically, and repeated CASSCF/QD-NEVPT2 population-analysis passes are stored as structured per-pass summaries rather than raw text.
+- Ordinary Mulliken/Loewdin/Mayer/Hirshfeld/MBIS/CHELPG population analysis is handled by the existing population modules, including repeated CASSCF/QD-NEVPT2 population-analysis passes. NBO output is handled by the existing NBO module. The `casscf` and `nevpt2` aliases expand to those shared modules automatically rather than reimplementing their grammars inside the CASSCF parser.
 - The CASSCF module only owns CASSCF-specific population-like tables: Loewdin reduced active MOs, QD-NEVPT2 corrected reduced active MOs, state-specific QD-NEVPT2 natural-orbital occupations, and a bounded Loewdin orbital-composition window around the active space.
 - Raw ORCA report blocks are not embedded in normal JSON/HDF5/Markdown output; long Van Vleck, spectra, and relativistic sections are represented by parsed tables.
 - Markdown keeps CASSCF orbital-energy tables centered on the active/frontier window; it does not print the full orbital list by default.
@@ -334,8 +334,8 @@ These are always included.
 | `dipole` | `dipole` |
 | `solvation` | `solvation` |
 | `tddft` | `tddft` |
-| `casscf` | `casscf`, `mulliken`, `loewdin`, `mayer`, `hirshfeld`, `mbis`, `chelpg` |
-| `nevpt2` | `casscf`, `mulliken`, `loewdin`, `mayer`, `hirshfeld`, `mbis`, `chelpg` |
+| `casscf` | `casscf`, `mulliken`, `loewdin`, `mayer`, `hirshfeld`, `mbis`, `chelpg`, `nbo` |
+| `nevpt2` | `casscf`, `mulliken`, `loewdin`, `mayer`, `hirshfeld`, `mbis`, `chelpg`, `nbo` |
 | `geometry` | `geometry`, `basis_set` |
 | `epr` | `epr` |
 | `goat` | `goat` |

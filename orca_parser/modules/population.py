@@ -557,6 +557,54 @@ class CHELPGModule(BaseModule):
         return data if data else None
 
 
+POPULATION_MODULES: tuple[tuple[str, type[BaseModule]], ...] = (
+    ("mulliken", MullikenModule),
+    ("loewdin", LoewdinModule),
+    ("mayer", MayerModule),
+    ("hirshfeld", HirshfeldModule),
+    ("mbis", MBISModule),
+    ("chelpg", CHELPGModule),
+)
+
+_POPULATION_MODULE_MARKERS: Dict[str, tuple[str, ...]] = {
+    "mulliken": ("MULLIKEN ATOMIC CHARGES", "MULLIKEN REDUCED ORBITAL CHARGES"),
+    "loewdin": ("LOEWDIN ATOMIC CHARGES", "LOEWDIN REDUCED ORBITAL CHARGES"),
+    "mayer": ("MAYER POPULATION ANALYSIS",),
+    "hirshfeld": ("HIRSHFELD ANALYSIS",),
+    "mbis": ("MBIS ANALYSIS",),
+    "chelpg": ("CHELPG CHARGES GENERATION",),
+}
+
+
+def detect_population_modules(lines: Iterable[str]) -> set[str]:
+    """Return population module keys whose section headers appear in *lines*."""
+    scan_lines = list(lines)
+    if len(scan_lines) > 20000:
+        scan_lines = scan_lines[:20000]
+    text = "\n".join(scan_lines).upper()
+    return {
+        key
+        for key, markers in _POPULATION_MODULE_MARKERS.items()
+        if any(marker in text for marker in markers)
+    }
+
+
+def parse_population_sections(
+    lines: List[str],
+    context: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Run the registered population modules against one ORCA population block."""
+    sections: Dict[str, Any] = {}
+    present_modules = detect_population_modules(lines)
+    for key, module_cls in POPULATION_MODULES:
+        if key not in present_modules:
+            continue
+        parsed = module_cls(context).parse(lines)
+        if parsed:
+            sections[key] = parsed
+    return sections
+
+
 PLUGIN_BUNDLE = PluginBundle(
     metadata=PluginMetadata(
         key="population_sections",
@@ -574,12 +622,7 @@ PLUGIN_BUNDLE = PluginBundle(
         ),
     ),
     parser_sections=(
-        ParserSectionPlugin("mulliken", MullikenModule),
-        ParserSectionPlugin("loewdin", LoewdinModule),
-        ParserSectionPlugin("mayer", MayerModule),
-        ParserSectionPlugin("hirshfeld", HirshfeldModule),
-        ParserSectionPlugin("mbis", MBISModule),
-        ParserSectionPlugin("chelpg", CHELPGModule),
+        *(ParserSectionPlugin(key, module_cls) for key, module_cls in POPULATION_MODULES),
     ),
     parser_aliases=(
         ParserSectionAlias(

@@ -9,7 +9,8 @@ all expose the same parse-time authority.
 Shared ORCA table grammars stay outside this module when possible. Ordinary
 population analyses are delegated to the existing population modules, and
 UV/CD spectra are delegated to ``modules.spectrum_parser`` for the same row
-grammar used by TDDFT/CIS.
+grammar used by TDDFT/CIS. NBO output stays owned by ``modules.nbo`` and is
+included through aliases instead of being re-parsed here.
 """
 
 from __future__ import annotations
@@ -28,14 +29,7 @@ from ..parser_section_plugin import ParserSectionAlias, ParserSectionPlugin
 from ..plugin_bundle import PluginBundle, PluginMetadata, PluginOption
 from ..render_options import RenderOptions
 from .base import BaseModule
-from .population import (
-    CHELPGModule,
-    HirshfeldModule,
-    LoewdinModule,
-    MayerModule,
-    MBISModule,
-    MullikenModule,
-)
+from .population import parse_population_sections
 from .spectrum_parser import parse_spectrum_table
 
 
@@ -167,24 +161,6 @@ _GFACTORS_RE = re.compile(
 _D_VALUE_RE = re.compile(rf"^\s*D\s*=\s*(?P<d>{_FLOAT_RE})\s*cm-1", re.I)
 _E_OVER_D_RE = re.compile(rf"^\s*E/D\s*=\s*(?P<e_over_d>{_FLOAT_RE})", re.I)
 
-_POPULATION_MODULES: tuple[tuple[str, type[BaseModule]], ...] = (
-    ("mulliken", MullikenModule),
-    ("loewdin", LoewdinModule),
-    ("mayer", MayerModule),
-    ("hirshfeld", HirshfeldModule),
-    ("mbis", MBISModule),
-    ("chelpg", CHELPGModule),
-)
-_POPULATION_MODULE_MARKERS: Dict[str, tuple[str, ...]] = {
-    "mulliken": ("MULLIKEN ATOMIC CHARGES", "MULLIKEN REDUCED ORBITAL CHARGES"),
-    "loewdin": ("LOEWDIN ATOMIC CHARGES", "LOEWDIN REDUCED ORBITAL CHARGES"),
-    "mayer": ("MAYER POPULATION ANALYSIS",),
-    "hirshfeld": ("HIRSHFELD ANALYSIS",),
-    "mbis": ("MBIS ANALYSIS",),
-    "chelpg": ("CHELPG CHARGES GENERATION",),
-}
-
-
 def _to_float(value: str | None) -> Optional[float]:
     if value is None:
         return None
@@ -274,17 +250,6 @@ def _find_line_containing(lines: Sequence[str], text: str, start: int = 0) -> in
         if target in lines[index].lower():
             return index
     return -1
-
-
-def _detect_population_modules(lines: Sequence[str]) -> set[str]:
-    """Return population module keys whose section headers appear in one block."""
-    scan_lines = lines[:20000] if len(lines) > 20000 else lines
-    text = "\n".join(scan_lines).upper()
-    return {
-        key
-        for key, markers in _POPULATION_MODULE_MARKERS.items()
-        if any(marker in text for marker in markers)
-    }
 
 
 def _is_dashed(line: str) -> bool:
@@ -1245,14 +1210,7 @@ class CASSCFModule(BaseModule):
             next_start = starts[block_index + 1] if block_index + 1 < len(starts) else len(lines)
             end = self._population_analysis_end(lines, start, next_start)
             block_lines = list(lines[start:end])
-            sections: Dict[str, Any] = {}
-            present_modules = _detect_population_modules(block_lines)
-            for key, module_cls in _POPULATION_MODULES:
-                if key not in present_modules:
-                    continue
-                parsed = module_cls(self.context).parse(block_lines)
-                if parsed:
-                    sections[key] = parsed
+            sections = parse_population_sections(block_lines, self.context)
             if not sections:
                 continue
             context = self._infer_population_analysis_context(lines, start, block_index)
@@ -3586,12 +3544,12 @@ PLUGIN_BUNDLE = PluginBundle(
         name="CASSCF / NEVPT2",
         short_help=(
             "Parse CASSCF convergence, active-space states, matrices, repeated population passes, "
-            "NEVPT2/QD-NEVPT2 summaries, shared-format spectra, and QDPT properties."
+            "NEVPT2/QD-NEVPT2 summaries, shared-format spectra, NBO-delegated output, and QDPT properties."
         ),
         description=(
             "Self-registering CASSCF parser section with bounded active/frontier Loewdin "
             "orbital-composition parsing, reused population modules, shared ORCA spectrum "
-            "table parsing, and CASSCF-owned NEVPT2/QD-NEVPT2/QDPT summaries."
+            "table parsing, NBO alias delegation, and CASSCF-owned NEVPT2/QD-NEVPT2/QDPT summaries."
         ),
         docs_path="README.md",
         examples=(
@@ -3605,11 +3563,11 @@ PLUGIN_BUNDLE = PluginBundle(
     parser_aliases=(
         ParserSectionAlias(
             name="casscf",
-            section_keys=("casscf", "mulliken", "loewdin", "mayer", "hirshfeld", "mbis", "chelpg"),
+            section_keys=("casscf", "mulliken", "loewdin", "mayer", "hirshfeld", "mbis", "chelpg", "nbo"),
         ),
         ParserSectionAlias(
             name="nevpt2",
-            section_keys=("casscf", "mulliken", "loewdin", "mayer", "hirshfeld", "mbis", "chelpg"),
+            section_keys=("casscf", "mulliken", "loewdin", "mayer", "hirshfeld", "mbis", "chelpg", "nbo"),
         ),
     ),
     calculation_families=(
