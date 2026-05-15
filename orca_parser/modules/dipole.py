@@ -11,7 +11,7 @@ Extracts:
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from ..output.csv_section_registry import DIPOLE_CSV_SECTION_PLUGIN
 from ..output.markdown_section_registry import DIPOLE_MARKDOWN_SECTION_PLUGIN
@@ -37,18 +37,60 @@ class DipoleMomentModule(BaseModule):
         }
 
     def parse(self, lines):
-        header_indices = [
-            i for i, line in enumerate(lines)
-            if self._SECTION_HEADER_RE.match(line)
-        ]
-        if not header_indices:
+        blocks = parse_dipole_moment_blocks(lines)
+        if not blocks:
             return None
-        idx = header_indices[-1]
+        data = dict(blocks[-1])
+        if len(blocks) > 1:
+            data["all_blocks"] = blocks
+        return data if data else None
 
-        data: Dict[str, Any] = {}
 
-        # Scan the property block itself.
-        for ln in lines[idx: idx + 40]:
+def _to_debye(vector: Dict[str, float]) -> Dict[str, float]:
+    return {
+        axis: float(value) * AU_TO_DEBYE
+        for axis, value in vector.items()
+    }
+
+
+def parse_dipole_moment_blocks(lines: List[str]) -> List[Dict[str, Any]]:
+    """Parse every ORCA ``DIPOLE MOMENT`` block with method/density context."""
+
+    header_re = DipoleMomentModule._SECTION_HEADER_RE
+    header_indices = [
+        i for i, line in enumerate(lines)
+        if header_re.match(line)
+    ]
+    blocks: List[Dict[str, Any]] = []
+    if not header_indices:
+        return blocks
+
+    for block_number, idx in enumerate(header_indices, start=1):
+        end = header_indices[block_number] if block_number < len(header_indices) else len(lines)
+        data: Dict[str, Any] = {"block_number": block_number, "line": idx + 1}
+
+        for ln in lines[idx:end]:
+            m = re.search(r"Method\s+:\s+(.+)", ln)
+            if m:
+                data["method"] = m.group(1).strip()
+            m = re.search(r"Type of density\s+:\s+(.+)", ln)
+            if m:
+                data["density_type"] = m.group(1).strip()
+            m = re.search(r"Level\s+:\s+(.+)", ln)
+            if m:
+                data["level"] = m.group(1).strip()
+            m = re.search(r"Multiplicity\s+:\s+(\d+)", ln)
+            if m:
+                data["multiplicity"] = int(m.group(1))
+            m = re.search(r"Irrep\s+:\s+(\d+)", ln)
+            if m:
+                data["irrep"] = int(m.group(1))
+            m = re.search(r"Energy\s+:\s+([-\d.]+)", ln)
+            if m:
+                data["energy_Eh"] = float(m.group(1))
+            m = re.search(r"Basis\s+:\s+(.+)", ln)
+            if m:
+                data["basis"] = m.group(1).strip()
             m = re.search(
                 r"Electronic contribution:\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)", ln
             )
@@ -90,12 +132,15 @@ class DipoleMomentModule(BaseModule):
         ):
             vector = data.get(key)
             if vector:
-                data[key.replace("_au", "_Debye")] = self._to_debye(vector)
+                data[key.replace("_au", "_Debye")] = _to_debye(vector)
 
-        # Rotational spectrum (follows the dipole block)
-        idx_rot = self.find_line(lines, "Rotational spectrum", idx)
+        idx_rot = -1
+        for j in range(idx, end):
+            if "Rotational spectrum" in lines[j]:
+                idx_rot = j
+                break
         if idx_rot != -1:
-            for ln in lines[idx_rot: idx_rot + 10]:
+            for ln in lines[idx_rot:min(idx_rot + 10, end)]:
                 m = re.search(
                     r"Rotational constants in cm-1:\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)",
                     ln,
@@ -134,8 +179,9 @@ class DipoleMomentModule(BaseModule):
                         "y": float(m.group(2)),
                         "z": float(m.group(3)),
                     }
+        blocks.append(data)
 
-        return data if data else None
+    return blocks
 
 
 PLUGIN_BUNDLE = PluginBundle(

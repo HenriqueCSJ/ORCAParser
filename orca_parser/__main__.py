@@ -36,6 +36,9 @@ Notes
     CAS-SCF/NEVPT2/QD-NEVPT2 state assignments, active-space matrices,
     UV/CD spectra through the shared ORCA spectrum parser, QDPT eigenvectors,
     g tensors, D tensors, and perturbative correction summaries.
+  * Double-hybrid and MP2 optimizations preserve separate SCF, unrelaxed MP2,
+    and relaxed MP2 density population/NBO analyses for initial/final
+    geometries when ORCA prints them.
   * Relaxed surface scans are parsed as scan jobs, not collapsed into a
     single geometry optimization. Scan coordinates, per-step energies, and
     discovered ``relaxscan*.dat`` / ``allxyz`` sidecars are exported.
@@ -54,12 +57,21 @@ Section aliases
   dipole     dipole
   solvation  solvation
   tddft      tddft
+  cc/ccsd/ccsdt
+             coupled_cluster, population modules, nbo, dipole
+  eom/steom/eom_steom
+             eom_steom, coupled_cluster, population modules, nbo, dipole
+  density_analysis/densities
+             density-specific SCF/MP2 relaxed/unrelaxed population analyses
+  double_hybrid
+             geom_opt, density_analysis
   geometry   geometry, basis_set
   epr        epr (ZFS, g-tensor, hyperfine/EFG)
   goat       goat (GOAT final ensemble, minimum, Sconf/Gconf)
   casscf     casscf, mulliken, loewdin, mayer, hirshfeld, mbis, chelpg, nbo
   nevpt2     casscf, mulliken, loewdin, mayer, hirshfeld, mbis, chelpg, nbo
-  opt        geom_opt (optimization cycles, convergence, RMSD)
+  opt        geom_opt, density_analysis
+             optimization cycles, convergence, RMSD, density-specific analyses
   scan       surface_scan (relaxed scan coordinates, per-step energies)
 
   Plus any individual section name: scf, mulliken, mayer, chelpg, ...
@@ -122,6 +134,9 @@ Examples
   # Parse geometry optimization data (per-cycle energies, convergence, RMSD)
   orca_parser geom_opt.out --sections opt --summary
 
+  # Parse double-hybrid optimization density contexts
+  orca_parser double_hybrid_opt.out --sections opt --markdown --csv
+
   # Parse a relaxed surface scan and export its scan table
   orca_parser relaxscan.out --sections scan --markdown --csv
 
@@ -133,6 +148,12 @@ Examples
 
   # Increase the CASSCF orbital-energy / Loewdin active-window range
   orca_parser casscf.out --sections casscf --casscf-orbital-window 50 --markdown
+
+  # Parse CCSD(T)/F12 coupled-cluster diagnostics and corrections
+  orca_parser ccsdt.out --sections ccsdt --markdown --csv
+
+  # Parse EOM/STEOM-CCSD roots, amplitudes, spectra, and NTOs
+  orca_parser steom.out --sections steom --markdown --csv
 
   # Limit GOAT markdown tables to conformers within 3 kcal/mol
   orca_parser conformers.out --sections goat --markdown --goat-max-relative-energy-kcal 3
@@ -209,15 +230,18 @@ def parse_args() -> argparse.Namespace:
         description=(
             "Parse ORCA quantum chemistry output files into JSON, CSV, "
             "HDF5, and Markdown. Handles ground-state, DeltaSCF excited-state, "
-            "TDDFT/CIS excited-state optimization, GOAT conformer-search, "
+            "TDDFT/CIS excited-state optimization, EOM/STEOM-CCSD, "
+            "CCSD/CCSD(T)/F12 coupled-cluster, double-hybrid/MP2 "
+            "density-specific analyses, GOAT conformer-search, "
             "CASSCF/NEVPT2 active-space, UseSym/symmetry-aware, EPR, "
             "relaxed surface-scan, and geometry-optimization jobs, using "
             "normalized final-state and "
             "job-metadata summaries for downstream output. TDDFT output keeps "
             "ORCA root numbering intact and adds explicit energy-rank "
             "annotations when roots are not printed in ascending energy order; "
-            "TDDFT/CIS, CASSCF, NEVPT2, QD-NEVPT2, and SOC-corrected QDPT "
-            "UV/CD spectra share one ORCA spectrum-table parser."
+            "TDDFT/CIS, EOM/STEOM, CASSCF, NEVPT2, QD-NEVPT2, and "
+            "SOC-corrected QDPT UV/CD spectra share one ORCA spectrum-table "
+            "parser."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__ + plugin_help,
@@ -233,6 +257,8 @@ def parse_args() -> argparse.Namespace:
                    help="Sections / aliases to parse (default: all). "
                         "Examples: --sections charges mos dipole, "
                         "--sections epr, --sections goat, --sections casscf, "
+                        "--sections ccsdt, --sections steom, "
+                        "--sections densities, --sections double_hybrid, "
                         "--sections opt, --sections scan")
 
     # ── Output format flags ─────────────────────────────────────────
@@ -256,7 +282,9 @@ def parse_args() -> argparse.Namespace:
                         "significant CI (>=10%%) / NTO (n>=0.10) tables, "
                         "root-follow summaries, GOAT ensemble summaries, "
                         "CASSCF/NEVPT2 active-space, spectra, and QDPT tensor "
-                        "summaries, "
+                        "summaries, CCSD/CCSD(T)/F12 diagnostics, "
+                        "density-specific SCF/MP2 relaxed/unrelaxed analyses, "
+                        "EOM/STEOM roots/spectra/NTOs, "
                         "and surface-scan summaries")
     p.add_argument("--no-markdown", dest="write_markdown", action="store_false",
                    help="Disable markdown output")
@@ -315,7 +343,7 @@ def parse_args() -> argparse.Namespace:
                         "diagnostics, final frontier orbitals/dipole when "
                         "available, TDDFT root-order diagnostics when "
                         "available, CASSCF/NEVPT2 active-space status, and "
-                        "scan info when applicable")
+                        "CC/EOM/STEOM or scan info when applicable")
     p.add_argument("--quiet", action="store_true",
                    help="Suppress progress messages")
 
@@ -419,6 +447,18 @@ def _print_summary(data: dict, path: Path) -> None:
         if gopt.get("rmsd_initial_to_final_ang") is not None:
             print(f"  RMSD i->f    : {gopt['rmsd_initial_to_final_ang']:.6f} A")
 
+    density = data.get("density_analysis", {})
+    if density:
+        summary = density.get("summary", {})
+        analysis_count = summary.get("analysis_count")
+        if analysis_count:
+            stages = ", ".join(summary.get("stages") or []) or "N/A"
+            kinds = ", ".join(summary.get("density_kinds") or []) or "N/A"
+            print(f"  Density ctx  : {analysis_count} ({stages}; {kinds})")
+        formation_count = summary.get("mp2_density_formation_count")
+        if formation_count:
+            print(f"  MP2 densities: {formation_count} formation block(s)")
+
     scan = data.get("surface_scan", {})
     if scan:
         mode = scan.get("mode", "N/A")
@@ -447,6 +487,41 @@ def _print_summary(data: dict, path: Path) -> None:
             print(f"  Sconf        : {goat['sconf_cal_molK']:.2f} cal/(molK)")
         if goat.get("gconf_kcal_mol") is not None:
             print(f"  Gconf        : {goat['gconf_kcal_mol']:.2f} kcal/mol")
+
+    cc = data.get("coupled_cluster", {})
+    if cc:
+        summary = cc.get("summary", {})
+        if summary.get("cc_converged") is not None:
+            conv = "YES" if summary.get("cc_converged") else "NO"
+            print(f"  CC converged : {conv}")
+        if summary.get("cc_iterations") is not None:
+            print(f"  CC iterations: {summary['cc_iterations']}")
+        cc_energy = (
+            summary.get("f12_ccsdt_energy_Eh")
+            or summary.get("f12_ccsdt_scaled_triples_energy_Eh")
+            or summary.get("total_energy_after_f12_Eh")
+            or summary.get("total_energy_Eh")
+        )
+        if cc_energy is not None:
+            print(f"  CC energy    : {cc_energy:.10f} Eh")
+        if summary.get("t1_diagnostic") is not None:
+            print(f"  T1 diagnostic: {summary['t1_diagnostic']:.6f}")
+
+    eom = data.get("eom_steom", {})
+    if eom:
+        summary = eom.get("summary", {})
+        if summary.get("ip_active_roots") is not None or summary.get("ea_active_roots") is not None:
+            print(
+                "  EOM active   : "
+                f"IP={summary.get('ip_active_roots', 'N/A')} "
+                f"EA={summary.get('ea_active_roots', 'N/A')}"
+            )
+        if summary.get("steom_root_count") is not None:
+            print(f"  STEOM roots  : {summary['steom_root_count']}")
+        if summary.get("lowest_steom_root_eV") is not None:
+            print(f"  Lowest STEOM : {summary['lowest_steom_root_eV']:.3f} eV")
+        if summary.get("spectrum_table_count") is not None:
+            print(f"  STEOM spectra: {summary['spectrum_table_count']} table(s)")
 
     for name, key in [("Mulliken", "mulliken"), ("Hirshfeld", "hirshfeld"),
                       ("MBIS", "mbis"), ("CHELPG", "chelpg")]:

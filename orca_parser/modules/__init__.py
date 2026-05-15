@@ -6,6 +6,7 @@ from .population import (
     HirshfeldModule, MBISModule, CHELPGModule,
 )
 from .dipole import DipoleMomentModule
+from .density_analysis import DensityAnalysisModule
 from .solvation import SolvationModule
 from .tddft import TDDFTModule
 from .nbo import NBOModule
@@ -22,6 +23,7 @@ __all__ = [
     "MullikenModule", "LoewdinModule", "MayerModule",
     "HirshfeldModule", "MBISModule", "CHELPGModule",
     "DipoleMomentModule",
+    "DensityAnalysisModule",
     "SolvationModule",
     "TDDFTModule",
     "NBOModule",

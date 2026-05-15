@@ -29,6 +29,11 @@ from .spectrum_parser import (
     parse_spectrum_table,
     split_state_label,
 )
+from .transition_orbitals import (
+    build_orbital_pair_dict,
+    parse_natural_transition_orbitals,
+    split_orbital_label,
+)
 
 
 _HARTREE_TO_EV = 27.211386245988
@@ -162,7 +167,15 @@ class TDDFTModule(BaseModule):
             ]
             data["final_excited_state_block"] = excited_state_blocks[-1]
 
-        nto_states = self._parse_nto_states(lines)
+        total_energy_blocks = self._parse_total_energy_blocks(lines)
+        has_tddft_context = self._has_tddft_cis_context(
+            lines=lines,
+            input_blocks=input_blocks,
+            excited_state_blocks=excited_state_blocks,
+            total_energy_blocks=total_energy_blocks,
+        )
+
+        nto_states = self._parse_nto_states(lines) if has_tddft_context else []
         if nto_states:
             # NTO sections also carry ORCA root labels. Annotate them against the
             # final excited-state block so downstream code can see both:
@@ -176,13 +189,14 @@ class TDDFTModule(BaseModule):
             self._annotate_significant_nto_pairs(nto_states)
             data["nto_states"] = nto_states
 
-        spectra, spectra_history = self._parse_spectra(lines)
+        spectra, spectra_history = (
+            self._parse_spectra(lines) if has_tddft_context else ({}, [])
+        )
         if spectra:
             data["spectra"] = spectra
         if spectra_history:
             data["spectra_history"] = spectra_history
 
-        total_energy_blocks = self._parse_total_energy_blocks(lines)
         if total_energy_blocks:
             data["total_energy_blocks"] = total_energy_blocks
             data["total_energy"] = total_energy_blocks[-1]
@@ -325,67 +339,45 @@ class TDDFTModule(BaseModule):
         return blocks
 
     def _parse_nto_states(self, lines: List[str]) -> List[Dict[str, Any]]:
-        nto_states: List[Dict[str, Any]] = []
-        i = 0
+        return parse_natural_transition_orbitals(lines)
 
-        while i < len(lines):
-            header_match = self._NTO_HEADER_RE.match(lines[i].strip())
-            if not header_match:
-                i += 1
-                continue
+    def _has_tddft_cis_context(
+        self,
+        *,
+        lines: List[str],
+        input_blocks: List[Dict[str, Any]],
+        excited_state_blocks: List[Dict[str, Any]],
+        total_energy_blocks: List[Dict[str, Any]],
+    ) -> bool:
+        """Return whether shared NTO/spectrum tables belong to TDDFT/CIS.
 
-            state_data: Dict[str, Any] = {
-                "state": int(header_match.group("state")),
-                "pairs": [],
-            }
+        ORCA prints the same NTO and UV/CD table grammar from STEOM/CASSCF
+        drivers.  Those modules own their surrounding context, so the TDDFT
+        parser only consumes shared tables when a TDDFT/CIS signal is present.
+        """
 
-            j = i + 1
-            while j < len(lines):
-                line = lines[j]
-                stripped = line.strip()
+        if input_blocks or excited_state_blocks or total_energy_blocks:
+            return True
 
-                if j != i and self._NTO_HEADER_RE.match(stripped):
-                    break
-                if self._is_nto_boundary(stripped):
-                    break
+        input_echo = self.context.get("input_echo") or {}
+        block_names = {str(name).lower() for name in input_echo.get("block_names") or []}
+        if block_names & {"tddft", "cis"}:
+            return True
 
-                file_match = self._NTO_FILE_RE.search(line)
-                if file_match:
-                    state_data["output_file"] = file_match.group(1)
+        bang_tokens = {str(token).upper() for token in input_echo.get("bang_tokens") or []}
+        if bang_tokens & {"TDDFT", "TDA", "CIS"}:
+            return True
 
-                threshold_match = self._NTO_THRESHOLD_RE.search(line)
-                if threshold_match:
-                    state_data["print_threshold"] = self.safe_float(
-                        threshold_match.group(1)
-                    )
+        for line in lines:
+            upper = line.upper()
+            if "TD-DFT EXCITED STATES" in upper or "CIS EXCITED STATES" in upper:
+                return True
+            if "TD-DFT/TDA-EXCITATION SPECTRA" in upper:
+                return True
+            if self._TOTAL_ENERGY_HEADER in upper:
+                return True
 
-                energy_match = self._NTO_ENERGY_RE.match(line)
-                if energy_match:
-                    state_data["energy_au"] = float(energy_match.group("energy_au"))
-                    state_data["energy_eV"] = float(energy_match.group("energy_ev"))
-                    state_data["energy_cm1"] = float(
-                        energy_match.group("energy_cm1")
-                    )
-                    state_data["wavelength_nm"] = self._wavelength_from_cm1(
-                        state_data["energy_cm1"]
-                    )
-
-                pair_match = self._NTO_PAIR_RE.match(line)
-                if pair_match:
-                    pair = self._build_orbital_pair_dict(
-                        from_orbital=pair_match.group("from_orbital"),
-                        to_orbital=pair_match.group("to_orbital"),
-                    )
-                    pair["occupation"] = float(pair_match.group("occupation"))
-                    state_data["pairs"].append(pair)
-
-                j += 1
-
-            state_data["pair_count"] = len(state_data["pairs"])
-            nto_states.append(state_data)
-            i = j
-
-        return nto_states
+        return False
 
     def _annotate_excited_state_energy_ranks(
         self,
@@ -957,16 +949,7 @@ class TDDFTModule(BaseModule):
     def _build_orbital_pair_dict(
         self, from_orbital: str, to_orbital: str
     ) -> Dict[str, Any]:
-        from_index, from_spin = self._split_orbital_label(from_orbital)
-        to_index, to_spin = self._split_orbital_label(to_orbital)
-        return {
-            "from_orbital": from_orbital,
-            "to_orbital": to_orbital,
-            "from_index": from_index,
-            "from_spin": from_spin,
-            "to_index": to_index,
-            "to_spin": to_spin,
-        }
+        return build_orbital_pair_dict(from_orbital, to_orbital)
 
     def _parse_spectrum_row(
         self, line: str, value_fields: List[str]
@@ -993,10 +976,7 @@ class TDDFTModule(BaseModule):
         )
 
     def _split_orbital_label(self, label: str) -> Tuple[Optional[int], Optional[str]]:
-        match = re.match(r"(?P<index>\d+)(?P<spin>[A-Za-z]+)$", label.strip())
-        if not match:
-            return None, None
-        return int(match.group("index")), match.group("spin").lower()
+        return split_orbital_label(label)
 
     def _split_state_label(self, label: str) -> Tuple[Optional[int], Optional[str]]:
         return split_state_label(label)

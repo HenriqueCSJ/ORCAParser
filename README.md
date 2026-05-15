@@ -4,7 +4,7 @@ Structured parsing for [ORCA](https://orcaforum.kofo.mpg.de/) quantum-chemistry 
 
 `orca_parser` turns ORCA jobs into clean JSON, CSV, HDF5, and Markdown so the results are easier to inspect, compare, automate, and feed into downstream analysis pipelines.
 
-It is designed for real multistep ORCA outputs, not just ideal single-point jobs. That includes excited-state optimizations, GOAT conformer searches, relaxed surface scans, DeltaSCF jobs, CASSCF/NEVPT2 active-space calculations, symmetry-aware calculations, and spin-resolved wavefunctions.
+It is designed for real multistep ORCA outputs, not just ideal single-point jobs. That includes excited-state optimizations, GOAT conformer searches, relaxed surface scans, DeltaSCF jobs, CASSCF/NEVPT2 active-space calculations, coupled-cluster CCSD/CCSD(T)/F12 jobs, EOM/STEOM-CCSD excited-state jobs, symmetry-aware calculations, and spin-resolved wavefunctions.
 
 ## Why this project exists
 
@@ -15,11 +15,14 @@ It is designed for real multistep ORCA outputs, not just ideal single-point jobs
 
 ## Highlights
 
-- Built-in parser modules covering SCF, orbitals, solvation, TDDFT/CIS, GOAT, population analyses, dipole moments, NBO, EPR, geometry optimization, and relaxed scans
+- Built-in parser modules covering SCF, orbitals, solvation, TDDFT/CIS, EOM/STEOM, coupled cluster, GOAT, density-specific analyses, population analyses, dipole moments, NBO, EPR, geometry optimization, and relaxed scans
 - 4 output formats: JSON, CSV, HDF5, and Markdown
 - RHF/RKS and UHF/UKS support, including spin-resolved data
 - GOAT ensemble parsing with populations, energy windows, global minimum, and ensemble thermochemistry
 - CASSCF / SC-NEVPT2 / QD-NEVPT2 parsing with active-space convergence histories, CAS roots, transition-energy assignments, density matrices, spectra, QDPT relativistic properties, and active-MO compositions
+- CCSD / CCSD(T) / F12 parsing with MDCI wavefunction settings, CC convergence, T1/singles diagnostics, F12 corrections, perturbative triples, and natural occupations
+- EOM/STEOM-CCSD parsing with IP/EA active-root selection, EOM and STEOM root amplitudes, active/singles character, unrelaxed excited-state dipoles, spectra through the shared spectrum parser, and NTOs through the shared transition-orbital parser
+- Double-hybrid / MP2 optimization density tracking that keeps SCF, unrelaxed MP2, and relaxed MP2 population/NBO analyses separate for initial and final geometries
 - Excited-state geometry optimization support with target-root tracking and root-follow metadata
 - TDDFT/NTO handling that preserves ORCA root numbering while also exposing energy rank
 - Symmetry-aware parsing for UseSym jobs, with explicit no-symmetry normalization when ORCA defaults symmetry off
@@ -33,8 +36,11 @@ It is designed for real multistep ORCA outputs, not just ideal single-point jobs
 | Single point | Final energy, orbitals, dipole, population analyses, spectra, NBO, EPR, symmetry, solvation |
 | DeltaSCF | Occupation controls, MOM/IMOM metadata, explicit excited-state labeling |
 | TDDFT / CIS vertical excitations | Excited states, CI contributions, NTOs, absorption/CD spectra, root-energy ranking |
+| EOM / STEOM-CCSD | CIS seed roots, IP/EA active-space selection, EOM roots, STEOM roots/amplitudes, shared-format spectra, NTOs, and unrelaxed excited-state dipoles |
+| CCSD / CCSD(T) / F12 | MDCI wavefunction setup, CC convergence history, F12 corrections, perturbative triples, T1/singles diagnostics, largest amplitudes, and natural orbital occupations |
 | Excited-state geometry optimization | Final converged geometry-dependent properties, target-state metadata, per-cycle history |
 | Ground-state geometry optimization | Per-cycle energies, convergence criteria, trust radii, RMSD, final geometry |
+| Double-hybrid / MP2 geometry optimization | Initial/final SCF density, unrelaxed MP2 density, relaxed MP2 density, MP2 density-formation metadata, density-specific population/NBO analyses, and density dipoles when printed |
 | Relaxed surface scan | Scan coordinates, mode, per-step energies, sidecar trajectories |
 | GOAT conformer search | Final ensemble table, populations, relative energies, thermochemistry, xyz references |
 | CASSCF / NEVPT2 | Macro-iteration convergence history, active occupations, CAS-SCF roots/configurations joined to SA-CASSCF/NEVPT2/QD-NEVPT2 state assignments, density/spin-density matrices, Loewdin active MOs, UV/CD spectra, QDPT eigenvectors, g tensors, and D tensors |
@@ -126,11 +132,20 @@ orca_parser relaxscan.out --sections scan --markdown --csv
 # Excited-state optimization
 orca_parser excited_opt.out --sections tddft opt --markdown --csv
 
+# Double-hybrid optimization with SCF/MP2 relaxed and unrelaxed density contexts
+orca_parser double_hybrid_opt.out --sections opt --markdown --csv
+
 # CASSCF / NEVPT2 active-space report
 orca_parser casscf.out --sections casscf --markdown --csv
 
 # Keep a wider CASSCF orbital-energy / Loewdin active-window range
 orca_parser casscf.out --sections casscf --casscf-orbital-window 50 --markdown
+
+# CCSD(T)/F12 coupled-cluster report
+orca_parser ccsdt.out --sections ccsdt --markdown --csv
+
+# EOM/STEOM-CCSD report
+orca_parser steom.out --sections steom --markdown --csv
 ```
 
 ### Python API
@@ -254,6 +269,29 @@ The CASSCF module treats active-space convergence as a history, not just a final
 - Markdown keeps CASSCF orbital-energy tables centered on the active/frontier window; it does not print the full orbital list by default.
 - `--casscf-orbital-window N` (alias: `--casscf-orbital-energy-window N`) controls how many orbitals below and above the active/frontier range are retained from CASSCF orbital-energy and Loewdin active-window tables. The default is `30`.
 
+## Coupled-cluster / EOM / STEOM reporting policy
+
+The coupled-cluster module owns MDCI/CC-specific data, and only that data.
+
+- `coupled_cluster` parses wavefunction settings, algorithmic/DLPNO settings, CC iteration history, coupled-cluster energy components, F12 corrections, perturbative triples, largest amplitudes, and CC natural orbital occupations.
+- `eom_steom` parses CIS seed roots, IP/EA active-root selection, EOM roots, STEOM roots, root amplitudes, active/singles character, unrelaxed excited-state dipoles, STEOM spectra, and STEOM NTOs.
+- Ordinary Mulliken/Loewdin/Mayer/Hirshfeld/MBIS/CHELPG population analysis is still handled by the existing population modules. NBO output is still handled by the existing NBO module. The `cc`, `ccsd`, `ccsdt`, `coupled_cluster`, `eom`, `steom`, and `eom_steom` aliases expand to those shared modules instead of copying their grammars.
+- STEOM and EOM spectra use `spectrum_parser.py`, the same shared table parser used by TDDFT/CIS and CASSCF-derived spectra.
+- STEOM NTOs use `transition_orbitals.py`, the same shared NTO parser used by TDDFT/CIS.
+- TDDFT no longer consumes STEOM/CASSCF spectra or NTOs merely because the table format is shared; method-specific context decides which module owns the output.
+- Raw ORCA report blocks are not embedded in normal CC/EOM/STEOM JSON, HDF5, CSV, or Markdown output.
+
+## Double-hybrid / MP2 density reporting policy
+
+The `density_analysis` module exists for ORCA outputs where one calculation prints population analyses for more than one density object.
+
+- Double-hybrid and MP2 optimizations can print the SCF density, unrelaxed MP2 density, and relaxed MP2 density at the optimization geometry and again at the final stationary geometry.
+- These are preserved as separate structured records with `stage` (`initial`, `final`, or cycle-specific), `density_kind` (`scf`, `mp2_unrelaxed`, `mp2_relaxed`), and the printed density filename such as `F3CNO.scfp`, `F3CNO.pmp2ur`, or `F3CNO.pmp2re`.
+- The module records MP2 density-formation metadata, including stored relaxed/unrelaxed-density flags, SCF/correlated/energy-weighted density names, density trace, natural occupations, MP2 total energy, and gradient norm when printed.
+- Mulliken, Loewdin, Mayer, Hirshfeld, MBIS, CHELPG, and NBO analyses inside each density block are parsed by their existing owner modules. `density_analysis` only slices the ORCA output into density contexts and calls those modules.
+- Density-specific dipole blocks are parsed through the shared dipole parser and kept separate for SCF, unrelaxed MP2, and relaxed MP2 densities when ORCA prints them.
+- The `opt` alias includes `density_analysis`, so double-hybrid geometry optimizations do not lose the MP2 density contexts when parsed as ordinary optimizations.
+
 ## Common recipes
 
 ### Single point, full standalone report
@@ -307,6 +345,9 @@ These are always included.
 | `qro` | Quasi-restricted orbitals for UHF calculations |
 | `solvation` | CPCM/SMD, ALPB, COSMO-RS, and `%cpcm` / `%cosmors` metadata |
 | `tddft` | Excited states, spectra, CI contributions, NTOs, energy-rank metadata, excited-state optimization metadata |
+| `coupled_cluster` | CCSD/CCSD(T)/F12 wavefunction settings, CC convergence, diagnostics, F12/triples corrections, largest amplitudes, and natural occupations |
+| `eom_steom` | EOM/STEOM active-root selection, EOM roots, STEOM amplitudes, spectra, NTOs, and unrelaxed excited-state dipoles |
+| `density_analysis` | Density-specific SCF, unrelaxed MP2, and relaxed MP2 population/NBO analyses, MP2 density formation metadata, sidecar density containers, and density dipoles |
 | `casscf` | CASSCF convergence history, active-space setup, joined CAS-SCF/NEVPT2/QD-NEVPT2 state assignments, matrices, energy components, active-MO compositions, repeated population-analysis passes, spectra including SOC-corrected QDPT tables, QDPT eigenvectors, g tensors, and D tensors |
 | `goat` | Final ensemble, populations, relative energies, thermochemistry, minimum/ensemble xyz references |
 | `surface_scan` | Scan definitions, mode, coordinates, energies, optimized xyz files, sidecar files |
@@ -334,12 +375,16 @@ These are always included.
 | `dipole` | `dipole` |
 | `solvation` | `solvation` |
 | `tddft` | `tddft` |
+| `cc`, `ccsd`, `ccsdt`, `coupled_cluster` | `coupled_cluster`, `mulliken`, `loewdin`, `mayer`, `hirshfeld`, `mbis`, `chelpg`, `nbo`, `dipole` |
+| `eom`, `steom`, `eom_steom` | `coupled_cluster`, `eom_steom`, `mulliken`, `loewdin`, `mayer`, `hirshfeld`, `mbis`, `chelpg`, `nbo`, `dipole` |
+| `density_analysis`, `densities` | `density_analysis` |
+| `double_hybrid` | `geom_opt`, `density_analysis` |
 | `casscf` | `casscf`, `mulliken`, `loewdin`, `mayer`, `hirshfeld`, `mbis`, `chelpg`, `nbo` |
 | `nevpt2` | `casscf`, `mulliken`, `loewdin`, `mayer`, `hirshfeld`, `mbis`, `chelpg`, `nbo` |
 | `geometry` | `geometry`, `basis_set` |
 | `epr` | `epr` |
 | `goat` | `goat` |
-| `opt` | `geom_opt` |
+| `opt` | `geom_opt`, `density_analysis` |
 | `scan` | `surface_scan` |
 
 ## CLI reference

@@ -491,7 +491,7 @@ PLUGIN_BUNDLE = PluginBundle(
         ParserSectionPlugin("geom_opt", GeomOptModule),
     ),
     parser_aliases=(
-        ParserSectionAlias(name="opt", section_keys=("geom_opt",)),
+        ParserSectionAlias(name="opt", section_keys=("geom_opt", "density_analysis")),
     ),
     calculation_families=(
         CalculationFamilyPlugin(
