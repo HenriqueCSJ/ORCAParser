@@ -82,6 +82,7 @@ type SpectrumAxisUnit = "eV" | "nm" | "cm-1";
 const DEFAULT_ORBITAL_WINDOW = 7;
 const MIN_ORBITAL_WINDOW = 1;
 const MAX_ORBITAL_WINDOW = 80;
+const ORBITAL_LABEL_MIN_GAP = 22;
 
 type SpectrumLineShape = "gaussian" | "lorentzian" | "pseudo-voigt";
 
@@ -1875,7 +1876,7 @@ function OrbitalLadder({ analysis, unit }: { analysis: ReturnType<typeof analyze
             <text x={center} y={34} textAnchor="middle" className={`orbital-channel-label ${channel.spin}`}>
               {spinLabel(channel.spin)}
             </text>
-            {buildOrbitalGroupLayout(channel, yScale).map(({ group, y, showLabel }) => (
+            {buildOrbitalGroupLayout(channel, yScale, pad.top + 16, height - pad.bottom - 12).map(({ group, y, labelY, showLabel }) => (
                 <OrbitalGroupMark
                   key={`${channel.spin}-${group.labels.join("-")}-${group.meanEnergyEv}`}
                   group={group}
@@ -1885,6 +1886,7 @@ function OrbitalLadder({ analysis, unit }: { analysis: ReturnType<typeof analyze
                   labelSide={side}
                   unit={unit}
                   y={y}
+                  labelY={labelY}
                   showLabel={showLabel}
                   onHover={setHovered}
                 />
@@ -1919,6 +1921,7 @@ function OrbitalGroupMark({
   labelSide,
   unit,
   y,
+  labelY,
   showLabel,
   onHover
 }: {
@@ -1929,6 +1932,7 @@ function OrbitalGroupMark({
   labelSide: "left" | "right" | "both";
   unit: EnergyUnit;
   y: number;
+  labelY: number;
   showLabel: boolean;
   onHover: (group: OrbitalGroup | null) => void;
 }) {
@@ -1941,6 +1945,7 @@ function OrbitalGroupMark({
   const firstX = center - laneWidth / 2;
   const labels = compactOrbitalGroupLabel(group);
   const energyLabel = formatEnergyValue(group.meanEnergyEv, unit);
+  const leaderOffset = Math.abs(labelY - y);
   return (
     <g
       className={`orbital-group ${frontier ? "frontier" : ""}`}
@@ -1961,13 +1966,19 @@ function OrbitalGroupMark({
           />
         );
       })}
+      {showLabel && leaderOffset > 3 && (labelSide === "left" || labelSide === "both") && (
+        <line x1={firstX - 3} x2={firstX - 24} y1={y} y2={labelY} className="orbital-label-leader" />
+      )}
+      {showLabel && leaderOffset > 3 && (labelSide === "right" || labelSide === "both") && (
+        <line x1={firstX + laneWidth + 3} x2={firstX + laneWidth + 24} y1={y} y2={labelY} className="orbital-label-leader" />
+      )}
       {showLabel && (labelSide === "left" || labelSide === "both") && (
-        <text x={firstX - 10} y={y + 4} textAnchor="end" className={frontier ? "axis-label frontier-label" : "axis-label"}>
+        <text x={firstX - 10} y={labelY + 4} textAnchor="end" className={frontier ? "axis-label frontier-label orbital-label-text" : "axis-label orbital-label-text"}>
           {frontier ? `${isHomo ? "HOMO " : "LUMO "}${labels}` : labels}
         </text>
       )}
       {showLabel && (labelSide === "right" || labelSide === "both") && (
-        <text x={firstX + laneWidth + 10} y={y + 4} textAnchor="start" className={frontier ? "axis-label frontier-label" : "axis-label"}>
+        <text x={firstX + laneWidth + 10} y={labelY + 4} textAnchor="start" className={frontier ? "axis-label frontier-label orbital-label-text" : "axis-label orbital-label-text"}>
           {labelSide === "both" ? energyLabel : labels}
         </text>
       )}
@@ -3392,26 +3403,93 @@ function groupDegenerateOrbitals(orbitals: OrbitalPoint[], toleranceEv: number, 
   return groups;
 }
 
-function buildOrbitalGroupLayout(channel: OrbitalSetAnalysis, yScale: (energyEv: number) => number) {
+function buildOrbitalGroupLayout(
+  channel: OrbitalSetAnalysis,
+  yScale: (energyEv: number) => number,
+  labelTop: number,
+  labelBottom: number
+) {
   const points = channel.groups.map((group, index) => {
     const y = yScale(group.meanEnergyEv);
     const frontier =
       (channel.homo ? group.orbitals.some((orbital) => sameOrbital(orbital, channel.homo)) : false) ||
       (channel.lumo ? group.orbitals.some((orbital) => sameOrbital(orbital, channel.lumo)) : false);
-    return { group, y, index, frontier, showLabel: false };
+    return { group, y, labelY: y, index, frontier, showLabel: false };
   });
-  if (points.length <= 8) {
-    return points.map((point) => ({ ...point, showLabel: true }));
+  if (!points.length) {
+    return points;
   }
-  const sortedByScreenY = [...points].sort((a, b) => a.y - b.y);
-  let lastLabelY = Number.NEGATIVE_INFINITY;
-  for (const point of sortedByScreenY) {
-    if (point.frontier || Math.abs(point.y - lastLabelY) >= 42) {
+  const sortedByScreenY = [...points].sort((a, b) => a.y - b.y || a.index - b.index);
+  const availableHeight = Math.max(labelBottom - labelTop, ORBITAL_LABEL_MIN_GAP);
+  const maxLabels = Math.max(2, Math.floor(availableHeight / ORBITAL_LABEL_MIN_GAP) + 1);
+  if (points.length <= Math.min(12, maxLabels)) {
+    for (const point of sortedByScreenY) {
       point.showLabel = true;
-      lastLabelY = point.y;
+    }
+  } else {
+    const selected = new Set<number>();
+    for (const point of sortedByScreenY) {
+      if (point.frontier) {
+        selected.add(point.index);
+      }
+    }
+    let lastCandidateY = Number.NEGATIVE_INFINITY;
+    for (const point of sortedByScreenY) {
+      if (selected.size >= maxLabels) {
+        break;
+      }
+      if (point.frontier) {
+        lastCandidateY = point.y;
+        continue;
+      }
+      if (point.y - lastCandidateY >= ORBITAL_LABEL_MIN_GAP * 1.7) {
+        selected.add(point.index);
+        lastCandidateY = point.y;
+      }
+    }
+    if (selected.size < Math.min(maxLabels, points.length)) {
+      for (const point of sortedByScreenY) {
+        if (selected.size >= Math.min(maxLabels, points.length)) {
+          break;
+        }
+        selected.add(point.index);
+      }
+    }
+    for (const point of points) {
+      point.showLabel = selected.has(point.index);
     }
   }
+  distributeOrbitalLabels(sortedByScreenY.filter((point) => point.showLabel), labelTop, labelBottom);
   return points;
+}
+
+function distributeOrbitalLabels<T extends { y: number; labelY: number }>(labels: T[], labelTop: number, labelBottom: number) {
+  if (!labels.length) {
+    return;
+  }
+  const sorted = labels.sort((a, b) => a.y - b.y);
+  const requiredHeight = (sorted.length - 1) * ORBITAL_LABEL_MIN_GAP;
+  const availableHeight = labelBottom - labelTop;
+  const gap = requiredHeight > availableHeight && sorted.length > 1
+    ? Math.max(14, availableHeight / (sorted.length - 1))
+    : ORBITAL_LABEL_MIN_GAP;
+
+  for (let index = 0; index < sorted.length; index += 1) {
+    const desired = clamp(sorted[index].y, labelTop, labelBottom);
+    sorted[index].labelY = index === 0 ? desired : Math.max(desired, sorted[index - 1].labelY + gap);
+  }
+
+  const overflow = sorted[sorted.length - 1].labelY - labelBottom;
+  if (overflow > 0) {
+    for (const label of sorted) {
+      label.labelY -= overflow;
+    }
+  }
+
+  for (let index = 0; index < sorted.length; index += 1) {
+    const lowerBound = labelTop + index * gap;
+    sorted[index].labelY = Math.max(sorted[index].labelY, lowerBound);
+  }
 }
 
 function makeOrbitalGroup(orbitals: OrbitalPoint[], occupationCutoff: number): OrbitalGroup {

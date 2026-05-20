@@ -110,6 +110,26 @@ async function main() {
     checks.orbitalWindowMin = await windowInput.getAttribute("min");
     await windowInput.fill("1");
     checks.orbitalWindowValue = await windowInput.inputValue();
+    checks.orbitalMinimalReadout = await page.locator(".plot-readout").first().innerText();
+    await windowInput.fill("30");
+    checks.orbitalDenseLabelMinGap = await page.locator(".orbital-svg").evaluate((svg) => {
+      const byX = new Map();
+      svg.querySelectorAll(".orbital-label-text").forEach((label) => {
+        const x = Math.round(Number(label.getAttribute("x") || "0"));
+        const y = Number(label.getAttribute("y") || "0");
+        const current = byX.get(x) || [];
+        current.push(y);
+        byX.set(x, current);
+      });
+      let minGap = Infinity;
+      for (const ys of byX.values()) {
+        ys.sort((a, b) => a - b);
+        for (let index = 1; index < ys.length; index += 1) {
+          minGap = Math.min(minGap, ys[index] - ys[index - 1]);
+        }
+      }
+      return Number.isFinite(minGap) ? minGap : 999;
+    });
     await page.getByRole("combobox", { name: "Units" }).selectOption("hartree");
     checks.orbitalMetricCards = await page.locator(".metric-card").count();
     checks.orbitalWindowReadout = await page.locator(".plot-readout").first().innerText();
@@ -243,6 +263,8 @@ async function main() {
       checks.orbitalWindowDefault !== "7" ||
       checks.orbitalWindowMin !== "1" ||
       checks.orbitalWindowValue !== "1" ||
+      !checks.orbitalMinimalReadout.includes("Showing 2 frontier orbital") ||
+      checks.orbitalDenseLabelMinGap < 18 ||
       !checks.orbitalWindowReadout.includes("frontier orbital") ||
       checks.orbitalMetricCards < 5 ||
       checks.orbitalSvgDownloadName !== "orca-frontier-orbitals.svg"

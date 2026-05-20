@@ -1175,6 +1175,13 @@ textarea {
   font-size: 13px;
 }
 
+.orbital-label-text {
+  paint-order: stroke;
+  stroke: #fbfdff;
+  stroke-width: 4px;
+  stroke-linejoin: round;
+}
+
 .spectrum-stick {
   stroke: var(--violet);
   stroke-width: 4;
@@ -1202,6 +1209,13 @@ textarea {
 .orbital-level.frontier {
   stroke: var(--amber);
   stroke-width: 6;
+}
+
+.orbital-label-leader {
+  stroke: #9aaec6;
+  stroke-width: 1;
+  stroke-dasharray: 2 3;
+  opacity: 0.78;
 }
 
 .orbital-group:hover .orbital-level {
