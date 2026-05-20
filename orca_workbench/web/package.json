@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "tsc && vite build",
-    "preview": "vite preview --host 127.0.0.1"
+    "preview": "vite preview --host 127.0.0.1",
+    "test:ui": "node tests/workbench-ui-smoke.cjs"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^5.1.1",
@@ -17,5 +18,7 @@
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3"
   },
-  "devDependencies": {}
+  "devDependencies": {
+    "playwright": "^1.60.0"
+  }
 }

@@ -44,6 +44,7 @@ function App() {
   const [snapshots, setSnapshots] = useState<SnapshotResponse | null>(null);
   const [properties, setProperties] = useState<PropertiesResponse | null>(null);
   const [selectedProperties, setSelectedProperties] = useState<string[]>([]);
+  const [focusedProperty, setFocusedProperty] = useState("");
   const [activeTab, setActiveTab] = useState<"summary" | "data" | "provenance" | "snapshots" | "outputs">("summary");
   const [exports, setExports] = useState<ExportOptions>(defaultExportOptions);
   const [message, setMessage] = useState("");
@@ -81,6 +82,9 @@ function App() {
         if (!selectedJobId && refreshed.jobs.length) {
           setSelectedJobId(refreshed.jobs[0].id);
         }
+        if (refreshed.status === "finished") {
+          setMessage(batchCompletionMessage(refreshed));
+        }
       } catch (error) {
         setMessage(error instanceof Error ? error.message : String(error));
       }
@@ -99,6 +103,7 @@ function App() {
         setSnapshots(null);
         setProperties(null);
         setSelectedProperties([]);
+        setFocusedProperty("");
         return;
       }
       try {
@@ -111,6 +116,9 @@ function App() {
         setSnapshots(snap);
         setProperties(props);
         setSelectedProperties(props.property_keys);
+        setFocusedProperty((current) =>
+          current && props.property_keys.includes(current) ? current : props.property_keys[0] ?? ""
+        );
       } catch (error) {
         setMessage(error instanceof Error ? error.message : String(error));
       }
@@ -210,7 +218,11 @@ function App() {
       setBatch(response);
       setSelectedJobId(response.jobs[0]?.id ?? "");
       setActiveTab("summary");
-      setMessage(startMessage || `Started batch with ${response.jobs.length} job(s).`);
+      setMessage(
+        response.status === "finished"
+          ? batchCompletionMessage(response)
+          : startMessage || `Started batch with ${response.jobs.length} job(s).`
+      );
     } catch (error) {
       setMessage(error instanceof Error ? error.message : String(error));
     }
@@ -232,6 +244,21 @@ function App() {
   function clearProperties() {
     setSelectedProperties([]);
   }
+
+  useEffect(() => {
+    if (!properties) {
+      if (focusedProperty) {
+        setFocusedProperty("");
+      }
+      return;
+    }
+    const visibleKeys = properties.property_keys.filter((key) => selectedProperties.includes(key));
+    if (visibleKeys.length === 0 && focusedProperty) {
+      setFocusedProperty("");
+    } else if (visibleKeys.length > 0 && !visibleKeys.includes(focusedProperty)) {
+      setFocusedProperty(visibleKeys[0]);
+    }
+  }, [focusedProperty, properties, selectedProperties]);
 
   const parsedCount = batch?.jobs.filter((job) => job.status === "parsed").length ?? 0;
   const failedCount = batch?.jobs.filter((job) => job.status === "failed").length ?? 0;
@@ -417,6 +444,8 @@ function App() {
             snapshots={snapshots}
             properties={properties}
             selectedProperties={selectedProperties}
+            focusedProperty={focusedProperty}
+            onFocusProperty={setFocusedProperty}
             comparisonPath={batch?.comparison_path ?? null}
           />
         </section>
@@ -445,6 +474,8 @@ function DetailTab({
   snapshots,
   properties,
   selectedProperties,
+  focusedProperty,
+  onFocusProperty,
   comparisonPath
 }: {
   tab: "summary" | "data" | "provenance" | "snapshots" | "outputs";
@@ -453,6 +484,8 @@ function DetailTab({
   snapshots: SnapshotResponse | null;
   properties: PropertiesResponse | null;
   selectedProperties: string[];
+  focusedProperty: string;
+  onFocusProperty: (key: string) => void;
   comparisonPath: string | null;
 }) {
   if (!job) {
@@ -493,19 +526,13 @@ function DetailTab({
   }
 
   if (tab === "data") {
-    const selectedData = Object.fromEntries(
-      selectedProperties
-        .filter((key) => properties?.properties && key in properties.properties)
-        .map((key) => [key, properties?.properties[key]])
-    );
     return (
-      <div className="data-view">
-        <div className="data-view-header">
-          <span>{selectedProperties.length} selected property block(s)</span>
-          <span>{properties?.property_keys.length ?? 0} parsed property block(s)</span>
-        </div>
-        <pre className="text-panel">{JSON.stringify(selectedData, null, 2)}</pre>
-      </div>
+      <DataExplorer
+        properties={properties}
+        selectedProperties={selectedProperties}
+        focusedProperty={focusedProperty}
+        onFocusProperty={onFocusProperty}
+      />
     );
   }
 
@@ -534,6 +561,219 @@ function DetailTab({
       )}
     </div>
   );
+}
+
+function DataExplorer({
+  properties,
+  selectedProperties,
+  focusedProperty,
+  onFocusProperty
+}: {
+  properties: PropertiesResponse | null;
+  selectedProperties: string[];
+  focusedProperty: string;
+  onFocusProperty: (key: string) => void;
+}) {
+  if (!properties) {
+    return <div className="empty-state">Loading parsed data...</div>;
+  }
+  const visibleKeys = properties.property_keys.filter((key) => selectedProperties.includes(key));
+  if (visibleKeys.length === 0) {
+    return <div className="empty-state">No parsed properties are selected.</div>;
+  }
+  const activeKey = visibleKeys.includes(focusedProperty) ? focusedProperty : visibleKeys[0];
+  const activeValue = properties.properties[activeKey];
+
+  return (
+    <div className="data-view">
+      <div className="data-view-header">
+        <span>{visibleKeys.length} visible property block(s)</span>
+        <span>{properties.property_keys.length} parsed property block(s)</span>
+      </div>
+      <div className="data-layout">
+        <div className="property-list" aria-label="Parsed property blocks">
+          {visibleKeys.map((key) => {
+            const value = properties.properties[key];
+            return (
+              <button
+                type="button"
+                key={key}
+                className={key === activeKey ? "property-card active" : "property-card"}
+                onClick={() => onFocusProperty(key)}
+              >
+                <strong>{formatPropertyTitle(key)}</strong>
+                <span>{describeValue(value)}</span>
+                <small>{previewValue(value)}</small>
+              </button>
+            );
+          })}
+        </div>
+        <div className="property-inspector">
+          <div className="property-inspector-header">
+            <div>
+              <p className="eyebrow">Focused property</p>
+              <h3>{formatPropertyTitle(activeKey)}</h3>
+            </div>
+            <span>{describeValue(activeValue)}</span>
+          </div>
+          {renderValueSummary(activeValue)}
+          <details className="json-details">
+            <summary>Raw selected block</summary>
+            <pre className="text-panel compact-json">{JSON.stringify(activeValue, null, 2)}</pre>
+          </details>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function renderValueSummary(value: unknown) {
+  if (Array.isArray(value)) {
+    return renderArraySummary(value);
+  }
+  if (isPlainObject(value)) {
+    return renderObjectSummary(value);
+  }
+  return (
+    <div className="property-summary-grid">
+      <Field label="Value" value={shortValue(value)} />
+    </div>
+  );
+}
+
+function renderObjectSummary(value: Record<string, unknown>) {
+  const entries = Object.entries(value);
+  const tableBlocks = entries
+    .filter(([, nested]) => Array.isArray(nested) && nested.some((row) => isPlainObject(row)))
+    .slice(0, 3);
+  return (
+    <div className="property-summary-stack">
+      <div className="property-summary-grid">
+        {entries.slice(0, 18).map(([key, nested]) => (
+          <Field key={key} label={key} value={shortValue(nested)} />
+        ))}
+      </div>
+      {tableBlocks.map(([key, nested]) => (
+        <section className="nested-table-section" key={key}>
+          <h4>{formatPropertyTitle(key)}</h4>
+          {renderArraySummary(nested as unknown[])}
+        </section>
+      ))}
+    </div>
+  );
+}
+
+function renderArraySummary(value: unknown[]) {
+  if (value.length === 0) {
+    return <div className="empty-state small">Empty array.</div>;
+  }
+  const objectRows = value.filter((item) => isPlainObject(item)) as Record<string, unknown>[];
+  if (objectRows.length > 0) {
+    const columns = collectColumns(objectRows).slice(0, 7);
+    return (
+      <div className="mini-table-wrap">
+        <table className="mini-table">
+          <thead>
+            <tr>
+              {columns.map((column) => <th key={column}>{column}</th>)}
+            </tr>
+          </thead>
+          <tbody>
+            {objectRows.slice(0, 10).map((row, index) => (
+              <tr key={`${index}-${columns.join("-")}`}>
+                {columns.map((column) => <td key={column}>{shortValue(row[column])}</td>)}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {value.length > 10 && <p className="quiet-text">Showing 10 of {value.length} rows.</p>}
+      </div>
+    );
+  }
+  return (
+    <div className="property-summary-grid">
+      {value.slice(0, 18).map((item, index) => (
+        <Field key={index} label={`Item ${index + 1}`} value={shortValue(item)} />
+      ))}
+    </div>
+  );
+}
+
+function collectColumns(rows: Record<string, unknown>[]) {
+  const columns: string[] = [];
+  for (const row of rows.slice(0, 10)) {
+    for (const [key, value] of Object.entries(row)) {
+      if (!columns.includes(key) && !isComplexValue(value)) {
+        columns.push(key);
+      }
+    }
+  }
+  return columns.length ? columns : Object.keys(rows[0] ?? {}).slice(0, 7);
+}
+
+function formatPropertyTitle(key: string) {
+  return key
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function describeValue(value: unknown) {
+  if (Array.isArray(value)) {
+    return `${value.length} row${value.length === 1 ? "" : "s"}`;
+  }
+  if (isPlainObject(value)) {
+    const keys = Object.keys(value);
+    return `${keys.length} field${keys.length === 1 ? "" : "s"}`;
+  }
+  if (value === null || value === undefined || value === "") {
+    return "empty";
+  }
+  return typeof value;
+}
+
+function previewValue(value: unknown) {
+  if (Array.isArray(value)) {
+    return value.length ? shortValue(value[0]) : "No rows";
+  }
+  if (isPlainObject(value)) {
+    const parts = Object.entries(value)
+      .filter(([, nested]) => !isComplexValue(nested))
+      .slice(0, 4)
+      .map(([key, nested]) => `${key}: ${shortValue(nested)}`);
+    return parts.length ? parts.join(" | ") : "Nested parsed data";
+  }
+  return shortValue(value);
+}
+
+function shortValue(value: unknown) {
+  if (value === null || value === undefined || value === "") {
+    return "N/A";
+  }
+  if (typeof value === "number") {
+    return Number.isInteger(value) ? String(value) : value.toPrecision(7);
+  }
+  if (typeof value === "boolean") {
+    return value ? "true" : "false";
+  }
+  if (typeof value === "string") {
+    return value.length > 90 ? `${value.slice(0, 87)}...` : value;
+  }
+  if (Array.isArray(value)) {
+    return `${value.length} row${value.length === 1 ? "" : "s"}`;
+  }
+  if (isPlainObject(value)) {
+    const keys = Object.keys(value);
+    return `${keys.length} field${keys.length === 1 ? "" : "s"}`;
+  }
+  return String(value);
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isComplexValue(value: unknown) {
+  return Array.isArray(value) || isPlainObject(value);
 }
 
 function Field({ label, value }: { label: string; value: string | number | boolean | null | undefined }) {
@@ -571,6 +811,20 @@ function filesToPendingJobs(files: DiscoveredFile[]): WorkbenchJob[] {
     name: file.name,
     status: "discovered"
   }));
+}
+
+function batchCompletionMessage(batch: WorkbenchBatch) {
+  const parsed = batch.jobs.filter((job) => job.status === "parsed").length;
+  const failed = batch.jobs.filter((job) => job.status === "failed").length;
+  const warnings = batch.jobs.reduce((total, job) => total + (job.warnings?.length ?? 0), 0);
+  const parts = [`Parsed ${parsed} of ${batch.jobs.length} file(s).`];
+  if (failed) {
+    parts.push(`${failed} failed.`);
+  }
+  if (warnings) {
+    parts.push(`${warnings} warning(s).`);
+  }
+  return parts.join(" ");
 }
 
 function formatNumber(value: unknown, digits: number, suffix: string) {
