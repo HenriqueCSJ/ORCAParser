@@ -2299,6 +2299,10 @@ function MultiReferenceWorkspace({
   return (
     <div className="domain-visual-workspace multireference-workspace">
       {casscf && <CasscfActiveSpacePanel casscf={casscf} activeOrbitals={activeOrbitals} />}
+      {casscf && <CasscfConvergencePanel casscf={casscf} />}
+      {casscf && <CasscfNevpt2Panel casscf={casscf} />}
+      {casscf && <CasscfRelativisticPanel casscf={casscf} />}
+      {casscf && <CasscfPopulationPassPanel casscf={casscf} />}
       {activeTable ? (
         <>
           <div className="canvas-toolbar">
@@ -2414,6 +2418,411 @@ function CasscfActiveSpacePanel({
   );
 }
 
+type CasscfMacroPoint = {
+  iteration: number;
+  energyEh: number | null;
+  relEnergyMilliEh: number | null;
+  deltaEnergyMicroEh: number | null;
+  gradientNorm: number | null;
+  maxGradient: number | null;
+  gapExtAct: number | null;
+  gapActInt: number | null;
+  occupationSpread: number | null;
+  rotationLabel: string;
+  orbitalUpdate: string;
+  densityStatus: string;
+};
+
+function CasscfConvergencePanel({ casscf }: { casscf: Record<string, unknown> }) {
+  const points = useMemo(() => buildCasscfMacroPoints(casscf), [casscf]);
+  const [hovered, setHovered] = useState<CasscfMacroPoint | null>(null);
+  if (points.length < 2) {
+    return null;
+  }
+  const finalPoint = points[points.length - 1];
+  const width = 1040;
+  const height = 330;
+  const pad = { left: 72, right: 38, top: 34, bottom: 58 };
+  const xMin = Math.min(...points.map((point) => point.iteration));
+  const xMax = Math.max(...points.map((point) => point.iteration));
+  const xSpan = xMax - xMin || 1;
+  const xScale = (value: number) => pad.left + ((value - xMin) / xSpan) * (width - pad.left - pad.right);
+  const energyValues = points.map((point) => point.relEnergyMilliEh).filter((value): value is number => value !== null);
+  const eMin = Math.min(...energyValues, 0);
+  const eMax = Math.max(...energyValues, 1);
+  const eSpan = eMax - eMin || 1;
+  const yScaleEnergy = (value: number | null) => height - pad.bottom - (((value ?? eMin) - eMin) / eSpan) * (height - pad.top - pad.bottom);
+  const maxGradient = Math.max(...points.map((point) => point.gradientNorm ?? 0), 0);
+  const energyPolyline = points
+    .filter((point) => point.relEnergyMilliEh !== null)
+    .map((point) => `${xScale(point.iteration)},${yScaleEnergy(point.relEnergyMilliEh)}`)
+    .join(" ");
+  const barWidth = Math.max(8, Math.min(34, (width - pad.left - pad.right) / points.length * 0.42));
+
+  return (
+    <section className="casscf-detail-panel casscf-convergence-panel">
+      <div className="panel-headline">
+        <div>
+          <p className="eyebrow">Orbital optimization</p>
+          <h3>Macro-iteration convergence</h3>
+        </div>
+        <span className="quiet-text">Energy settling, orbital-gradient collapse, active-space gaps, and update diagnostics.</span>
+      </div>
+      <div className="casscf-summary-grid compact">
+        <article className="metric-card">
+          <span>Macro iterations</span>
+          <strong>{points.length}</strong>
+          <small>final cycle {finalPoint.iteration}</small>
+        </article>
+        <article className="metric-card">
+          <span>Final gradient</span>
+          <strong>{formatNumber(finalPoint.gradientNorm, 4, "")}</strong>
+          <small>max {formatNumber(finalPoint.maxGradient, 4, "")}</small>
+        </article>
+        <article className="metric-card">
+          <span>Final energy</span>
+          <strong>{formatNumber(finalPoint.energyEh, 6, " Eh")}</strong>
+          <small>{formatNumber(finalPoint.deltaEnergyMicroEh, 2, " microEh step")}</small>
+        </article>
+        <article className="metric-card">
+          <span>Active gaps</span>
+          <strong>{formatNumber(finalPoint.gapExtAct, 3, " Eh")}</strong>
+          <small>act-int {formatNumber(finalPoint.gapActInt, 3, " Eh")}</small>
+        </article>
+        <article className="metric-card">
+          <span>Occupation spread</span>
+          <strong>{formatNumber(finalPoint.occupationSpread, 3, "")}</strong>
+          <small>{finalPoint.rotationLabel ? `rotation ${finalPoint.rotationLabel}` : "rotation not reported"}</small>
+        </article>
+      </div>
+      <div className="primary-chart casscf-convergence-chart">
+        <svg className="casscf-convergence-svg" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="CASSCF macro iteration convergence">
+          <rect x="0" y="0" width={width} height={height} className="chart-bg" />
+          <line x1={pad.left} y1={height - pad.bottom} x2={width - pad.right} y2={height - pad.bottom} className="axis-line" />
+          <line x1={pad.left} y1={pad.top} x2={pad.left} y2={height - pad.bottom} className="axis-line" />
+          {[0, 0.25, 0.5, 0.75, 1].map((fraction) => {
+            const value = eMin + fraction * eSpan;
+            const y = yScaleEnergy(value);
+            return (
+              <g key={fraction}>
+                <line x1={pad.left} x2={width - pad.right} y1={y} y2={y} className="grid-line" />
+                <text x={pad.left - 10} y={y + 4} textAnchor="end" className="axis-label">{value.toFixed(2)}</text>
+              </g>
+            );
+          })}
+          {points.map((point) => {
+            const x = xScale(point.iteration);
+            const barHeight = maxGradient > 0 ? ((point.gradientNorm ?? 0) / maxGradient) * (height - pad.top - pad.bottom) : 0;
+            return (
+              <g key={`grad-${point.iteration}`} onMouseEnter={() => setHovered(point)} onMouseLeave={() => setHovered(null)}>
+                <rect x={x - barWidth / 2} y={height - pad.bottom - barHeight} width={barWidth} height={barHeight} rx={4} className="casscf-gradient-bar" />
+              </g>
+            );
+          })}
+          <polyline points={energyPolyline} className="casscf-energy-line" fill="none" />
+          {points.map((point) => {
+            const x = xScale(point.iteration);
+            const y = yScaleEnergy(point.relEnergyMilliEh);
+            return (
+              <circle key={`energy-${point.iteration}`} cx={x} cy={y} r={5} className="casscf-energy-dot" onMouseEnter={() => setHovered(point)} onMouseLeave={() => setHovered(null)} />
+            );
+          })}
+          <text x={width / 2} y={height - 14} textAnchor="middle" className="axis-title">macro iteration</text>
+          <text x={16} y={24} className="axis-title">relative E / mEh</text>
+        </svg>
+        <div className="plot-readout">
+          {hovered
+            ? `Macro ${hovered.iteration}: relE=${formatNumber(hovered.relEnergyMilliEh, 3, " mEh")}, grad=${formatNumber(hovered.gradientNorm, 5, "")}, update=${hovered.orbitalUpdate || "n/a"}, density=${hovered.densityStatus || "n/a"}`
+            : "Line is CASSCF energy relative to the final macro-iteration; bars are normalized orbital-gradient norms."}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+type CasscfStateComparison = {
+  key: string;
+  label: string;
+  state: number | null;
+  root: number | null;
+  multiplicity: number | null;
+  occupation: string;
+  weight: number | null;
+  casscfEv: number | null;
+  nevpt2Ev: number | null;
+  qdEv: number | null;
+  correctionEv: number | null;
+  qdShiftEv: number | null;
+};
+
+function CasscfNevpt2Panel({ casscf }: { casscf: Record<string, unknown> }) {
+  const comparisons = useMemo(() => buildCasscfStateComparisons(casscf), [casscf]);
+  const [hovered, setHovered] = useState<CasscfStateComparison | null>(null);
+  if (!comparisons.length || !comparisons.some((row) => row.nevpt2Ev !== null || row.qdEv !== null)) {
+    return null;
+  }
+  const visible = comparisons.slice(0, 16);
+  const correctionRows = comparisons.filter((row) => row.correctionEv !== null);
+  const largestRedShift = correctionRows.reduce<CasscfStateComparison | null>((best, row) => {
+    if (!best || (row.correctionEv ?? 0) < (best.correctionEv ?? 0)) {
+      return row;
+    }
+    return best;
+  }, null);
+  const largestBlueShift = correctionRows.reduce<CasscfStateComparison | null>((best, row) => {
+    if (!best || (row.correctionEv ?? 0) > (best.correctionEv ?? 0)) {
+      return row;
+    }
+    return best;
+  }, null);
+  const width = 1040;
+  const height = 380;
+  const pad = { left: 70, right: 34, top: 34, bottom: 64 };
+  const energies = visible.flatMap((row) => [row.casscfEv, row.nevpt2Ev, row.qdEv]).filter((value): value is number => value !== null);
+  const yMin = Math.min(...energies, 0);
+  const yMax = Math.max(...energies, 1);
+  const ySpan = yMax - yMin || 1;
+  const xStep = (width - pad.left - pad.right) / Math.max(visible.length, 1);
+  const xScale = (index: number) => pad.left + index * xStep + xStep / 2;
+  const yScale = (value: number | null) => height - pad.bottom - (((value ?? yMin) - yMin) / ySpan) * (height - pad.top - pad.bottom);
+
+  return (
+    <section className="casscf-detail-panel casscf-nevpt2-panel">
+      <div className="panel-headline">
+        <div>
+          <p className="eyebrow">NEVPT2 and QD-NEVPT2</p>
+          <h3>Perturbative state shifts</h3>
+        </div>
+        <span className="quiet-text">Compares CASSCF roots with state-specific NEVPT2 and quasi-degenerate corrections.</span>
+      </div>
+      <div className="casscf-summary-grid compact">
+        <article className="metric-card">
+          <span>Compared states</span>
+          <strong>{comparisons.length}</strong>
+          <small>{comparisons.some((row) => row.qdEv !== null) ? "QD-NEVPT2 available" : "state-specific PT2 only"}</small>
+        </article>
+        <article className="metric-card">
+          <span>Largest red shift</span>
+          <strong>{largestRedShift ? formatNumber(largestRedShift.correctionEv, 3, " eV") : "N/A"}</strong>
+          <small>{largestRedShift?.label ?? "no correction column"}</small>
+        </article>
+        <article className="metric-card">
+          <span>Largest blue shift</span>
+          <strong>{largestBlueShift ? formatNumber(largestBlueShift.correctionEv, 3, " eV") : "N/A"}</strong>
+          <small>{largestBlueShift?.label ?? "no correction column"}</small>
+        </article>
+        <article className="metric-card">
+          <span>QD mixing</span>
+          <strong>{comparisons.filter((row) => row.qdShiftEv !== null && Math.abs(row.qdShiftEv) > 1e-4).length}</strong>
+          <small>states shifted after QD diagonalization</small>
+        </article>
+        <article className="metric-card">
+          <span>Configurations</span>
+          <strong>{comparisons.filter((row) => row.occupation !== "unknown").length}</strong>
+          <small>dominant occupations retained</small>
+        </article>
+      </div>
+      <div className="primary-chart casscf-nevpt2-chart">
+        <svg className="casscf-nevpt2-svg" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="CASSCF NEVPT2 state energy comparison">
+          <rect x="0" y="0" width={width} height={height} className="chart-bg" />
+          <line x1={pad.left} y1={height - pad.bottom} x2={width - pad.right} y2={height - pad.bottom} className="axis-line" />
+          <line x1={pad.left} y1={pad.top} x2={pad.left} y2={height - pad.bottom} className="axis-line" />
+          {[0, 0.25, 0.5, 0.75, 1].map((fraction) => {
+            const value = yMin + fraction * ySpan;
+            const y = yScale(value);
+            return (
+              <g key={fraction}>
+                <line x1={pad.left} x2={width - pad.right} y1={y} y2={y} className="grid-line" />
+                <text x={pad.left - 10} y={y + 4} textAnchor="end" className="axis-label">{value.toFixed(2)}</text>
+              </g>
+            );
+          })}
+          {visible.map((row, index) => {
+            const x = xScale(index);
+            const yCasscf = yScale(row.casscfEv);
+            const yNevpt2 = yScale(row.nevpt2Ev);
+            const yQd = yScale(row.qdEv);
+            const connector = [row.casscfEv, row.nevpt2Ev, row.qdEv].filter((value) => value !== null).length > 1;
+            return (
+              <g key={row.key} onMouseEnter={() => setHovered(row)} onMouseLeave={() => setHovered(null)}>
+                {connector && <line x1={x} x2={x} y1={Math.min(yCasscf, yNevpt2, yQd)} y2={Math.max(yCasscf, yNevpt2, yQd)} className="casscf-shift-line" />}
+                {row.casscfEv !== null && <circle cx={x - 10} cy={yCasscf} r={6} className="casscf-dot casscf-dot-cas" />}
+                {row.nevpt2Ev !== null && <circle cx={x} cy={yNevpt2} r={6} className="casscf-dot casscf-dot-nevpt2" />}
+                {row.qdEv !== null && <circle cx={x + 10} cy={yQd} r={6} className="casscf-dot casscf-dot-qd" />}
+                {(visible.length <= 12 || index % 2 === 0) && <text x={x} y={height - 34} textAnchor="middle" className="axis-label">{row.state ?? index}</text>}
+              </g>
+            );
+          })}
+          <text x={width / 2} y={height - 12} textAnchor="middle" className="axis-title">state index</text>
+          <text x={16} y={24} className="axis-title">transition energy / eV</text>
+        </svg>
+        <div className="casscf-legend">
+          <span><i className="legend-dot cas" /> CASSCF</span>
+          <span><i className="legend-dot nevpt2" /> NEVPT2</span>
+          <span><i className="legend-dot qd" /> QD-NEVPT2</span>
+        </div>
+        <div className="plot-readout">
+          {hovered
+            ? `${hovered.label}: CAS=${formatNumber(hovered.casscfEv, 3, " eV")}, NEVPT2=${formatNumber(hovered.nevpt2Ev, 3, " eV")}, QD=${formatNumber(hovered.qdEv, 3, " eV")}, occ ${hovered.occupation}`
+            : "Each vertical connector shows how a CASSCF root moves after perturbative and quasi-degenerate corrections."}
+        </div>
+      </div>
+      <div className="casscf-state-strip">
+        {visible.slice(0, 8).map((row) => (
+          <article key={`state-card-${row.key}`} className="casscf-state-card">
+            <strong>{row.label}</strong>
+            <code>{row.occupation}</code>
+            <span>{row.weight !== null ? `${(row.weight * 100).toFixed(1)}% dominant` : "dominance unknown"}</span>
+            <small>PT2 shift {formatNumber(row.correctionEv, 3, " eV")}</small>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function CasscfRelativisticPanel({ casscf }: { casscf: Record<string, unknown> }) {
+  const relativistic = getRecord(casscf.relativistic);
+  const blocks = getArray(relativistic.qdpt_blocks).filter(isPlainObject);
+  const [hovered, setHovered] = useState<Record<string, unknown> | null>(null);
+  if (!blocks.length) {
+    return null;
+  }
+  const firstBlock = blocks[0];
+  const levels = getArray(firstBlock.levels).filter(isPlainObject).slice(0, 40);
+  const allLevels = blocks.flatMap((block) => getArray(block.levels).filter(isPlainObject));
+  const allG = blocks.flatMap((block) => getArray(block.g_matrices).filter(isPlainObject));
+  const allD = blocks.flatMap((block) => getArray(block.d_tensors).filter(isPlainObject));
+  const firstGFactors = getRecord(getRecord(allG[0]).g_factors);
+  const firstD = allD[0] ? getRecord(allD[0]) : {};
+  const width = 1040;
+  const height = 320;
+  const pad = { left: 70, right: 34, top: 32, bottom: 58 };
+  const energies = levels.map((level) => toNumber(level.energy_cm_1) ?? toNumber(level["energy_cm-1"]) ?? toNumber(level.energy_cm1) ?? toNumber(level.energy_cm)).filter((value): value is number => value !== null);
+  const yMin = 0;
+  const yMax = Math.max(...energies, 1);
+  const ySpan = yMax - yMin || 1;
+  const xStep = (width - pad.left - pad.right) / Math.max(levels.length, 1);
+  const yScale = (value: number) => height - pad.bottom - ((value - yMin) / ySpan) * (height - pad.top - pad.bottom);
+
+  return (
+    <section className="casscf-detail-panel casscf-relativistic-panel">
+      <div className="panel-headline">
+        <div>
+          <p className="eyebrow">QDPT / spin properties</p>
+          <h3>Relativistic state splitting</h3>
+        </div>
+        <span className="quiet-text">Shows parsed quasi-degenerate levels plus g-matrix and zero-field-splitting summaries.</span>
+      </div>
+      <div className="casscf-summary-grid compact">
+        <article className="metric-card">
+          <span>QDPT blocks</span>
+          <strong>{blocks.length}</strong>
+          <small>{allLevels.length} level(s) parsed</small>
+        </article>
+        <article className="metric-card">
+          <span>g iso</span>
+          <strong>{formatNumber(firstGFactors.iso, 6, "")}</strong>
+          <small>{allG.length} g-matrix block(s)</small>
+        </article>
+        <article className="metric-card">
+          <span>D</span>
+          <strong>{formatNumber(firstD.D_cm_1 ?? firstD["D_cm-1"], 5, " cm-1")}</strong>
+          <small>E/D {formatNumber(firstD.E_over_D, 5, "")}</small>
+        </article>
+        <article className="metric-card">
+          <span>Stabilization</span>
+          <strong>{formatNumber(firstBlock.energy_stabilization_cm_1 ?? firstBlock["energy_stabilization_cm-1"], 2, " cm-1")}</strong>
+          <small>{String(firstBlock.mode ?? "QDPT mode")}</small>
+        </article>
+        <article className="metric-card">
+          <span>Basis</span>
+          <strong>{String(getRecord(relativistic.basis).label ?? "parsed")}</strong>
+          <small>{levels.length} level(s) shown</small>
+        </article>
+      </div>
+      {levels.length > 0 && (
+        <div className="primary-chart casscf-level-chart">
+          <svg className="casscf-level-svg" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="QDPT level splitting">
+            <rect x="0" y="0" width={width} height={height} className="chart-bg" />
+            <line x1={pad.left} y1={height - pad.bottom} x2={width - pad.right} y2={height - pad.bottom} className="axis-line" />
+            <line x1={pad.left} y1={pad.top} x2={pad.left} y2={height - pad.bottom} className="axis-line" />
+            {[0, 0.25, 0.5, 0.75, 1].map((fraction) => {
+              const value = yMin + fraction * ySpan;
+              const y = yScale(value);
+              return (
+                <g key={fraction}>
+                  <line x1={pad.left} x2={width - pad.right} y1={y} y2={y} className="grid-line" />
+                  <text x={pad.left - 10} y={y + 4} textAnchor="end" className="axis-label">{value.toFixed(1)}</text>
+                </g>
+              );
+            })}
+            {levels.map((level, index) => {
+              const energy = toNumber(level.energy_cm_1) ?? toNumber(level["energy_cm-1"]) ?? toNumber(level.energy_cm1) ?? toNumber(level.energy_cm) ?? 0;
+              const population = toNumber(level.boltzmann_population);
+              const x = pad.left + index * xStep + xStep / 2;
+              const y = yScale(energy);
+              return (
+                <g key={`${String(level.state ?? index)}-${index}`} onMouseEnter={() => setHovered(level)} onMouseLeave={() => setHovered(null)}>
+                  <line x1={x - Math.min(14, xStep * 0.35)} x2={x + Math.min(14, xStep * 0.35)} y1={y} y2={y} className="casscf-level-line" />
+                  {population !== null && <circle cx={x} cy={y - 10} r={Math.max(3, Math.min(9, population * 22))} className="casscf-population-dot" />}
+                </g>
+              );
+            })}
+            <text x={width / 2} y={height - 12} textAnchor="middle" className="axis-title">QDPT level order</text>
+            <text x={16} y={24} className="axis-title">cm-1</text>
+          </svg>
+          <div className="plot-readout">
+            {hovered
+              ? `Level ${shortValue(hovered.state)}: ${formatNumber(hovered.energy_cm_1 ?? hovered["energy_cm-1"] ?? hovered.energy_cm1 ?? hovered.energy_cm, 3, " cm-1")}, Boltzmann ${formatNumber(hovered.boltzmann_population, 4, "")}`
+              : "Horizontal ticks are QDPT levels; dot size follows parsed Boltzmann population when available."}
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function CasscfPopulationPassPanel({ casscf }: { casscf: Record<string, unknown> }) {
+  const populationAnalyses = getArray(casscf.population_analyses).filter(isPlainObject);
+  if (!populationAnalyses.length) {
+    return null;
+  }
+  const labels = populationAnalyses.map((analysis, index) => String(analysis.label ?? analysis.context ?? `population_analysis_${index + 1}`));
+  const corrected = labels.filter((label) => /qd|corrected|state|specific|density/i.test(label));
+  const sections = Array.from(new Set(populationAnalyses.flatMap((analysis) => getArray(analysis.sections).map(String)))).filter(Boolean);
+  return (
+    <section className="casscf-detail-panel casscf-population-pass-panel">
+      <div className="panel-headline">
+        <div>
+          <p className="eyebrow">Density provenance</p>
+          <h3>Population-analysis passes</h3>
+        </div>
+        <span className="quiet-text">CASSCF/NEVPT2 files often print several density contexts; the GUI should make those passes explicit.</span>
+      </div>
+      <div className="casscf-summary-grid compact">
+        <article className="metric-card">
+          <span>Total passes</span>
+          <strong>{populationAnalyses.length}</strong>
+          <small>{sections.length ? sections.join(", ") : "sections inferred from labels"}</small>
+        </article>
+        <article className="metric-card">
+          <span>Corrected/state-specific</span>
+          <strong>{corrected.length}</strong>
+          <small>labels mentioning QD, corrected, state, or density</small>
+        </article>
+      </div>
+      <div className="casscf-pass-list">
+        {labels.slice(0, 28).map((label, index) => (
+          <span key={`${label}-${index}`} className={/qd|corrected|state|specific|density/i.test(label) ? "casscf-pass-chip important" : "casscf-pass-chip"}>
+            {label}
+          </span>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 type CasscfActiveOrbital = {
   index: number;
   energyEh: number | null;
@@ -2517,6 +2926,101 @@ function getRecord(value: unknown): Record<string, unknown> {
 
 function getArray(value: unknown): unknown[] {
   return Array.isArray(value) ? value : [];
+}
+
+function firstNumber(...values: unknown[]): number | null {
+  for (const value of values) {
+    const numeric = toNumber(value);
+    if (numeric !== null) {
+      return numeric;
+    }
+  }
+  return null;
+}
+
+function buildCasscfMacroPoints(casscf: Record<string, unknown>): CasscfMacroPoint[] {
+  const convergence = getRecord(casscf.convergence);
+  const rows = getArray(convergence.macro_iterations).filter(isPlainObject);
+  const energies = rows.map((row) => toNumber(row.energy_Eh) ?? toNumber(row.energy_eh)).filter((value): value is number => value !== null);
+  const finalEnergy = energies.length ? energies[energies.length - 1] : null;
+  return rows.map((row, index) => {
+    const occupations = getArray(row.active_occupations).map(toNumber).filter((value): value is number => value !== null);
+    const energyEh = toNumber(row.energy_Eh) ?? toNumber(row.energy_eh);
+    return {
+      iteration: toNumber(row.macro_iteration) ?? index + 1,
+      energyEh,
+      relEnergyMilliEh: energyEh !== null && finalEnergy !== null ? (energyEh - finalEnergy) * 1000 : null,
+      deltaEnergyMicroEh: toNumber(row.delta_energy_Eh) !== null ? toNumber(row.delta_energy_Eh)! * 1_000_000 : null,
+      gradientNorm: toNumber(row.gradient_norm),
+      maxGradient: toNumber(row.max_gradient),
+      gapExtAct: toNumber(row.energy_gap_ext_act_Eh),
+      gapActInt: toNumber(row.energy_gap_act_int_Eh),
+      occupationSpread: occupations.length ? Math.max(...occupations) - Math.min(...occupations) : null,
+      rotationLabel: String(row.rotation_label ?? ""),
+      orbitalUpdate: String(row.orbital_update ?? row.phase ?? ""),
+      densityStatus: String(row.density_convergence_status ?? (row.all_densities_recomputed ? "all_densities_recomputed" : ""))
+    };
+  });
+}
+
+function buildCasscfStateComparisons(casscf: Record<string, unknown>): CasscfStateComparison[] {
+  const casscfRows = getArray(casscf.state_assignments).filter(isPlainObject);
+  const nevpt2 = getRecord(casscf.nevpt2);
+  const nevpt2Rows = getArray(nevpt2.state_assignments).filter(isPlainObject);
+  const qdRows = getArray(getRecord(nevpt2.qd_nevpt2).state_assignments).filter(isPlainObject);
+  const nevMap = new Map<string, Record<string, unknown>>();
+  const qdMap = new Map<string, Record<string, unknown>>();
+  nevpt2Rows.forEach((row, index) => nevMap.set(casscfStateKey(row, index), row));
+  qdRows.forEach((row, index) => qdMap.set(casscfStateKey(row, index), row));
+  const sourceRows = casscfRows.length ? casscfRows : (nevpt2Rows.length ? nevpt2Rows : qdRows);
+  return sourceRows.map((row, index) => {
+    const key = casscfStateKey(row, index);
+    const nev = nevMap.get(key) ?? nevpt2Rows[index] ?? {};
+    const qd = qdMap.get(key) ?? qdRows[index] ?? {};
+    const dominant = getDominantConfiguration(row);
+    const nevEnergy = firstNumber(nev.delta_energy_eV, nev.transition_energy_eV, nev.energy_eV);
+    const qdEnergy = firstNumber(qd.delta_energy_eV, qd.transition_energy_eV, qd.energy_eV);
+    const casscfEnergy = firstNumber(row.delta_energy_eV, row.transition_energy_eV, row.energy_eV);
+    const root = toNumber(row.root ?? nev.root ?? qd.root);
+    const multiplicity = toNumber(row.multiplicity ?? nev.multiplicity ?? qd.multiplicity);
+    const state = toNumber(row.state ?? nev.state ?? qd.state);
+    return {
+      key,
+      label: `${multiplicity !== null ? `M${multiplicity} ` : ""}${root !== null ? `root ${root}` : `state ${state ?? index}`}`,
+      state,
+      root,
+      multiplicity,
+      occupation: String(dominant.occupation_string ?? getDominantConfiguration(nev).occupation_string ?? getDominantConfiguration(qd).occupation_string ?? "unknown"),
+      weight: firstNumber(dominant.weight, getDominantConfiguration(nev).weight, getDominantConfiguration(qd).weight),
+      casscfEv: casscfEnergy,
+      nevpt2Ev: nevEnergy,
+      qdEv: qdEnergy,
+      correctionEv: firstNumber(nev.transition_correction_eV, nevEnergy !== null && casscfEnergy !== null ? nevEnergy - casscfEnergy : null),
+      qdShiftEv: qdEnergy !== null && nevEnergy !== null ? qdEnergy - nevEnergy : null
+    };
+  });
+}
+
+function casscfStateKey(row: Record<string, unknown>, index: number) {
+  const state = toNumber(row.state);
+  if (state !== null) {
+    return `state-${state}`;
+  }
+  const multiplicity = toNumber(row.multiplicity);
+  const root = toNumber(row.root);
+  if (multiplicity !== null || root !== null) {
+    return `m-${multiplicity ?? "x"}-r-${root ?? "x"}`;
+  }
+  return `row-${index}`;
+}
+
+function getDominantConfiguration(row: Record<string, unknown>) {
+  const dominant = getRecord(row.dominant_configuration);
+  if (Object.keys(dominant).length) {
+    return dominant;
+  }
+  const configs = getArray(row.configurations).filter(isPlainObject);
+  return getRecord(configs[0]);
 }
 
 function buildCasscfActiveOrbitals(casscf: Record<string, unknown> | null): CasscfActiveOrbital[] {
@@ -3191,7 +3695,7 @@ function buildDomainItems(
   const populationCount = countMatches(["population", "mulliken", "loewdin", "mayer", "hirshfeld", "mbis", "chelpg", "nbo", "npa"]);
   const densityCount = countMatches(["density_analysis"]);
   const excitedCount = countMatches(["tddft", "cis", "excited", "eom", "steom", "rocis", "states"]);
-  const multirefCount = countMatches(["casscf", "nevpt2", "qd", "soc"]);
+  const multirefCount = Math.max(countMatches(["casscf", "nevpt2", "qd", "soc"]), countCasscfWorkbenchPanels(properties));
   const coupledCount = countMatches(["coupled_cluster"]);
   const eprCount = countMatches(["epr"]);
   const conformerCount = countMatches(["goat"]);
@@ -3226,6 +3730,30 @@ function buildDomainItems(
     ...scientificDomains,
     ...utilityDomains
   ];
+}
+
+function countCasscfWorkbenchPanels(properties: PropertiesResponse | null) {
+  const casscf = getCasscfObject(properties);
+  if (!casscf) {
+    return 0;
+  }
+  let count = 0;
+  if (buildCasscfActiveOrbitals(casscf).length || Object.keys(getRecord(casscf.summary)).length) {
+    count += 1;
+  }
+  if (getArray(getRecord(casscf.convergence).macro_iterations).length > 1) {
+    count += 1;
+  }
+  if (buildCasscfStateComparisons(casscf).some((row) => row.nevpt2Ev !== null || row.qdEv !== null)) {
+    count += 1;
+  }
+  if (getArray(getRecord(casscf.relativistic).qdpt_blocks).length) {
+    count += 1;
+  }
+  if (getArray(casscf.population_analyses).length) {
+    count += 1;
+  }
+  return count;
 }
 
 function keyMatchesView(key: string, view: WorkspaceView) {

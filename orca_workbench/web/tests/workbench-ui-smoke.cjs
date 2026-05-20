@@ -52,6 +52,7 @@ async function main() {
   checks.hasSpectraPanel = checks.domainTexts.some((text) => text.includes("Spectra"));
   checks.hasTablesPanel = checks.domainTexts.some((text) => text.includes("Tables"));
   checks.hasRawPanel = checks.domainTexts.some((text) => text.includes("Raw data"));
+  checks.isCasscfSample = /casscf|nevpt2/i.test(samplePath);
   checks.summaryFields = await page.locator(".summary-field").count();
   await page.screenshot({ path: path.join(screenshotDir, "workbench-redesign-overview.png"), fullPage: false });
 
@@ -176,7 +177,16 @@ async function main() {
     checks.casscfActiveRows = await page.locator(".casscf-active-row").count();
     checks.casscfConfigCards = await page.locator(".casscf-config-card").count();
     checks.casscfActiveSvg = await page.locator(".casscf-active-svg").count();
+    checks.casscfConvergenceSvg = await page.locator(".casscf-convergence-svg").count();
+    checks.casscfNevpt2Panels = await page.locator(".casscf-nevpt2-panel").count();
+    checks.casscfNevpt2Dots = await page.locator(".casscf-dot").count();
+    checks.casscfRelativisticPanels = await page.locator(".casscf-relativistic-panel").count();
+    checks.casscfLevelSvg = await page.locator(".casscf-level-svg").count();
+    checks.casscfPopulationPassPanels = await page.locator(".casscf-population-pass-panel").count();
+    checks.casscfPassChips = await page.locator(".casscf-pass-chip").count();
     await page.screenshot({ path: path.join(screenshotDir, "workbench-casscf-active-space.png"), fullPage: false });
+    await page.locator(".casscf-nevpt2-panel").scrollIntoViewIfNeeded().catch(() => undefined);
+    await page.screenshot({ path: path.join(screenshotDir, "workbench-casscf-nevpt2-panel.png"), fullPage: false });
   }
 
   await page.locator(".domain-button").filter({ hasText: "Tables" }).click();
@@ -248,6 +258,20 @@ async function main() {
   }
   if (checks.hasCasscfPanel && (checks.casscfActiveCards < 5 || checks.casscfActiveRows < 1 || checks.casscfConfigCards < 1 || checks.casscfActiveSvg < 1)) {
     process.exit(5);
+  }
+  if (
+    checks.isCasscfSample &&
+    (
+      checks.casscfConvergenceSvg < 1 ||
+      checks.casscfNevpt2Panels < 1 ||
+      checks.casscfNevpt2Dots < 6 ||
+      checks.casscfRelativisticPanels < 1 ||
+      checks.casscfLevelSvg < 1 ||
+      checks.casscfPopulationPassPanels < 1 ||
+      checks.casscfPassChips < 3
+    )
+  ) {
+    process.exit(55);
   }
   if (
     checks.hasSpectraPanel &&

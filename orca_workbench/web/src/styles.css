@@ -794,17 +794,27 @@ textarea {
   gap: 14px;
 }
 
-.casscf-active-space {
+.casscf-active-space,
+.casscf-detail-panel {
   padding: 14px;
   border: 1px solid #c7d9f0;
   border-radius: 14px;
   background: linear-gradient(180deg, #fbfdff 0%, #f4f8ff 100%);
 }
 
+.casscf-detail-panel {
+  border-color: #d5dfec;
+  background: #ffffff;
+}
+
 .casscf-summary-grid {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 10px;
+}
+
+.casscf-summary-grid.compact {
+  grid-template-columns: repeat(auto-fit, minmax(158px, 1fr));
 }
 
 .active-space-card {
@@ -907,6 +917,168 @@ textarea {
   color: var(--muted);
   font-size: 0.8rem;
   font-weight: 900;
+}
+
+.casscf-convergence-chart,
+.casscf-nevpt2-chart,
+.casscf-level-chart {
+  overflow-x: auto;
+}
+
+.casscf-convergence-svg,
+.casscf-nevpt2-svg,
+.casscf-level-svg {
+  width: 100%;
+  min-width: 760px;
+  min-height: 310px;
+}
+
+.casscf-gradient-bar {
+  fill: rgba(20, 184, 166, 0.28);
+  stroke: rgba(15, 118, 110, 0.35);
+}
+
+.casscf-energy-line {
+  stroke: #1d4ed8;
+  stroke-width: 3.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.casscf-energy-dot {
+  fill: #ffffff;
+  stroke: #1d4ed8;
+  stroke-width: 3;
+  cursor: pointer;
+}
+
+.casscf-shift-line {
+  stroke: #94a3b8;
+  stroke-width: 2;
+  stroke-dasharray: 4 4;
+}
+
+.casscf-dot {
+  stroke: #ffffff;
+  stroke-width: 2;
+  cursor: pointer;
+}
+
+.casscf-dot-cas {
+  fill: #2563eb;
+}
+
+.casscf-dot-nevpt2 {
+  fill: #f59e0b;
+}
+
+.casscf-dot-qd {
+  fill: #10b981;
+}
+
+.casscf-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  color: #475569;
+  font-size: 0.8rem;
+  font-weight: 900;
+}
+
+.casscf-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.legend-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+}
+
+.legend-dot.cas {
+  background: #2563eb;
+}
+
+.legend-dot.nevpt2 {
+  background: #f59e0b;
+}
+
+.legend-dot.qd {
+  background: #10b981;
+}
+
+.casscf-state-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+}
+
+.casscf-state-card {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid #d5dfec;
+  border-radius: 10px;
+  background: #f8fbff;
+}
+
+.casscf-state-card strong {
+  color: #15384a;
+}
+
+.casscf-state-card code {
+  color: #7c2d12;
+  font-size: 1rem;
+  font-weight: 900;
+}
+
+.casscf-state-card span,
+.casscf-state-card small {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 900;
+}
+
+.casscf-level-line {
+  stroke: #7c3aed;
+  stroke-width: 3;
+  stroke-linecap: round;
+  cursor: pointer;
+}
+
+.casscf-population-dot {
+  fill: rgba(245, 158, 11, 0.65);
+  stroke: #ffffff;
+  stroke-width: 1.5;
+}
+
+.casscf-pass-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.casscf-pass-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 5px 9px;
+  border: 1px solid #d5dfec;
+  border-radius: 999px;
+  background: #f8fbff;
+  color: #475569;
+  font-size: 0.78rem;
+  font-weight: 900;
+}
+
+.casscf-pass-chip.important {
+  border-color: #fdba74;
+  background: #fff7ed;
+  color: #9a3412;
 }
 
 .metric-card {
