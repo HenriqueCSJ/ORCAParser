@@ -68,8 +68,13 @@ async function main() {
     await page.locator(".orbitals-workspace").waitFor({ state: "visible", timeout: 10000 });
     checks.orbitalCharts = await page.locator(".orbital-svg").count();
     checks.orbitalScalarBars = await page.locator(".scalar-bar-row").count();
-    await page.locator(".range-control input").fill("8");
+    await page.getByRole("spinbutton", { name: "Window" }).fill("8");
+    await page.getByRole("combobox", { name: "Units" }).selectOption("hartree");
+    checks.orbitalMetricCards = await page.locator(".metric-card").count();
     checks.orbitalWindowReadout = await page.locator(".plot-readout").first().innerText();
+    const orbitalSvgDownload = page.waitForEvent("download");
+    await page.getByRole("button", { name: "Export SVG", exact: true }).click();
+    checks.orbitalSvgDownloadName = (await orbitalSvgDownload).suggestedFilename();
     await page.screenshot({ path: path.join(screenshotDir, "workbench-redesign-orbitals.png"), fullPage: false });
   }
 
@@ -176,7 +181,10 @@ async function main() {
   if (checks.hasSpectraPanel && checks.spectrumCharts < 1) {
     process.exit(6);
   }
-  if (checks.orbitalWindowReadout !== undefined && !checks.orbitalWindowReadout.includes("102")) {
+  if (
+    checks.orbitalWindowReadout !== undefined &&
+    (!checks.orbitalWindowReadout.includes("102") || checks.orbitalMetricCards < 5 || checks.orbitalSvgDownloadName !== "orca-frontier-orbitals.svg")
+  ) {
     process.exit(60);
   }
   if (checks.coordinateCharts !== undefined && (checks.coordinateCharts < 1 || checks.atomDots < 3 || checks.geometryProjection !== "XZ")) {

@@ -75,11 +75,44 @@ type NumericPoint = {
   value: number;
 };
 
+type EnergyUnit = "eV" | "hartree" | "kcal/mol" | "kj/mol";
+
+type SpinChannel = "restricted" | "alpha" | "beta";
+
 type OrbitalPoint = {
   index: number;
   label: string;
   energy: number;
+  energyEh: number | null;
   occupation: number | null;
+  spin: SpinChannel;
+  irrep: string | null;
+};
+
+type OrbitalGroup = {
+  orbitals: OrbitalPoint[];
+  meanEnergyEv: number;
+  occupied: boolean;
+  labels: string[];
+  irreps: string[];
+};
+
+type OrbitalSetAnalysis = {
+  spin: SpinChannel | "combined";
+  orbitals: OrbitalPoint[];
+  frontier: OrbitalPoint[];
+  groups: OrbitalGroup[];
+  homo: OrbitalPoint | null;
+  lumo: OrbitalPoint | null;
+  gapEv: number | null;
+};
+
+const HARTREE_TO_EV = 27.211386245988;
+const ENERGY_UNITS: Record<EnergyUnit, { label: string; factor: number; decimals: number }> = {
+  eV: { label: "eV", factor: 1, decimals: 4 },
+  hartree: { label: "Eh", factor: 1 / HARTREE_TO_EV, decimals: 6 },
+  "kcal/mol": { label: "kcal/mol", factor: 23.06054, decimals: 2 },
+  "kj/mol": { label: "kJ/mol", factor: 96.4853, decimals: 2 }
 };
 
 function App() {
@@ -1002,7 +1035,14 @@ function OrbitalsWorkspace({
   summary: WorkbenchSummary | null;
 }) {
   const [windowSize, setWindowSize] = useState(30);
+  const [energyUnit, setEnergyUnit] = useState<EnergyUnit>("eV");
+  const [occupationCutoff, setOccupationCutoff] = useState(0.1);
+  const [degeneracyTolerance, setDegeneracyTolerance] = useState(0.05);
   const orbitals = useMemo(() => findOrbitalPoints(tables), [tables]);
+  const analysis = useMemo(
+    () => analyzeOrbitalSets(orbitals, windowSize, occupationCutoff, degeneracyTolerance),
+    [orbitals, windowSize, occupationCutoff, degeneracyTolerance]
+  );
   const orbitalScalars = properties?.properties.orbital_energies
     ? collectNumericPoints(properties.properties.orbital_energies, "orbital_energies")
     : [];
@@ -1020,14 +1060,35 @@ function OrbitalsWorkspace({
           <div className="canvas-toolbar">
             <div>
               <p className="eyebrow">Frontier orbital window</p>
-              <h3>{Math.min(windowSize, orbitals.length)} below and above the frontier</h3>
+              <h3>{analysis.spinResolved ? "Alpha and beta spin channels" : "Restricted orbital channel"}</h3>
             </div>
-            <label className="range-control">
-              <span>Window</span>
-              <input type="number" min={3} max={80} value={windowSize} onChange={(event) => setWindowSize(Math.max(3, Number(event.target.value) || 30))} />
-            </label>
+            <div className="orbital-control-grid">
+              <label className="range-control">
+                <span>Window</span>
+                <input type="number" min={3} max={80} value={windowSize} onChange={(event) => setWindowSize(Math.max(3, Number(event.target.value) || 30))} />
+              </label>
+              <label className="range-control">
+                <span>Occ cutoff</span>
+                <input type="number" min={0} max={2} step={0.01} value={occupationCutoff} onChange={(event) => setOccupationCutoff(clamp(Number(event.target.value) || 0, 0, 2))} />
+              </label>
+              <label className="range-control">
+                <span>Degenerate</span>
+                <input type="number" min={0} max={0.5} step={0.01} value={degeneracyTolerance} onChange={(event) => setDegeneracyTolerance(clamp(Number(event.target.value) || 0, 0, 0.5))} />
+              </label>
+              <label className="range-control">
+                <span>Units</span>
+                <select value={energyUnit} onChange={(event) => setEnergyUnit(event.target.value as EnergyUnit)}>
+                  <option value="eV">eV</option>
+                  <option value="hartree">Hartree</option>
+                  <option value="kcal/mol">kcal/mol</option>
+                  <option value="kj/mol">kJ/mol</option>
+                </select>
+              </label>
+              <button type="button" onClick={() => downloadSvgElement("orbitalPlot", "orca-frontier-orbitals.svg")}>Export SVG</button>
+            </div>
           </div>
-          <OrbitalLadder orbitals={orbitals} windowSize={windowSize} />
+          <OrbitalMetricCards analysis={analysis} unit={energyUnit} />
+          <OrbitalLadder analysis={analysis} unit={energyUnit} />
         </>
       ) : (
         <div className="plot-workspace">
@@ -1039,72 +1100,198 @@ function OrbitalsWorkspace({
   );
 }
 
-function OrbitalLadder({ orbitals, windowSize }: { orbitals: OrbitalPoint[]; windowSize: number }) {
-  const [hovered, setHovered] = useState<OrbitalPoint | null>(null);
-  const sorted = [...orbitals].sort((a, b) => a.index - b.index);
-  const homoIndex = sorted.reduce<number | null>((current, orbital, idx) => {
-    if ((orbital.occupation ?? 0) > 0.5) {
-      return idx;
-    }
-    return current;
-  }, null);
-  const center = homoIndex ?? Math.floor(sorted.length / 2);
-  const start = Math.max(0, center - windowSize + 1);
-  const end = Math.min(sorted.length, center + windowSize + 1);
-  const visible = sorted.slice(start, end);
-  const energies = visible.map((orbital) => orbital.energy);
+function OrbitalMetricCards({ analysis, unit }: { analysis: ReturnType<typeof analyzeOrbitalSets>; unit: EnergyUnit }) {
+  const primary = analysis.combined;
+  const descriptors = primary ? calculateOrbitalDescriptors(primary) : null;
+  const formatEnergy = (value: number | null | undefined) => value === null || value === undefined ? "N/A" : formatEnergyValue(value, unit);
+  return (
+    <div className="orbital-metric-grid">
+      <article className="metric-card">
+        <span>Frontier limits</span>
+        <strong>{formatEnergy(primary?.homo?.energy)} / {formatEnergy(primary?.lumo?.energy)}</strong>
+        <small>HOMO / LUMO</small>
+      </article>
+      <article className="metric-card">
+        <span>HOMO-LUMO gap</span>
+        <strong>{formatEnergy(primary?.gapEv)}</strong>
+        <small>Global frontier separation</small>
+      </article>
+      <article className="metric-card">
+        <span>Chemical hardness</span>
+        <strong>{formatEnergy(descriptors?.hardnessEv)}</strong>
+        <small>eta = 0.5 x gap</small>
+      </article>
+      <article className="metric-card">
+        <span>Chemical potential</span>
+        <strong>{formatEnergy(descriptors?.potentialEv)}</strong>
+        <small>mu = 0.5 x (HOMO + LUMO)</small>
+      </article>
+      <article className="metric-card">
+        <span>Global softness</span>
+        <strong>{descriptors?.softnessEv === null || descriptors?.softnessEv === undefined ? "N/A" : `${descriptors.softnessEv.toFixed(4)} 1/eV`}</strong>
+        <small>S = 1 / gap</small>
+      </article>
+    </div>
+  );
+}
+
+function OrbitalLadder({ analysis, unit }: { analysis: ReturnType<typeof analyzeOrbitalSets>; unit: EnergyUnit }) {
+  const [hovered, setHovered] = useState<OrbitalGroup | null>(null);
+  const visibleGroups = analysis.channels.flatMap((channel) => channel.groups);
+  const visibleOrbitals = visibleGroups.flatMap((group) => group.orbitals);
+  const visibleRange = compactOrbitalRangeLabel(visibleOrbitals);
+  const energies = visibleOrbitals.map((orbital) => toDisplayEnergy(orbital.energy, unit));
   const minEnergy = Math.min(...energies);
   const maxEnergy = Math.max(...energies);
-  const span = maxEnergy - minEnergy || 1;
-  const lumoIndex = homoIndex === null ? null : Math.min(homoIndex + 1, sorted.length - 1);
+  const padding = Math.max((maxEnergy - minEnergy) * 0.08, Math.abs(maxEnergy || minEnergy || 1) * 0.01);
+  const yMin = minEnergy - padding;
+  const yMax = maxEnergy + padding;
+  const span = yMax - yMin || 1;
   const width = 1040;
-  const height = 520;
-  const pad = { left: 88, right: 44, top: 34, bottom: 44 };
-  const yScale = (energy: number) => height - pad.bottom - ((energy - minEnergy) / span) * (height - pad.top - pad.bottom);
+  const height = 580;
+  const pad = { left: 92, right: 62, top: 54, bottom: 52 };
+  const yScale = (energyEv: number) => {
+    const energy = toDisplayEnergy(energyEv, unit);
+    return height - pad.bottom - ((energy - yMin) / span) * (height - pad.top - pad.bottom);
+  };
+  const channels = analysis.channels.length > 1
+    ? [
+        { channel: analysis.channels[0], center: width * 0.32, laneWidth: 275, side: "left" as const },
+        { channel: analysis.channels[1], center: width * 0.68, laneWidth: 275, side: "right" as const }
+      ]
+    : [
+        { channel: analysis.channels[0], center: width * 0.52, laneWidth: 430, side: "both" as const }
+      ];
+  const ticks = Array.from({ length: 8 }, (_, index) => yMin + (index / 7) * span);
   return (
     <div className="primary-chart">
-      <svg className="orbital-svg" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Orbital energy ladder">
+      <svg id="orbitalPlot" className="orbital-svg" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Orbital energy ladder">
         <rect x="0" y="0" width={width} height={height} className="chart-bg" />
         <line x1={pad.left} y1={pad.top} x2={pad.left} y2={height - pad.bottom} className="axis-line" />
-        {visible.map((orbital, localIndex) => {
-          const y = yScale(orbital.energy);
-          const occupied = (orbital.occupation ?? 0) > 0.5;
-          const isHomo = homoIndex !== null && orbital.index === sorted[homoIndex]?.index;
-          const isLumo = lumoIndex !== null && orbital.index === sorted[lumoIndex]?.index;
-          const frontier = isHomo || isLumo;
-          const shouldLabel =
-            frontier ||
-            localIndex === 0 ||
-            localIndex === visible.length - 1 ||
-            (visible.length <= 18 && localIndex % 2 === 0);
-          const label = isHomo ? `HOMO ${orbital.label}` : isLumo ? `LUMO ${orbital.label}` : orbital.label;
+        {ticks.map((tick) => {
+          const y = height - pad.bottom - ((tick - yMin) / span) * (height - pad.top - pad.bottom);
           return (
-            <g key={orbital.label} onMouseEnter={() => setHovered(orbital)} onMouseLeave={() => setHovered(null)}>
-              <line
-                x1={occupied ? 245 : 585}
-                x2={occupied ? 500 : 840}
-                y1={y}
-                y2={y}
-                className={`orbital-level ${occupied ? "occupied" : "virtual"} ${frontier ? "frontier" : ""}`}
-              />
-              {shouldLabel && (
-                <text x={occupied ? 220 : 865} y={y + 4} textAnchor={occupied ? "end" : "start"} className={frontier ? "axis-label frontier-label" : "axis-label"}>
-                  {label}
-                </text>
-              )}
+            <g key={tick}>
+              <line x1={pad.left} x2={width - pad.right} y1={y} y2={y} className="grid-line" />
+              <text x={pad.left - 10} y={y + 4} textAnchor="end" className="axis-label">{tick.toFixed(ENERGY_UNITS[unit].decimals > 3 ? 2 : 1)}</text>
             </g>
           );
         })}
-        <text x={372} y={height - 12} textAnchor="middle" className="axis-title">occupied</text>
-        <text x={712} y={height - 12} textAnchor="middle" className="axis-title">virtual</text>
-        <text x={14} y={24} className="axis-title">energy / eV</text>
+        {channels.map(({ channel, center, laneWidth, side }) => (
+          <g key={channel.spin}>
+            <text x={center} y={34} textAnchor="middle" className={`orbital-channel-label ${channel.spin}`}>
+              {spinLabel(channel.spin)}
+            </text>
+            {buildOrbitalGroupLayout(channel, yScale).map(({ group, y, showLabel }) => (
+                <OrbitalGroupMark
+                  key={`${channel.spin}-${group.labels.join("-")}-${group.meanEnergyEv}`}
+                  group={group}
+                  channel={channel}
+                  center={center}
+                  laneWidth={laneWidth}
+                  labelSide={side}
+                  unit={unit}
+                  y={y}
+                  showLabel={showLabel}
+                  onHover={setHovered}
+                />
+              ))}
+            {channel.homo && channel.lumo && channel.gapEv !== null && (
+              <GapPointer
+                x={center}
+                yHomo={yScale(channel.homo.energy)}
+                yLumo={yScale(channel.lumo.energy)}
+                gapEv={channel.gapEv}
+                unit={unit}
+              />
+            )}
+          </g>
+        ))}
+        <text transform={`rotate(-90 ${22} ${height / 2})`} x={22} y={height / 2} textAnchor="middle" className="axis-title">energy / {ENERGY_UNITS[unit].label}</text>
       </svg>
       <div className="plot-readout">
         {hovered
-          ? `${hovered.label}: ${shortValue(hovered.energy)} eV, occ=${hovered.occupation === null ? "unknown" : shortValue(hovered.occupation)}`
-          : `Showing orbitals ${visible[0]?.label ?? ""} to ${visible[visible.length - 1]?.label ?? ""}.`}
+          ? `${hovered.labels.join(", ")}: ${formatEnergyValue(hovered.meanEnergyEv, unit)}, occ=${hovered.orbitals[0]?.occupation === null ? "unknown" : shortValue(hovered.orbitals[0]?.occupation)}${hovered.irreps.length ? `, ${hovered.irreps.join("/")}` : ""}`
+          : `Showing ${visibleOrbitals.length} frontier orbital(s)${visibleRange ? ` (${visibleRange})` : ""}. Degenerate groups are collapsed when they share occupancy and energy within the selected tolerance.`}
       </div>
     </div>
+  );
+}
+
+function OrbitalGroupMark({
+  group,
+  channel,
+  center,
+  laneWidth,
+  labelSide,
+  unit,
+  y,
+  showLabel,
+  onHover
+}: {
+  group: OrbitalGroup;
+  channel: OrbitalSetAnalysis;
+  center: number;
+  laneWidth: number;
+  labelSide: "left" | "right" | "both";
+  unit: EnergyUnit;
+  y: number;
+  showLabel: boolean;
+  onHover: (group: OrbitalGroup | null) => void;
+}) {
+  const isHomo = channel.homo ? group.orbitals.some((orbital) => sameOrbital(orbital, channel.homo)) : false;
+  const isLumo = channel.lumo ? group.orbitals.some((orbital) => sameOrbital(orbital, channel.lumo)) : false;
+  const frontier = isHomo || isLumo;
+  const lineCount = Math.min(group.orbitals.length, 6);
+  const segmentWidth = lineCount === 1 ? laneWidth : (laneWidth * 0.74) / lineCount;
+  const gap = lineCount === 1 ? 0 : (laneWidth * 0.22) / Math.max(lineCount - 1, 1);
+  const firstX = center - laneWidth / 2;
+  const labels = compactOrbitalGroupLabel(group);
+  const energyLabel = formatEnergyValue(group.meanEnergyEv, unit);
+  return (
+    <g
+      className={`orbital-group ${frontier ? "frontier" : ""}`}
+      onMouseEnter={() => onHover(group)}
+      onMouseLeave={() => onHover(null)}
+    >
+      {Array.from({ length: lineCount }, (_, index) => {
+        const x1 = lineCount === 1 ? firstX : firstX + index * (segmentWidth + gap);
+        const x2 = lineCount === 1 ? firstX + laneWidth : x1 + segmentWidth;
+        return (
+          <line
+            key={`${labels}-${index}`}
+            x1={x1}
+            x2={x2}
+            y1={y}
+            y2={y}
+            className={`orbital-level ${group.occupied ? "occupied" : "virtual"} ${frontier ? "frontier" : ""}`}
+          />
+        );
+      })}
+      {showLabel && (labelSide === "left" || labelSide === "both") && (
+        <text x={firstX - 10} y={y + 4} textAnchor="end" className={frontier ? "axis-label frontier-label" : "axis-label"}>
+          {frontier ? `${isHomo ? "HOMO " : "LUMO "}${labels}` : labels}
+        </text>
+      )}
+      {showLabel && (labelSide === "right" || labelSide === "both") && (
+        <text x={firstX + laneWidth + 10} y={y + 4} textAnchor="start" className={frontier ? "axis-label frontier-label" : "axis-label"}>
+          {labelSide === "both" ? energyLabel : labels}
+        </text>
+      )}
+    </g>
+  );
+}
+
+function GapPointer({ x, yHomo, yLumo, gapEv, unit }: { x: number; yHomo: number; yLumo: number; gapEv: number; unit: EnergyUnit }) {
+  const textY = (yHomo + yLumo) / 2;
+  return (
+    <g className="gap-pointer">
+      <line x1={x} x2={x} y1={yHomo - 5} y2={yLumo + 5} />
+      <path d={`M ${x - 5} ${yHomo - 10} L ${x} ${yHomo - 1} L ${x + 5} ${yHomo - 10}`} />
+      <path d={`M ${x - 5} ${yLumo + 10} L ${x} ${yLumo + 1} L ${x + 5} ${yLumo + 10}`} />
+      <rect x={x - 68} y={textY - 14} width={136} height={28} rx={7} />
+      <text x={x} y={textY + 4} textAnchor="middle">Gap {formatEnergyValue(gapEv, unit)}</text>
+    </g>
   );
 }
 
@@ -2255,47 +2442,284 @@ function isOrbitalTable(table: TableDataset) {
 }
 
 function getOrbitalColumns(table: TableDataset) {
-  const energy = findColumn(table.columns, ["energy_ev", "e(ev)", "e_ev", "energy"]);
+  const energyEv = findColumn(table.columns, ["energy_ev", "e(ev)", "e_ev", "energyev"]);
+  const energyEh = findColumn(table.columns, ["energy_eh", "e(eh)", "e_eh", "energyeh", "hartree"]);
+  const energy = energyEv ?? energyEh ?? findColumn(table.columns, ["energy"]);
   const occupation = findColumn(table.columns, ["occ", "occupation"]);
   if (!energy) {
     return null;
   }
   return {
     energy,
+    energyEv,
+    energyEh,
     occupation,
-    index: findColumn(table.columns, ["no", "index", "orbital", "mo"])
+    index: findColumn(table.columns, ["no", "index", "orbital", "mo"]),
+    spin: findExactColumn(table.columns, ["spin", "spin_channel"]),
+    irrep: findExactColumn(table.columns, ["irrep", "symmetry"])
   };
 }
 
 function findOrbitalPoints(tables: TableDataset[]) {
-  for (const table of tables) {
-    if (!isOrbitalTable(table)) {
-      continue;
-    }
+  const preferredTables = tables.filter((table) => {
+    const context = `${table.title} ${table.path} ${table.propertyKey}`.toLowerCase();
+    return Boolean(getOrbitalColumns(table)) && /orbital_energies|orbital energies|alpha_orbitals|beta_orbitals|orbitals/.test(context) && !/transition|nto|nbo|nao/.test(context);
+  });
+  const sourceTables = preferredTables.length ? preferredTables : tables.filter((table) => Boolean(getOrbitalColumns(table)));
+  const firstKey = sourceTables[0]?.propertyKey;
+  const sameSourceTables = firstKey ? sourceTables.filter((table) => table.propertyKey === firstKey) : sourceTables;
+  const points = sameSourceTables.flatMap((table) => {
     const columns = getOrbitalColumns(table);
     if (!columns) {
-      continue;
+      return [];
     }
-    const points = table.rows
+    return table.rows
       .map((row, rowIndex) => {
-        const energy = toNumber(row[columns.energy]);
-        if (energy === null) {
+        const rawEnergy = toNumber(row[columns.energy]);
+        if (rawEnergy === null) {
           return null;
         }
+        const energyEv = columns.energy === columns.energyEh && columns.energyEv !== columns.energyEh
+          ? rawEnergy * HARTREE_TO_EV
+          : rawEnergy;
+        const energyEh = columns.energyEh ? toNumber(row[columns.energyEh]) : energyEv / HARTREE_TO_EV;
         const index = columns.index ? toNumber(row[columns.index]) ?? rowIndex + 1 : rowIndex + 1;
+        const spinValue = columns.spin ? row[columns.spin] : null;
         return {
           index,
           label: String(row[columns.index ?? ""] ?? index),
-          energy,
-          occupation: columns.occupation ? toNumber(row[columns.occupation]) : null
+          energy: energyEv,
+          energyEh,
+          occupation: columns.occupation ? toNumber(row[columns.occupation]) : null,
+          spin: inferOrbitalSpin(table, spinValue),
+          irrep: columns.irrep && row[columns.irrep] !== undefined ? String(row[columns.irrep]) : null
         };
       })
       .filter((point): point is OrbitalPoint => point !== null);
-    if (points.length >= 3) {
-      return points;
+  });
+  return dedupeOrbitalPoints(points);
+}
+
+function analyzeOrbitalSets(orbitals: OrbitalPoint[], windowSize: number, occupationCutoff: number, degeneracyToleranceEv: number) {
+  const spinResolved = orbitals.some((orbital) => orbital.spin === "alpha") && orbitals.some((orbital) => orbital.spin === "beta");
+  const alpha = buildOrbitalSetAnalysis("alpha", orbitals.filter((orbital) => orbital.spin === "alpha"), windowSize, occupationCutoff, degeneracyToleranceEv);
+  const beta = buildOrbitalSetAnalysis("beta", orbitals.filter((orbital) => orbital.spin === "beta"), windowSize, occupationCutoff, degeneracyToleranceEv);
+  const restrictedOrbitals = spinResolved ? orbitals : orbitals.filter((orbital) => orbital.spin !== "alpha" && orbital.spin !== "beta");
+  const restricted = buildOrbitalSetAnalysis("restricted", restrictedOrbitals.length ? restrictedOrbitals : orbitals, windowSize, occupationCutoff, degeneracyToleranceEv);
+  const channels = spinResolved ? [alpha, beta].filter((channel) => channel.orbitals.length) : [restricted];
+  const channelFrontiers = channels.flatMap((channel) => [channel.homo, channel.lumo].filter((orbital): orbital is OrbitalPoint => orbital !== null));
+  const globalHomo = channelFrontiers.filter((orbital) => isOccupiedOrbital(orbital, occupationCutoff)).sort((a, b) => b.energy - a.energy)[0] ?? restricted.homo;
+  const globalLumo = channelFrontiers.filter((orbital) => !isOccupiedOrbital(orbital, occupationCutoff)).sort((a, b) => a.energy - b.energy)[0] ?? restricted.lumo;
+  const combined = {
+    spin: "combined" as const,
+    orbitals,
+    frontier: channels.flatMap((channel) => channel.frontier),
+    groups: [],
+    homo: globalHomo ?? null,
+    lumo: globalLumo ?? null,
+    gapEv: globalHomo && globalLumo ? globalLumo.energy - globalHomo.energy : null
+  };
+  return { channels, combined, spinResolved };
+}
+
+function buildOrbitalSetAnalysis(
+  spin: SpinChannel,
+  orbitals: OrbitalPoint[],
+  windowSize: number,
+  occupationCutoff: number,
+  degeneracyToleranceEv: number
+): OrbitalSetAnalysis {
+  const sorted = [...orbitals].sort((a, b) => a.energy - b.energy || a.index - b.index);
+  const homoPosition = sorted.reduce<number | null>((current, orbital, index) => isOccupiedOrbital(orbital, occupationCutoff) ? index : current, null);
+  const lumoPosition = homoPosition === null
+    ? sorted.findIndex((orbital) => !isOccupiedOrbital(orbital, occupationCutoff))
+    : sorted.findIndex((orbital, index) => index > homoPosition && !isOccupiedOrbital(orbital, occupationCutoff));
+  const homo = homoPosition === null ? null : sorted[homoPosition] ?? null;
+  const lumo = lumoPosition < 0 ? null : sorted[lumoPosition] ?? null;
+  const center = homoPosition ?? Math.max(0, Math.floor(sorted.length / 2));
+  const start = Math.max(0, center - windowSize + 1);
+  const end = Math.min(sorted.length, (lumoPosition >= 0 ? lumoPosition : center) + windowSize);
+  const frontier = sorted.slice(start, end);
+  return {
+    spin,
+    orbitals: sorted,
+    frontier,
+    groups: groupDegenerateOrbitals(frontier, degeneracyToleranceEv, occupationCutoff),
+    homo,
+    lumo,
+    gapEv: homo && lumo ? lumo.energy - homo.energy : null
+  };
+}
+
+function groupDegenerateOrbitals(orbitals: OrbitalPoint[], toleranceEv: number, occupationCutoff: number): OrbitalGroup[] {
+  const sorted = [...orbitals].sort((a, b) => a.energy - b.energy || a.index - b.index);
+  if (!sorted.length) {
+    return [];
+  }
+  const groups: OrbitalGroup[] = [];
+  let current: OrbitalPoint[] = [sorted[0]];
+  for (const orbital of sorted.slice(1)) {
+    const meanEnergy = current.reduce((total, item) => total + item.energy, 0) / current.length;
+    const sameOccupation = isOccupiedOrbital(orbital, occupationCutoff) === isOccupiedOrbital(current[0], occupationCutoff);
+    if (sameOccupation && Math.abs(orbital.energy - meanEnergy) <= toleranceEv) {
+      current.push(orbital);
+    } else {
+      groups.push(makeOrbitalGroup(current, occupationCutoff));
+      current = [orbital];
     }
   }
-  return [];
+  groups.push(makeOrbitalGroup(current, occupationCutoff));
+  return groups;
+}
+
+function buildOrbitalGroupLayout(channel: OrbitalSetAnalysis, yScale: (energyEv: number) => number) {
+  const points = channel.groups.map((group, index) => {
+    const y = yScale(group.meanEnergyEv);
+    const frontier =
+      (channel.homo ? group.orbitals.some((orbital) => sameOrbital(orbital, channel.homo)) : false) ||
+      (channel.lumo ? group.orbitals.some((orbital) => sameOrbital(orbital, channel.lumo)) : false);
+    return { group, y, index, frontier, showLabel: false };
+  });
+  if (points.length <= 8) {
+    return points.map((point) => ({ ...point, showLabel: true }));
+  }
+  const sortedByScreenY = [...points].sort((a, b) => a.y - b.y);
+  let lastLabelY = Number.NEGATIVE_INFINITY;
+  for (const point of sortedByScreenY) {
+    if (point.frontier || Math.abs(point.y - lastLabelY) >= 42) {
+      point.showLabel = true;
+      lastLabelY = point.y;
+    }
+  }
+  return points;
+}
+
+function makeOrbitalGroup(orbitals: OrbitalPoint[], occupationCutoff: number): OrbitalGroup {
+  return {
+    orbitals,
+    meanEnergyEv: orbitals.reduce((total, orbital) => total + orbital.energy, 0) / orbitals.length,
+    occupied: isOccupiedOrbital(orbitals[0], occupationCutoff),
+    labels: orbitals.map((orbital) => orbital.label),
+    irreps: Array.from(new Set(orbitals.map((orbital) => orbital.irrep).filter((irrep): irrep is string => Boolean(irrep))))
+  };
+}
+
+function calculateOrbitalDescriptors(set: OrbitalSetAnalysis) {
+  if (!set.homo || !set.lumo || set.gapEv === null || set.gapEv <= 0) {
+    return null;
+  }
+  return {
+    hardnessEv: 0.5 * set.gapEv,
+    potentialEv: 0.5 * (set.homo.energy + set.lumo.energy),
+    softnessEv: 1 / set.gapEv
+  };
+}
+
+function isOccupiedOrbital(orbital: OrbitalPoint, occupationCutoff: number) {
+  return (orbital.occupation ?? 0) > occupationCutoff;
+}
+
+function sameOrbital(left: OrbitalPoint, right: OrbitalPoint | null) {
+  return Boolean(right && left.index === right.index && left.spin === right.spin);
+}
+
+function compactOrbitalGroupLabel(group: OrbitalGroup) {
+  const indices = group.orbitals.map((orbital) => orbital.index).sort((a, b) => a - b);
+  const first = indices[0];
+  const last = indices[indices.length - 1];
+  const base = indices.length === 1 || first === last ? `MO ${first}` : `MO ${first}-${last}`;
+  const irrep = group.irreps.length ? ` (${group.irreps.join("/")})` : "";
+  const count = group.orbitals.length > 1 ? ` x${group.orbitals.length}` : "";
+  return `${base}${irrep}${count}`;
+}
+
+function compactOrbitalRangeLabel(orbitals: OrbitalPoint[]) {
+  if (!orbitals.length) {
+    return "";
+  }
+  const spinResolved = orbitals.some((orbital) => orbital.spin === "alpha") && orbitals.some((orbital) => orbital.spin === "beta");
+  if (spinResolved) {
+    return ["alpha", "beta"].map((spin) => {
+      const indices = orbitals.filter((orbital) => orbital.spin === spin).map((orbital) => orbital.index).sort((a, b) => a - b);
+      if (!indices.length) {
+        return "";
+      }
+      return `${spin === "alpha" ? "alpha" : "beta"} MO ${indices[0]}-${indices[indices.length - 1]}`;
+    }).filter(Boolean).join("; ");
+  }
+  const indices = orbitals.map((orbital) => orbital.index).sort((a, b) => a - b);
+  return `MO ${indices[0]}-${indices[indices.length - 1]}`;
+}
+
+function spinLabel(spin: SpinChannel | "combined") {
+  if (spin === "alpha") {
+    return "Alpha spin";
+  }
+  if (spin === "beta") {
+    return "Beta spin";
+  }
+  return "Restricted orbitals";
+}
+
+function inferOrbitalSpin(table: TableDataset, spinValue: unknown): SpinChannel {
+  const explicit = String(spinValue ?? "").toLowerCase();
+  if (/^(alpha|a|spin up|up|α)$/.test(explicit)) {
+    return "alpha";
+  }
+  if (/^(beta|b|spin down|down|β)$/.test(explicit)) {
+    return "beta";
+  }
+  const context = `${table.title} ${table.path} ${table.propertyKey}`.toLowerCase();
+  if (/alpha|spin up|alpha_orbitals/.test(context)) {
+    return "alpha";
+  }
+  if (/beta|spin down|beta_orbitals/.test(context)) {
+    return "beta";
+  }
+  return "restricted";
+}
+
+function dedupeOrbitalPoints(points: OrbitalPoint[]) {
+  const seen = new Set<string>();
+  const unique: OrbitalPoint[] = [];
+  for (const point of points) {
+    const key = `${point.spin}:${point.index}:${point.energy}:${point.occupation ?? "?"}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      unique.push(point);
+    }
+  }
+  return unique;
+}
+
+function toDisplayEnergy(valueEv: number, unit: EnergyUnit) {
+  return valueEv * ENERGY_UNITS[unit].factor;
+}
+
+function formatEnergyValue(valueEv: number, unit: EnergyUnit) {
+  const config = ENERGY_UNITS[unit];
+  return `${toDisplayEnergy(valueEv, unit).toFixed(config.decimals)} ${config.label}`;
+}
+
+function downloadSvgElement(elementId: string, filename: string) {
+  const svg = document.getElementById(elementId);
+  if (!(svg instanceof SVGElement)) {
+    return;
+  }
+  const source = new XMLSerializer().serializeToString(svg);
+  const blob = new Blob([`<?xml version="1.0" encoding="utf-8"?>\n${source}`], { type: "image/svg+xml;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
 }
 
 function findColumn(columns: string[], needles: string[]) {

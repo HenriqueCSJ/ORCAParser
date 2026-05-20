@@ -728,7 +728,7 @@ textarea {
 
 .orbitals-workspace {
   display: grid;
-  grid-template-rows: auto auto minmax(420px, 1fr);
+  grid-template-rows: auto auto auto minmax(420px, 1fr);
   gap: 12px;
 }
 
@@ -756,6 +756,53 @@ textarea {
   background: var(--blue);
 }
 
+.orbital-control-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(112px, auto));
+  align-items: end;
+  gap: 10px;
+}
+
+.orbital-control-grid button {
+  min-height: 38px;
+  white-space: nowrap;
+}
+
+.orbital-metric-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.metric-card {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #f8fbff;
+}
+
+.metric-card span {
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.metric-card strong {
+  overflow-wrap: anywhere;
+  color: #15384a;
+  font-size: 1rem;
+}
+
+.metric-card small {
+  color: #64748b;
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
 .primary-chart {
   display: flex;
   min-height: 0;
@@ -781,6 +828,14 @@ textarea {
   background: #fbfdff;
 }
 
+.orbitals-workspace .primary-chart {
+  min-height: 610px;
+}
+
+.orbitals-workspace .orbital-svg {
+  min-height: 540px;
+}
+
 .chart-bg {
   fill: #fbfdff;
 }
@@ -788,6 +843,12 @@ textarea {
 .axis-line {
   stroke: #8ea2bd;
   stroke-width: 1;
+}
+
+.grid-line {
+  stroke: #d8e4f2;
+  stroke-width: 1;
+  stroke-dasharray: 3 4;
 }
 
 .axis-label,
@@ -833,6 +894,40 @@ textarea {
 .orbital-level.frontier {
   stroke: var(--amber);
   stroke-width: 6;
+}
+
+.orbital-group:hover .orbital-level {
+  stroke-width: 6;
+}
+
+.orbital-channel-label {
+  fill: #1d4ed8;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.orbital-channel-label.beta {
+  fill: #be123c;
+}
+
+.gap-pointer line,
+.gap-pointer path {
+  fill: none;
+  stroke: #6366f1;
+  stroke-width: 1.7;
+  stroke-dasharray: 3 3;
+}
+
+.gap-pointer rect {
+  fill: #eef2ff;
+  stroke: #818cf8;
+  stroke-width: 1;
+}
+
+.gap-pointer text {
+  fill: #3730a3;
+  font-size: 11px;
+  font-weight: 900;
 }
 
 .axis-controls {
@@ -1007,6 +1102,11 @@ textarea {
   color: var(--muted);
   font-size: 0.84rem;
   font-weight: 900;
+}
+
+.range-control select {
+  width: 98px;
+  min-height: 34px;
 }
 
 .domain-workspace {
