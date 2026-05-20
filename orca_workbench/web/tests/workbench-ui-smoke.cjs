@@ -105,7 +105,11 @@ async function main() {
     await page.locator(".orbitals-workspace").waitFor({ state: "visible", timeout: 10000 });
     checks.orbitalCharts = await page.locator(".orbital-svg").count();
     checks.orbitalScalarBars = await page.locator(".scalar-bar-row").count();
-    await page.getByRole("spinbutton", { name: "Window" }).fill("8");
+    const windowInput = page.getByRole("spinbutton", { name: "Window" });
+    checks.orbitalWindowDefault = await windowInput.inputValue();
+    checks.orbitalWindowMin = await windowInput.getAttribute("min");
+    await windowInput.fill("1");
+    checks.orbitalWindowValue = await windowInput.inputValue();
     await page.getByRole("combobox", { name: "Units" }).selectOption("hartree");
     checks.orbitalMetricCards = await page.locator(".metric-card").count();
     checks.orbitalWindowReadout = await page.locator(".plot-readout").first().innerText();
@@ -235,7 +239,14 @@ async function main() {
   }
   if (
     checks.orbitalWindowReadout !== undefined &&
-    (!checks.orbitalWindowReadout.includes("102") || checks.orbitalMetricCards < 5 || checks.orbitalSvgDownloadName !== "orca-frontier-orbitals.svg")
+    (
+      checks.orbitalWindowDefault !== "7" ||
+      checks.orbitalWindowMin !== "1" ||
+      checks.orbitalWindowValue !== "1" ||
+      !checks.orbitalWindowReadout.includes("frontier orbital") ||
+      checks.orbitalMetricCards < 5 ||
+      checks.orbitalSvgDownloadName !== "orca-frontier-orbitals.svg"
+    )
   ) {
     process.exit(60);
   }

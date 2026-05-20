@@ -79,6 +79,10 @@ type EnergyUnit = "eV" | "hartree" | "kcal/mol" | "kj/mol";
 
 type SpectrumAxisUnit = "eV" | "nm" | "cm-1";
 
+const DEFAULT_ORBITAL_WINDOW = 7;
+const MIN_ORBITAL_WINDOW = 1;
+const MAX_ORBITAL_WINDOW = 80;
+
 type SpectrumLineShape = "gaussian" | "lorentzian" | "pseudo-voigt";
 
 type SpectrumNormalization = "raw" | "max" | "sum";
@@ -1717,7 +1721,7 @@ function OrbitalsWorkspace({
   properties: PropertiesResponse | null;
   summary: WorkbenchSummary | null;
 }) {
-  const [windowSize, setWindowSize] = useState(30);
+  const [windowSize, setWindowSize] = useState(DEFAULT_ORBITAL_WINDOW);
   const [energyUnit, setEnergyUnit] = useState<EnergyUnit>("eV");
   const [occupationCutoff, setOccupationCutoff] = useState(0.1);
   const [degeneracyTolerance, setDegeneracyTolerance] = useState(0.05);
@@ -1748,7 +1752,13 @@ function OrbitalsWorkspace({
             <div className="orbital-control-grid">
               <label className="range-control">
                 <span>Window</span>
-                <input type="number" min={3} max={80} value={windowSize} onChange={(event) => setWindowSize(Math.max(3, Number(event.target.value) || 30))} />
+                <input
+                  type="number"
+                  min={MIN_ORBITAL_WINDOW}
+                  max={MAX_ORBITAL_WINDOW}
+                  value={windowSize}
+                  onChange={(event) => setWindowSize(parseOrbitalWindowInput(event.target.value))}
+                />
               </label>
               <label className="range-control">
                 <span>Occ cutoff</span>
@@ -3584,6 +3594,10 @@ function parseOptionalNumberInput(value: string) {
 function parseFiniteNumberInput(value: string, fallback: number) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function parseOrbitalWindowInput(value: string) {
+  return clamp(Math.round(parseFiniteNumberInput(value, DEFAULT_ORBITAL_WINDOW)), MIN_ORBITAL_WINDOW, MAX_ORBITAL_WINDOW);
 }
 
 function findColumn(columns: string[], needles: string[]) {
