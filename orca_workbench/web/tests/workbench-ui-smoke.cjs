@@ -59,7 +59,25 @@ async function main() {
     await page.locator(".domain-button").filter({ hasText: "Spectra" }).click();
     await page.locator(".spectrum-svg").waitFor({ state: "visible", timeout: 10000 });
     checks.spectrumCharts = await page.locator(".spectrum-svg").count();
+    checks.spectrumControls = await page.locator(".spectrum-control-grid input, .spectrum-control-grid select").count();
+    await page.getByLabel("Axis").selectOption("nm");
+    await page.getByLabel("Normalize").selectOption("max");
+    await page.getByLabel("Shape").selectOption("lorentzian");
+    await page.getByLabel("FWHM").fill("20");
+    await page.getByLabel("NTO transitions").check();
+    await page.locator(".spectrum-transition-row input").first().fill("0.05");
+    checks.spectrumCurves = await page.locator(".spectrum-curve.primary").count();
+    checks.spectrumTransitionRows = await page.locator(".spectrum-transition-row").count();
+    checks.spectrumPeakRows = await page.locator(".peak-row").count();
+    checks.spectrumFirstAssignment = await page.locator(".spectrum-transition-row em").first().innerText();
+    const spectrumSvgDownload = page.waitForEvent("download");
+    await page.getByRole("button", { name: "Export SVG", exact: true }).click();
+    checks.spectrumSvgDownloadName = (await spectrumSvgDownload).suggestedFilename();
+    const spectrumPngDownload = page.waitForEvent("download");
+    await page.getByRole("button", { name: "Export PNG", exact: true }).click();
+    checks.spectrumPngDownloadName = (await spectrumPngDownload).suggestedFilename();
     checks.spectrumReadout = await page.locator(".plot-readout").first().innerText();
+    await page.locator(".plot-workspace").evaluate((element) => { element.scrollTop = 0; });
     await page.screenshot({ path: path.join(screenshotDir, "workbench-redesign-spectra.png"), fullPage: false });
   }
 
@@ -176,7 +194,19 @@ async function main() {
   if (checks.hasCasscfPanel) {
     process.exit(5);
   }
-  if (checks.hasSpectraPanel && checks.spectrumCharts < 1) {
+  if (
+    checks.hasSpectraPanel &&
+    (
+      checks.spectrumCharts < 1 ||
+      checks.spectrumControls < 8 ||
+      checks.spectrumCurves < 1 ||
+      checks.spectrumTransitionRows < 3 ||
+      checks.spectrumPeakRows < 1 ||
+      checks.spectrumFirstAssignment === "no assignment" ||
+      checks.spectrumSvgDownloadName !== "orca-spectrum-workbench.svg" ||
+      checks.spectrumPngDownloadName !== "orca-spectrum-workbench.png"
+    )
+  ) {
     process.exit(6);
   }
   if (

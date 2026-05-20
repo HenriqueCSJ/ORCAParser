@@ -77,6 +77,35 @@ type NumericPoint = {
 
 type EnergyUnit = "eV" | "hartree" | "kcal/mol" | "kj/mol";
 
+type SpectrumAxisUnit = "eV" | "nm" | "cm-1";
+
+type SpectrumLineShape = "gaussian" | "lorentzian" | "pseudo-voigt";
+
+type SpectrumNormalization = "raw" | "max" | "sum";
+
+type SpectrumTransition = {
+  key: string;
+  row: number;
+  label: string;
+  root: number | null;
+  energyEv: number;
+  wavelengthNm: number;
+  intensity: number;
+  canonical: string;
+  nto: string;
+};
+
+type SpectrumPoint = SpectrumTransition & {
+  shiftedEnergyEv: number;
+  x: number;
+  scaledIntensity: number;
+};
+
+type SpectrumCurvePoint = {
+  x: number;
+  y: number;
+};
+
 type SpinChannel = "restricted" | "alpha" | "beta";
 
 type OrbitalPoint = {
@@ -129,11 +158,19 @@ type GeometryBond = {
 
 const HARTREE_TO_EV = 27.211386245988;
 const BOHR_TO_ANGSTROM = 0.529177210903;
+const EV_TO_CM1 = 8065.544005;
+const EV_NM_PRODUCT = 1239.841984;
 const ENERGY_UNITS: Record<EnergyUnit, { label: string; factor: number; decimals: number }> = {
   eV: { label: "eV", factor: 1, decimals: 4 },
   hartree: { label: "Eh", factor: 1 / HARTREE_TO_EV, decimals: 6 },
   "kcal/mol": { label: "kcal/mol", factor: 23.06054, decimals: 2 },
   "kj/mol": { label: "kJ/mol", factor: 96.4853, decimals: 2 }
+};
+
+const SPECTRUM_UNITS: Record<SpectrumAxisUnit, { label: string; decimals: number; defaultFwhm: number }> = {
+  eV: { label: "eV", decimals: 3, defaultFwhm: 0.18 },
+  nm: { label: "nm", decimals: 1, defaultFwhm: 14 },
+  "cm-1": { label: "cm-1", decimals: 0, defaultFwhm: 1500 }
 };
 
 const COVALENT_RADII_ANGSTROM: Record<string, number> = {
@@ -974,91 +1011,618 @@ function SpectraWorkspace({
   }
 
   return (
-    <div className="plot-workspace">
+    <div className="plot-workspace spectra-workspace-shell">
       <div className="canvas-toolbar">
         <div>
-          <p className="eyebrow">Interactive spectrum</p>
+          <p className="eyebrow">Interactive spectrum workbench</p>
           <h3>{activeTable.title}</h3>
         </div>
         <select value={activeTable.id} onChange={(event) => setActiveId(event.target.value)}>
           {spectraTables.map((table) => <option key={table.id} value={table.id}>{table.title}</option>)}
         </select>
       </div>
-      <StickSpectrumPlot table={activeTable} />
+      <SpectrumWorkbenchPlot table={activeTable} spectrumTables={spectraTables} allTables={tables} />
       <TablePreview table={activeTable} maxRows={8} />
     </div>
   );
 }
 
-function StickSpectrumPlot({ table }: { table: TableDataset }) {
+function SpectrumWorkbenchPlot({
+  table,
+  spectrumTables,
+  allTables
+}: {
+  table: TableDataset;
+  spectrumTables: TableDataset[];
+  allTables: TableDataset[];
+}) {
   const columns = getSpectraColumns(table);
-  const [hovered, setHovered] = useState<{ x: number; y: number; energy: number | null; row: number } | null>(null);
+  const [hovered, setHovered] = useState<SpectrumPoint | null>(null);
+  const [axisUnit, setAxisUnit] = useState<SpectrumAxisUnit>("eV");
+  const [normalization, setNormalization] = useState<SpectrumNormalization>("raw");
+  const [lineShape, setLineShape] = useState<SpectrumLineShape>("gaussian");
+  const [fwhm, setFwhm] = useState(SPECTRUM_UNITS.eV.defaultFwhm);
+  const [globalShiftEv, setGlobalShiftEv] = useState(0);
+  const [rangeMin, setRangeMin] = useState<number | null>(null);
+  const [rangeMax, setRangeMax] = useState<number | null>(null);
+  const [showSticks, setShowSticks] = useState(true);
+  const [showEnvelope, setShowEnvelope] = useState(true);
+  const [showCanonical, setShowCanonical] = useState(true);
+  const [showNto, setShowNto] = useState(false);
+  const [compareId, setCompareId] = useState("");
+  const [transitionShifts, setTransitionShifts] = useState<Record<string, number>>({});
+  const annotationMaps = useMemo(() => buildSpectrumAnnotationMaps(allTables), [allTables]);
+
+  useEffect(() => {
+    setTransitionShifts({});
+    setCompareId("");
+  }, [table.id]);
+
+  useEffect(() => {
+    setFwhm(SPECTRUM_UNITS[axisUnit].defaultFwhm);
+  }, [axisUnit]);
+
   if (!columns) {
     return <div className="empty-state">This table does not contain spectrum axes.</div>;
   }
-  const data = table.rows
-    .map((row, index) => ({
-      x: toNumber(row[columns.x]),
-      y: toNumber(row[columns.y]),
-      energy: columns.energy ? toNumber(row[columns.energy]) : null,
-      row: index + 1
-    }))
-    .filter((point): point is { x: number; y: number; energy: number | null; row: number } => point.x !== null && point.y !== null)
-    .slice(0, 300);
-  if (!data.length) {
+
+  const transitions = useMemo(
+    () => buildSpectrumTransitions(table, annotationMaps),
+    [table, annotationMaps]
+  );
+  const compareTable = spectrumTables.find((candidate) => candidate.id === compareId) ?? null;
+  const compareTransitions = useMemo(
+    () => compareTable ? buildSpectrumTransitions(compareTable, annotationMaps) : [],
+    [compareTable, annotationMaps]
+  );
+
+  const shifted = useMemo(
+    () => applySpectrumControls(transitions, axisUnit, normalization, globalShiftEv, transitionShifts),
+    [axisUnit, globalShiftEv, normalization, transitionShifts, transitions]
+  );
+  const shiftedCompare = useMemo(
+    () => applySpectrumControls(compareTransitions, axisUnit, normalization, globalShiftEv, {}),
+    [axisUnit, compareTransitions, globalShiftEv, normalization]
+  );
+  const domain = useMemo(() => spectrumDomain([...shifted, ...shiftedCompare]), [shifted, shiftedCompare]);
+  useEffect(() => {
+    setRangeMin(roundSpectrumValue(domain.min, axisUnit));
+    setRangeMax(roundSpectrumValue(domain.max, axisUnit));
+  }, [axisUnit, domain.min, domain.max, table.id]);
+
+  if (!transitions.length) {
     return <div className="empty-state">No numeric spectrum rows are available.</div>;
   }
+
+  const xMin = Math.min(rangeMin ?? domain.min, rangeMax ?? domain.max);
+  const xMax = Math.max(rangeMin ?? domain.min, rangeMax ?? domain.max);
+  const inRange = (point: SpectrumPoint) => point.x >= xMin && point.x <= xMax;
+  const primaryVisible = shifted.filter(inRange);
+  const compareVisible = shiftedCompare.filter(inRange);
+  const safeFwhm = Math.max(fwhm, 1e-6);
+  const curve = showEnvelope ? buildConvolutedCurve(primaryVisible, xMin, xMax, safeFwhm, lineShape, 720) : [];
+  const compareCurve = compareVisible.length ? buildConvolutedCurve(compareVisible, xMin, xMax, safeFwhm, lineShape, 720) : [];
+  const peaks = estimateSpectrumPeaks(curve, primaryVisible);
+  const editorRows = primaryVisible
+    .slice()
+    .sort((a, b) => Math.abs(b.scaledIntensity) - Math.abs(a.scaledIntensity))
+    .slice(0, 100);
+
   const width = 1040;
-  const height = 460;
-  const pad = { left: 66, right: 28, top: 34, bottom: 58 };
-  const xMin = Math.min(...data.map((point) => point.x));
-  const xMax = Math.max(...data.map((point) => point.x));
-  const yMax = Math.max(...data.map((point) => Math.abs(point.y)), 1);
+  const height = 520;
+  const pad = { left: 74, right: 30, top: 38, bottom: 62 };
   const xSpan = xMax - xMin || 1;
+  const plottedYValues = [
+    ...primaryVisible.map((point) => point.scaledIntensity),
+    ...compareVisible.map((point) => point.scaledIntensity),
+    ...curve.map((point) => point.y),
+    ...compareCurve.map((point) => point.y),
+    0
+  ];
+  const yMin = Math.min(...plottedYValues);
+  const yMax = Math.max(...plottedYValues);
+  const ySpan = yMax - yMin || 1;
   const xScale = (value: number) => pad.left + ((value - xMin) / xSpan) * (width - pad.left - pad.right);
-  const yScale = (value: number) => height - pad.bottom - (Math.abs(value) / yMax) * (height - pad.top - pad.bottom);
+  const yScale = (value: number) => height - pad.bottom - ((value - yMin) / ySpan) * (height - pad.top - pad.bottom);
+  const baseline = yScale(0);
+  const axisLabel = SPECTRUM_UNITS[axisUnit].label;
+  const displayDecimals = SPECTRUM_UNITS[axisUnit].decimals;
+  const labels = pickSpectrumLabels(
+    primaryVisible.filter((point) => (showCanonical && point.canonical) || (showNto && point.nto)),
+    xSpan * 0.12,
+    5
+  );
+  const xTicks = [0, 0.2, 0.4, 0.6, 0.8, 1];
+
   return (
-    <div className="primary-chart">
-      <svg className="spectrum-svg" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Spectrum stick plot">
-        <rect x="0" y="0" width={width} height={height} className="chart-bg" />
-        <line x1={pad.left} y1={height - pad.bottom} x2={width - pad.right} y2={height - pad.bottom} className="axis-line" />
-        <line x1={pad.left} y1={pad.top} x2={pad.left} y2={height - pad.bottom} className="axis-line" />
-        {[0, 0.25, 0.5, 0.75, 1].map((tick) => {
-          const x = pad.left + tick * (width - pad.left - pad.right);
-          const value = xMin + tick * xSpan;
-          return (
-            <g key={tick}>
-              <line x1={x} y1={height - pad.bottom} x2={x} y2={height - pad.bottom + 6} className="axis-line" />
-              <text x={x} y={height - 24} textAnchor="middle" className="axis-label">{value.toFixed(1)}</text>
-            </g>
-          );
-        })}
-        {data.map((point) => {
-          const x = xScale(point.x);
-          const y = yScale(point.y);
-          return (
+    <div className="spectrum-workbench">
+      <div className="spectrum-control-grid">
+        <label>
+          Axis
+          <select value={axisUnit} onChange={(event) => setAxisUnit(event.target.value as SpectrumAxisUnit)}>
+            <option value="eV">eV</option>
+            <option value="nm">nm</option>
+            <option value="cm-1">cm-1</option>
+          </select>
+        </label>
+        <label>
+          From
+          <input type="number" value={rangeMin ?? ""} step="0.1" onChange={(event) => setRangeMin(Number(event.target.value))} />
+        </label>
+        <label>
+          To
+          <input type="number" value={rangeMax ?? ""} step="0.1" onChange={(event) => setRangeMax(Number(event.target.value))} />
+        </label>
+        <label>
+          Normalize
+          <select value={normalization} onChange={(event) => setNormalization(event.target.value as SpectrumNormalization)}>
+            <option value="raw">raw fosc/intensity</option>
+            <option value="max">max = 1</option>
+            <option value="sum">sum(abs) = 1</option>
+          </select>
+        </label>
+        <label>
+          Shift all
+          <input type="number" value={globalShiftEv} step="0.01" onChange={(event) => setGlobalShiftEv(Number(event.target.value))} />
+          <small>eV</small>
+        </label>
+        <label>
+          Shape
+          <select value={lineShape} onChange={(event) => setLineShape(event.target.value as SpectrumLineShape)}>
+            <option value="gaussian">Gaussian</option>
+            <option value="lorentzian">Lorentzian</option>
+            <option value="pseudo-voigt">Pseudo-Voigt</option>
+          </select>
+        </label>
+        <label>
+          FWHM
+          <input type="number" value={fwhm} min="0.0001" step={axisUnit === "eV" ? "0.01" : "1"} onChange={(event) => setFwhm(Number(event.target.value))} />
+          <small>{axisLabel}</small>
+        </label>
+        <label>
+          Compare
+          <select value={compareId} onChange={(event) => setCompareId(event.target.value)}>
+            <option value="">None</option>
+            {spectrumTables.filter((candidate) => candidate.id !== table.id).map((candidate) => (
+              <option key={candidate.id} value={candidate.id}>{candidate.title}</option>
+            ))}
+          </select>
+        </label>
+        <button type="button" onClick={() => {
+          setRangeMin(roundSpectrumValue(domain.min, axisUnit));
+          setRangeMax(roundSpectrumValue(domain.max, axisUnit));
+        }}>
+          Reset range
+        </button>
+      </div>
+      <div className="spectrum-toggle-row">
+        <label><input type="checkbox" checked={showSticks} onChange={(event) => setShowSticks(event.target.checked)} /> Sticks</label>
+        <label><input type="checkbox" checked={showEnvelope} onChange={(event) => setShowEnvelope(event.target.checked)} /> Convolution</label>
+        <label><input type="checkbox" checked={showCanonical} onChange={(event) => setShowCanonical(event.target.checked)} /> Canonical transitions</label>
+        <label><input type="checkbox" checked={showNto} onChange={(event) => setShowNto(event.target.checked)} /> NTO transitions</label>
+        <button type="button" onClick={() => downloadSvgElement("spectrumWorkbenchPlot", "orca-spectrum-workbench.svg")}>Export SVG</button>
+        <button type="button" onClick={() => downloadSvgElementAsPng("spectrumWorkbenchPlot", "orca-spectrum-workbench.png")}>Export PNG</button>
+      </div>
+      <div className="primary-chart spectrum-chart">
+        <svg id="spectrumWorkbenchPlot" className="spectrum-svg" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Interactive spectrum plot">
+          <title>{table.title}</title>
+          <desc>Editable ORCA Workbench spectrum with sticks, convolution curve, comparison overlay, and transition annotations.</desc>
+          <rect x="0" y="0" width={width} height={height} className="chart-bg" />
+          {xTicks.map((tick) => {
+            const x = pad.left + tick * (width - pad.left - pad.right);
+            const value = xMin + tick * xSpan;
+            return (
+              <g key={tick}>
+                <line x1={x} y1={pad.top} x2={x} y2={height - pad.bottom} className="grid-line" />
+                <line x1={x} y1={height - pad.bottom} x2={x} y2={height - pad.bottom + 6} className="axis-line" />
+                <text x={x} y={height - 24} textAnchor="middle" className="axis-label">{value.toFixed(displayDecimals)}</text>
+              </g>
+            );
+          })}
+          {[0, 0.25, 0.5, 0.75, 1].map((tick) => {
+            const value = yMin + tick * ySpan;
+            const y = yScale(value);
+            return (
+              <g key={`y-${tick}`}>
+                <line x1={pad.left} y1={y} x2={width - pad.right} y2={y} className="grid-line" />
+                <text x={pad.left - 10} y={y + 4} textAnchor="end" className="axis-label">{value.toFixed(normalization === "raw" ? 2 : 3)}</text>
+              </g>
+            );
+          })}
+          <line x1={pad.left} y1={height - pad.bottom} x2={width - pad.right} y2={height - pad.bottom} className="axis-line" />
+          <line x1={pad.left} y1={pad.top} x2={pad.left} y2={height - pad.bottom} className="axis-line" />
+          <line x1={pad.left} y1={baseline} x2={width - pad.right} y2={baseline} className="zero-spectrum-line" />
+          {compareCurve.length > 1 && <path d={curvePath(compareCurve, xScale, yScale)} className="spectrum-curve compare" />}
+          {curve.length > 1 && <path d={curvePath(curve, xScale, yScale)} className="spectrum-curve primary" />}
+          {showSticks && primaryVisible.map((point) => (
             <line
-              key={`${point.row}-${point.x}-${point.y}`}
-              x1={x}
-              x2={x}
-              y1={height - pad.bottom}
-              y2={y}
+              key={point.key}
+              x1={xScale(point.x)}
+              x2={xScale(point.x)}
+              y1={baseline}
+              y2={yScale(point.scaledIntensity)}
               className="spectrum-stick"
               onMouseEnter={() => setHovered(point)}
               onMouseLeave={() => setHovered(null)}
             />
-          );
-        })}
-        <text x={width / 2} y={height - 8} textAnchor="middle" className="axis-title">{columns.x}</text>
-        <text x={18} y={24} className="axis-title">{columns.y}</text>
-      </svg>
-      <div className="plot-readout">
-        {hovered
-          ? `Row ${hovered.row}: ${columns.x}=${shortValue(hovered.x)}, ${columns.y}=${shortValue(hovered.y)}${hovered.energy !== null ? `, energy=${shortValue(hovered.energy)}` : ""}`
-          : `Showing ${data.length} transition(s). Hover a stick to inspect the parsed row.`}
+          ))}
+          {compareVisible.map((point) => (
+            <circle key={`compare-${point.key}`} cx={xScale(point.x)} cy={yScale(point.scaledIntensity)} r="3.5" className="spectrum-compare-dot" />
+          ))}
+          {labels.map((point, index) => {
+            const x = clamp(xScale(point.x), pad.left + 24, width - pad.right - 24);
+            const y = clamp(yScale(point.scaledIntensity) - 12 - (index % 2) * 14, pad.top + 16, height - pad.bottom - 18);
+            return (
+              <g key={`label-${point.key}`}>
+                <line x1={xScale(point.x)} y1={yScale(point.scaledIntensity)} x2={x} y2={y + 4} className="annotation-leader" />
+                <text x={x} y={y} textAnchor="middle" className="spectrum-annotation">
+                  {truncateText(showNto && point.nto ? point.nto : point.canonical, 28)}
+                </text>
+              </g>
+            );
+          })}
+          <text x={width / 2} y={height - 8} textAnchor="middle" className="axis-title">{axisLabel}</text>
+          <text x={18} y={24} className="axis-title">{normalization === "raw" ? columns.y : "normalized intensity"}</text>
+        </svg>
+        <div className="plot-readout">
+          {hovered
+            ? `${hovered.label}: ${axisLabel}=${hovered.x.toFixed(displayDecimals)}, f=${shortValue(hovered.intensity)}, shift=${((transitionShifts[hovered.key] ?? 0) + globalShiftEv).toFixed(3)} eV${hovered.canonical ? `, canonical ${hovered.canonical}` : ""}${hovered.nto ? `, NTO ${hovered.nto}` : ""}`
+            : `Showing ${primaryVisible.length} of ${transitions.length} transition(s). Curve uses ${lineShape} broadening, FWHM ${fwhm} ${axisLabel}.`}
+        </div>
+      </div>
+      <div className="spectrum-analysis-grid">
+        <section className="spectrum-transition-editor">
+          <div className="panel-headline">
+            <div>
+              <p className="eyebrow">Transition editor</p>
+              <h3>Per-transition shifts and assignments</h3>
+            </div>
+            <button type="button" onClick={() => setTransitionShifts({})}>Reset shifts</button>
+          </div>
+          <div className="spectrum-transition-list">
+            {editorRows.map((point) => (
+              <div className="spectrum-transition-row" key={`editor-${point.key}`}>
+                <strong>{point.label}</strong>
+                <span>{point.x.toFixed(displayDecimals)} {axisLabel}</span>
+                <span>f {shortValue(point.intensity)}</span>
+                <input
+                  aria-label={`Shift ${point.label}`}
+                  type="number"
+                  step="0.01"
+                  value={transitionShifts[point.key] ?? 0}
+                  onChange={(event) => setTransitionShifts({ ...transitionShifts, [point.key]: Number(event.target.value) })}
+                />
+                <em>{showCanonical && point.canonical ? point.canonical : showNto && point.nto ? point.nto : "no assignment"}</em>
+              </div>
+            ))}
+          </div>
+        </section>
+        <section className="spectrum-peak-panel">
+          <div className="panel-headline">
+            <div>
+              <p className="eyebrow">Convolution / deconvolution</p>
+              <h3>{peaks.length} resolved envelope peak(s)</h3>
+            </div>
+            <span className="quiet-text">Peak centers are estimated from local maxima in the broadened curve.</span>
+          </div>
+          <div className="peak-list">
+            {peaks.map((peak, index) => (
+              <div className="peak-row" key={`${peak.x}-${index}`}>
+                <strong>{peak.x.toFixed(displayDecimals)} {axisLabel}</strong>
+                <span>{shortValue(peak.y)}</span>
+                <em>{peak.nearest?.label ?? "unassigned"}</em>
+                <small>{peak.nearest ? `${Math.abs(peak.x - peak.nearest.x).toFixed(displayDecimals)} ${axisLabel}` : ""}</small>
+              </div>
+            ))}
+            {!peaks.length && <div className="empty-state small">No local envelope peak was detected in the selected range.</div>}
+          </div>
+        </section>
       </div>
     </div>
   );
+}
+
+function buildSpectrumTransitions(
+  table: TableDataset,
+  annotations: ReturnType<typeof buildSpectrumAnnotationMaps>
+): SpectrumTransition[] {
+  const columns = getSpectraColumns(table);
+  if (!columns) {
+    return [];
+  }
+  return table.rows
+    .map((row, index) => {
+      const intensity = toNumber(row[columns.y]);
+      const energyEv = spectrumEnergyEv(row, columns);
+      if (intensity === null || energyEv === null || energyEv <= 0) {
+        return null;
+      }
+      const root = spectrumRoot(row);
+      const wavelengthNm = toNumber(row.wavelength_nm) ?? EV_NM_PRODUCT / energyEv;
+      const label = root ? `State ${root}` : `Row ${index + 1}`;
+      const canonical = root ? annotations.canonicalByRoot.get(root) ?? "" : findNearestEnergyAnnotation(annotations.canonicalByEnergy, energyEv);
+      const nto = root ? annotations.ntoByRoot.get(root) ?? "" : findNearestEnergyAnnotation(annotations.ntoByEnergy, energyEv);
+      return {
+        key: `${table.id}:${index + 1}`,
+        row: index + 1,
+        label,
+        root,
+        energyEv,
+        wavelengthNm,
+        intensity,
+        canonical,
+        nto
+      };
+    })
+    .filter((point): point is SpectrumTransition => point !== null)
+    .slice(0, 600);
+}
+
+function spectrumEnergyEv(row: Record<string, unknown>, columns: NonNullable<ReturnType<typeof getSpectraColumns>>) {
+  const explicitEnergy = columns.energy ? toNumber(row[columns.energy]) : null;
+  if (explicitEnergy !== null) {
+    return explicitEnergy;
+  }
+  const x = toNumber(row[columns.x]);
+  if (x === null || x <= 0) {
+    return null;
+  }
+  const normalized = normalizeColumn(columns.x);
+  if (/wavelength|lambda|nm/.test(normalized)) {
+    return EV_NM_PRODUCT / x;
+  }
+  if (/cm1|wavenumber/.test(normalized)) {
+    return x / EV_TO_CM1;
+  }
+  return x;
+}
+
+function spectrumRoot(row: Record<string, unknown>) {
+  return (
+    toNumber(row.to_root) ??
+    toNumber(row.state) ??
+    toNumber(row.root) ??
+    toNumber(row.energy_matched_state)
+  );
+}
+
+function buildSpectrumAnnotationMaps(tables: TableDataset[]) {
+  const canonicalByRoot = new Map<number, string>();
+  const ntoByRoot = new Map<number, string>();
+  const canonicalByEnergy: { energyEv: number; text: string }[] = [];
+  const ntoByEnergy: { energyEv: number; text: string }[] = [];
+  for (const table of tables) {
+    const context = `${table.title} ${table.path} ${table.propertyKey}`.toLowerCase();
+    for (const row of table.rows) {
+      const root = spectrumRoot(row);
+      const energyEv = toNumber(row.energy_eV) ?? toNumber(row.energy_ev);
+      if (!/nto/.test(context)) {
+        const canonical = formatCanonicalAnnotation(row);
+        if (canonical) {
+          if (root) {
+            canonicalByRoot.set(root, canonical);
+          }
+          if (energyEv !== null) {
+            canonicalByEnergy.push({ energyEv, text: canonical });
+          }
+        }
+      }
+      const nto = formatNtoAnnotation(row);
+      if (nto) {
+        const ntoRoot = root ?? toNumber(row.energy_matched_state);
+        if (ntoRoot) {
+          ntoByRoot.set(ntoRoot, nto);
+        }
+        if (energyEv !== null) {
+          ntoByEnergy.push({ energyEv, text: nto });
+        }
+      }
+    }
+  }
+  return { canonicalByRoot, ntoByRoot, canonicalByEnergy, ntoByEnergy };
+}
+
+function findNearestEnergyAnnotation(rows: { energyEv: number; text: string }[], energyEv: number) {
+  let best: { delta: number; text: string } | null = null;
+  for (const row of rows) {
+    const delta = Math.abs(row.energyEv - energyEv);
+    if (delta <= 0.01 && (!best || delta < best.delta)) {
+      best = { delta, text: row.text };
+    }
+  }
+  return best?.text ?? "";
+}
+
+function formatCanonicalAnnotation(row: Record<string, unknown>) {
+  const transitions = arrayOfObjects(row.significant_transitions).length
+    ? arrayOfObjects(row.significant_transitions)
+    : arrayOfObjects(row.transitions);
+  if (!transitions.length) {
+    return "";
+  }
+  return transitions
+    .slice(0, 3)
+    .map((transition) => {
+      const from = shortValue(transition.from_orbital ?? transition.from);
+      const to = shortValue(transition.to_orbital ?? transition.to);
+      const weight = toNumber(transition.weight);
+      const weightText = weight !== null ? ` ${(weight * 100).toFixed(0)}%` : "";
+      return `${from}->${to}${weightText}`;
+    })
+    .join("; ");
+}
+
+function formatNtoAnnotation(row: Record<string, unknown>) {
+  const pairs = arrayOfObjects(row.significant_pairs).length
+    ? arrayOfObjects(row.significant_pairs)
+    : arrayOfObjects(row.pairs);
+  if (!pairs.length) {
+    return "";
+  }
+  return pairs
+    .slice(0, 3)
+    .map((pair) => {
+      const from = shortValue(pair.from_orbital ?? pair.from);
+      const to = shortValue(pair.to_orbital ?? pair.to);
+      const occupation = toNumber(pair.occupation);
+      const occupationText = occupation !== null ? ` n=${occupation.toFixed(2)}` : "";
+      return `${from}->${to}${occupationText}`;
+    })
+    .join("; ");
+}
+
+function arrayOfObjects(value: unknown) {
+  return Array.isArray(value)
+    ? (value.filter((item) => isPlainObject(item)) as Record<string, unknown>[])
+    : [];
+}
+
+function applySpectrumControls(
+  transitions: SpectrumTransition[],
+  unit: SpectrumAxisUnit,
+  normalization: SpectrumNormalization,
+  globalShiftEv: number,
+  transitionShifts: Record<string, number>
+): SpectrumPoint[] {
+  const shifted = transitions.map((transition) => {
+    const shiftedEnergyEv = Math.max(1e-6, transition.energyEv + globalShiftEv + (transitionShifts[transition.key] ?? 0));
+    return {
+      ...transition,
+      shiftedEnergyEv,
+      x: spectrumAxisValue(shiftedEnergyEv, unit),
+      scaledIntensity: transition.intensity
+    };
+  });
+  const denominator = spectrumNormalizationDenominator(shifted, normalization);
+  return shifted.map((point) => ({
+    ...point,
+    scaledIntensity: denominator ? point.scaledIntensity / denominator : point.scaledIntensity
+  }));
+}
+
+function spectrumNormalizationDenominator(points: SpectrumPoint[], normalization: SpectrumNormalization) {
+  if (normalization === "raw") {
+    return 1;
+  }
+  if (normalization === "sum") {
+    return points.reduce((sum, point) => sum + Math.abs(point.scaledIntensity), 0) || 1;
+  }
+  return Math.max(...points.map((point) => Math.abs(point.scaledIntensity)), 1);
+}
+
+function spectrumAxisValue(energyEv: number, unit: SpectrumAxisUnit) {
+  if (unit === "nm") {
+    return EV_NM_PRODUCT / energyEv;
+  }
+  if (unit === "cm-1") {
+    return energyEv * EV_TO_CM1;
+  }
+  return energyEv;
+}
+
+function spectrumDomain(points: SpectrumPoint[]) {
+  if (!points.length) {
+    return { min: 0, max: 1 };
+  }
+  const values = points.map((point) => point.x).filter(Number.isFinite);
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const span = max - min || Math.max(Math.abs(max), 1);
+  return {
+    min: min - span * 0.04,
+    max: max + span * 0.04
+  };
+}
+
+function roundSpectrumValue(value: number, unit: SpectrumAxisUnit) {
+  const decimals = SPECTRUM_UNITS[unit].decimals;
+  const factor = 10 ** decimals;
+  return Math.round(value * factor) / factor;
+}
+
+function buildConvolutedCurve(
+  points: SpectrumPoint[],
+  min: number,
+  max: number,
+  fwhm: number,
+  lineShape: SpectrumLineShape,
+  samples: number
+): SpectrumCurvePoint[] {
+  if (!points.length || max <= min) {
+    return [];
+  }
+  const curve: SpectrumCurvePoint[] = [];
+  const step = (max - min) / Math.max(samples - 1, 1);
+  for (let index = 0; index < samples; index += 1) {
+    const x = min + step * index;
+    let y = 0;
+    for (const point of points) {
+      y += point.scaledIntensity * lineShapeKernel(x - point.x, fwhm, lineShape);
+    }
+    curve.push({ x, y });
+  }
+  return curve;
+}
+
+function lineShapeKernel(delta: number, fwhm: number, lineShape: SpectrumLineShape) {
+  const gaussian = Math.exp(-4 * Math.log(2) * (delta / fwhm) ** 2);
+  const lorentzian = 1 / (1 + 4 * (delta / fwhm) ** 2);
+  if (lineShape === "gaussian") {
+    return gaussian;
+  }
+  if (lineShape === "lorentzian") {
+    return lorentzian;
+  }
+  return 0.5 * gaussian + 0.5 * lorentzian;
+}
+
+function estimateSpectrumPeaks(curve: SpectrumCurvePoint[], transitions: SpectrumPoint[]) {
+  if (curve.length < 3) {
+    return [];
+  }
+  const maxAbs = Math.max(...curve.map((point) => Math.abs(point.y)), 0);
+  const threshold = maxAbs * 0.05;
+  const peaks: { x: number; y: number; nearest: SpectrumPoint | null }[] = [];
+  for (let index = 1; index < curve.length - 1; index += 1) {
+    const prev = Math.abs(curve[index - 1].y);
+    const current = Math.abs(curve[index].y);
+    const next = Math.abs(curve[index + 1].y);
+    if (current >= threshold && current >= prev && current >= next) {
+      const x = curve[index].x;
+      const nearest = transitions.reduce<SpectrumPoint | null>((best, transition) => {
+        if (!best) {
+          return transition;
+        }
+        return Math.abs(transition.x - x) < Math.abs(best.x - x) ? transition : best;
+      }, null);
+      if (!peaks.some((peak) => Math.abs(peak.x - x) < Math.abs((curve[1].x - curve[0].x) * 8))) {
+        peaks.push({ x, y: curve[index].y, nearest });
+      }
+    }
+  }
+  return peaks
+    .sort((a, b) => Math.abs(b.y) - Math.abs(a.y))
+    .slice(0, 12)
+    .sort((a, b) => a.x - b.x);
+}
+
+function pickSpectrumLabels(points: SpectrumPoint[], minSpacing: number, limit: number) {
+  const chosen: SpectrumPoint[] = [];
+  for (const point of points.slice().sort((a, b) => Math.abs(b.scaledIntensity) - Math.abs(a.scaledIntensity))) {
+    if (chosen.length >= limit) {
+      break;
+    }
+    if (chosen.every((existing) => Math.abs(existing.x - point.x) >= minSpacing)) {
+      chosen.push(point);
+    }
+  }
+  return chosen.sort((a, b) => a.x - b.x);
+}
+
+function curvePath(points: SpectrumCurvePoint[], xScale: (value: number) => number, yScale: (value: number) => number) {
+  return points
+    .map((point, index) => `${index === 0 ? "M" : "L"} ${xScale(point.x).toFixed(2)} ${yScale(point.y).toFixed(2)}`)
+    .join(" ");
 }
 
 function OrbitalsWorkspace({
@@ -2853,6 +3417,43 @@ function downloadSvgElement(elementId: string, filename: string) {
   URL.revokeObjectURL(url);
 }
 
+function downloadSvgElementAsPng(elementId: string, filename: string) {
+  const svg = document.getElementById(elementId);
+  if (!(svg instanceof SVGElement)) {
+    return;
+  }
+  const source = new XMLSerializer().serializeToString(svg);
+  const svgBlob = new Blob([`<?xml version="1.0" encoding="utf-8"?>\n${source}`], { type: "image/svg+xml;charset=utf-8" });
+  const url = URL.createObjectURL(svgBlob);
+  const image = new Image();
+  image.onload = () => {
+    const viewBox = svg.getAttribute("viewBox")?.split(/\s+/).map(Number);
+    const width = viewBox && viewBox.length === 4 ? viewBox[2] : svg.clientWidth || 1200;
+    const height = viewBox && viewBox.length === 4 ? viewBox[3] : svg.clientHeight || 700;
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(width * 2));
+    canvas.height = Math.max(1, Math.round(height * 2));
+    const context = canvas.getContext("2d");
+    if (!context) {
+      URL.revokeObjectURL(url);
+      return;
+    }
+    context.fillStyle = "#ffffff";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+    URL.revokeObjectURL(url);
+    const pngUrl = canvas.toDataURL("image/png");
+    const link = document.createElement("a");
+    link.href = pngUrl;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  };
+  image.onerror = () => URL.revokeObjectURL(url);
+  image.src = url;
+}
+
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
@@ -2876,6 +3477,10 @@ function normalizeColumn(column: string) {
 
 function atomLikeLabel(label: string) {
   return /^[A-Z][a-z]?$/.test(label.trim());
+}
+
+function truncateText(text: string, maxLength: number) {
+  return text.length > maxLength ? `${text.slice(0, Math.max(0, maxLength - 1))}...` : text;
 }
 
 function compactPathLabel(path: string) {

@@ -725,6 +725,11 @@ textarea {
   gap: 12px;
 }
 
+.spectra-workspace-shell {
+  grid-template-rows: auto auto auto;
+  align-content: start;
+}
+
 .geometry-workspace {
   grid-template-rows: auto auto minmax(260px, auto) auto;
 }
@@ -821,6 +826,231 @@ textarea {
   border: 1px solid var(--line);
   border-radius: 13px;
   background: var(--surface);
+}
+
+.spectrum-workbench {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.spectrum-control-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(120px, 1fr));
+  gap: 9px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: #f8fbff;
+}
+
+.spectrum-control-grid label,
+.spectrum-transition-row,
+.peak-row {
+  min-width: 0;
+}
+
+.spectrum-control-grid label {
+  display: grid;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.spectrum-control-grid input,
+.spectrum-control-grid select {
+  width: 100%;
+  min-width: 0;
+  padding: 7px 8px;
+  border: 1px solid #c8d6ea;
+  border-radius: 8px;
+  color: #14233a;
+  background: #ffffff;
+  font-size: 0.82rem;
+  font-weight: 850;
+}
+
+.spectrum-control-grid small {
+  color: #64748b;
+  font-size: 0.68rem;
+  text-transform: none;
+}
+
+.spectrum-control-grid button,
+.spectrum-toggle-row button,
+.panel-headline button {
+  min-height: 36px;
+  border: 0;
+  border-radius: 9px;
+  color: #ffffff;
+  background: var(--blue);
+  font-weight: 950;
+}
+
+.spectrum-toggle-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 9px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: var(--surface);
+}
+
+.spectrum-toggle-row label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 6px 9px;
+  border-radius: 999px;
+  color: #143247;
+  background: #eaf3ff;
+  font-size: 0.78rem;
+  font-weight: 900;
+}
+
+.spectrum-chart {
+  min-height: 600px;
+}
+
+.spectrum-chart .spectrum-svg {
+  min-height: 520px;
+}
+
+.zero-spectrum-line {
+  stroke: #62748d;
+  stroke-width: 1.4;
+}
+
+.spectrum-curve {
+  fill: none;
+  stroke-width: 3.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.spectrum-curve.primary {
+  stroke: var(--blue);
+}
+
+.spectrum-curve.compare {
+  stroke: var(--amber);
+  opacity: 0.82;
+}
+
+.spectrum-compare-dot {
+  fill: var(--amber);
+  stroke: #ffffff;
+  stroke-width: 1.5;
+}
+
+.annotation-leader {
+  stroke: #94a3b8;
+  stroke-width: 1;
+  stroke-dasharray: 2 3;
+}
+
+.spectrum-annotation {
+  fill: #15384a;
+  font-size: 10.5px;
+  font-weight: 950;
+  paint-order: stroke;
+  stroke: #ffffff;
+  stroke-width: 3px;
+}
+
+.spectrum-analysis-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.75fr);
+  gap: 12px;
+}
+
+.spectrum-transition-editor,
+.spectrum-peak-panel {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: var(--surface);
+}
+
+.panel-headline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 9px;
+  border-bottom: 1px solid var(--line);
+}
+
+.panel-headline h3 {
+  font-size: 0.95rem;
+}
+
+.spectrum-transition-list,
+.peak-list {
+  display: grid;
+  gap: 7px;
+  max-height: 320px;
+  overflow: auto;
+}
+
+.spectrum-transition-row {
+  display: grid;
+  grid-template-columns: minmax(74px, 0.7fr) minmax(84px, 0.8fr) minmax(66px, 0.65fr) 74px minmax(150px, 1.5fr);
+  align-items: center;
+  gap: 9px;
+  min-height: 36px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: #f8fbff;
+}
+
+.spectrum-transition-row strong,
+.spectrum-transition-row span,
+.spectrum-transition-row em,
+.peak-row strong,
+.peak-row span,
+.peak-row em,
+.peak-row small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #15384a;
+  font-size: 0.8rem;
+  font-weight: 900;
+}
+
+.spectrum-transition-row input {
+  width: 100%;
+  min-width: 0;
+  padding: 5px 6px;
+  border: 1px solid #c8d6ea;
+  border-radius: 7px;
+  font-weight: 850;
+}
+
+.spectrum-transition-row em,
+.peak-row em,
+.peak-row small {
+  color: var(--muted);
+  font-style: normal;
+}
+
+.peak-row {
+  display: grid;
+  grid-template-columns: minmax(82px, 0.8fr) 58px minmax(92px, 1fr) 70px;
+  gap: 8px;
+  align-items: center;
+  padding: 7px 8px;
+  border-radius: 8px;
+  background: #f8fbff;
 }
 
 .geometry-bond-panel {
