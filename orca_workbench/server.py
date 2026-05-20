@@ -238,6 +238,24 @@ def create_app() -> FastAPI:
             ]
         }
 
+    @app.get("/api/sample-files")
+    def sample_files(limit: int = 12) -> dict[str, Any]:
+        repo_root = Path(__file__).resolve().parent.parent
+        sample_root = repo_root / "sample_outs"
+        if not sample_root.exists():
+            return {"files": []}
+        paths = discover_orca_outputs([sample_root])[: max(0, limit)]
+        return {
+            "files": [
+                {
+                    "path": str(path),
+                    "name": path.name,
+                    "parent": str(path.parent),
+                }
+                for path in paths
+            ]
+        }
+
     @app.post("/api/batches")
     def start_batch(request: ParseBatchRequest) -> dict[str, Any]:
         paths = discover_orca_outputs(request.paths)

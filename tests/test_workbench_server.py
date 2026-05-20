@@ -32,6 +32,16 @@ def test_workbench_server_discover_skips_auxiliary_files(tmp_path):
     assert [file["name"] for file in files] == ["calc.out"]
 
 
+def test_workbench_server_sample_files_endpoint():
+    client = TestClient(create_app())
+
+    response = client.get("/api/sample-files?limit=3")
+
+    assert response.status_code == 200
+    assert "files" in response.json()
+    assert len(response.json()["files"]) <= 3
+
+
 def test_workbench_server_empty_batch_rejects_cleanly(tmp_path):
     client = TestClient(create_app())
 

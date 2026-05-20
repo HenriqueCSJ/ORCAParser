@@ -110,6 +110,11 @@ button {
   gap: 10px;
 }
 
+.button-pair {
+  display: flex;
+  gap: 6px;
+}
+
 .section-head button,
 .primary-action {
   min-height: 36px;

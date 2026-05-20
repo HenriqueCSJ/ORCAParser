@@ -120,6 +120,10 @@ export function discoverFiles(paths: string[]) {
   });
 }
 
+export function getSampleFiles(limit = 12) {
+  return request<{ files: DiscoveredFile[] }>(`/api/sample-files?limit=${limit}`);
+}
+
 export function startBatch(payload: {
   paths: string[];
   sections: string[] | null;

@@ -13,6 +13,7 @@ import {
   getHealth,
   getPluginOptions,
   getProvenance,
+  getSampleFiles,
   getSections,
   getSnapshots,
   startBatch
@@ -127,6 +128,22 @@ function App() {
     }
   }
 
+  async function handleLoadSamples() {
+    setMessage("");
+    try {
+      const response = await getSampleFiles();
+      setFiles(response.files);
+      setPathText(response.files.map((file) => file.path).join("\n"));
+      setMessage(
+        response.files.length
+          ? `Loaded ${response.files.length} local sample file(s).`
+          : "No local sample_outs folder was found."
+      );
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+    }
+  }
+
   async function handleParse() {
     setMessage("");
     const parsePaths = files.length ? files.map((file) => file.path) : splitPaths(pathText);
@@ -186,7 +203,10 @@ function App() {
         <section className="panel">
           <div className="section-head">
             <h2>Inputs</h2>
-            <button type="button" onClick={handleDiscover}>Discover</button>
+            <div className="button-pair">
+              <button type="button" onClick={handleLoadSamples}>Load samples</button>
+              <button type="button" onClick={handleDiscover}>Discover</button>
+            </div>
           </div>
           <textarea
             value={pathText}
