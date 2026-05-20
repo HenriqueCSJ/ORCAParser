@@ -239,12 +239,12 @@ def create_app() -> FastAPI:
         }
 
     @app.get("/api/sample-files")
-    def sample_files(limit: int = 12) -> dict[str, Any]:
+    def sample_files(limit: int = 4) -> dict[str, Any]:
         repo_root = Path(__file__).resolve().parent.parent
         sample_root = repo_root / "sample_outs"
         if not sample_root.exists():
             return {"files": []}
-        paths = discover_orca_outputs([sample_root])[: max(0, limit)]
+        paths = _curated_sample_outputs(sample_root, limit=max(0, limit))
         return {
             "files": [
                 {
@@ -313,6 +313,42 @@ def _get_existing_job(app: FastAPI, job_id: str) -> StoredJob:
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found.")
     return job
+
+
+def _curated_sample_outputs(sample_root: Path, *, limit: int) -> list[Path]:
+    """Return small, fast sample outputs for the built-in demo button."""
+
+    preferred = [
+        sample_root / "OPT" / "F3CNO.out",
+        sample_root / "Diox" / "GOAT" / "RDB_vinyl_a_GOAT.out",
+        sample_root / "EOM_def2TZVP" / "F3CNO.out",
+        sample_root / "Freq" / "F3CNO.out",
+        sample_root / "N" / "EPR" / "NC.out",
+    ]
+    selected: list[Path] = []
+    seen: set[Path] = set()
+    max_demo_bytes = 8_000_000
+
+    for path in preferred:
+        if path.exists() and path.stat().st_size <= max_demo_bytes:
+            selected.append(path)
+            seen.add(path.resolve())
+            if len(selected) >= limit:
+                return selected
+
+    for path in discover_orca_outputs([sample_root]):
+        resolved = path.resolve()
+        if resolved in seen:
+            continue
+        try:
+            if path.stat().st_size > max_demo_bytes:
+                continue
+        except OSError:
+            continue
+        selected.append(path)
+        if len(selected) >= limit:
+            break
+    return selected
 
 
 def _coerce_export_options(request: ExportOptionsRequest) -> ExportOptions:

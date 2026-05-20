@@ -40,6 +40,7 @@ def test_workbench_server_sample_files_endpoint():
     assert response.status_code == 200
     assert "files" in response.json()
     assert len(response.json()["files"]) <= 3
+    assert all(file["name"].endswith((".out", ".log")) for file in response.json()["files"])
 
 
 def test_workbench_server_empty_batch_rejects_cleanly(tmp_path):
