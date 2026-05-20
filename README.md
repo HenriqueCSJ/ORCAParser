@@ -191,20 +191,22 @@ ORCA Workbench is a parser-backed scientific workbench and data visualizer. It
 lets you open local ORCA `.out` / `.log` files or folders with native file
 dialogs, automatically parses the selected outputs, discovers the property
 blocks actually present, selects those parsed properties for viewing by default,
-and then lets you unselect/reselect properties as a visualization filter.
+and then builds the visible analysis panels from what was actually parsed.
 
-The Data view is organized as a visual workspace:
-
-- `Overview`: property cards plus digestible field grids and nested tables.
-- `Tables`: discovered table-like datasets with filtering and CSV export.
-- `Plots`: interactive numeric field bars and table plots with axis controls.
-- `Raw`: the selected structured payload for audit/debug work.
+The interface is organized around detected scientific domains rather than a
+fixed list of generic parser tabs. For example, a TDDFT output exposes spectra,
+orbitals, geometry, populations, excited-state, table, provenance, raw-data, and
+export workspaces only when those surfaces are present. A CASSCF/NEVPT2 output
+adds the multireference workspace; a plain optimization does not pretend to have
+spectra. Utility views such as `Overview`, `Tables`, `Provenance`, `Raw data`,
+and `Exports` remain available when the parsed payload supports them.
 
 Global JSON/CSV/Markdown/HDF5 exports remain available through the parser
-backend, while the Data view also provides immediate client-side exports for
-selected JSON, all discovered tables, and the active filtered table. The default
-workflow is now data-first: open outputs -> parse everything discoverable ->
-inspect, visualize, filter, and export the scientific data surface.
+backend. The workbench also provides immediate client-side exports for the
+currently selected structured JSON, all visible tables, and filtered table rows.
+The default workflow is data-first: open outputs -> parse everything
+discoverable -> use the detected scientific panels -> hide irrelevant property
+blocks -> visualize and export the curated analysis surface.
 
 The workbench is intentionally a wrapper around the existing parser. It does
 not reimplement population, NBO, spectra, TDDFT, CASSCF, NEVPT2, or any other
@@ -213,7 +215,8 @@ orbital-window control, are discovered from the same plugin metadata used by
 the CLI.
 
 The browser-level smoke test exercises the real GUI, including automatic
-parsing, property filtering, the Data tabs, plots, and JSON/CSV downloads:
+parsing, detected-domain navigation, spectra/orbital/table visualization,
+property filtering, screenshots, and JSON/CSV downloads:
 
 ```bash
 cd orca_workbench/web
