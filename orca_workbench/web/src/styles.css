@@ -719,9 +719,15 @@ textarea {
 }
 
 .plot-workspace,
-.orbitals-workspace {
+.domain-visual-workspace {
   display: grid;
   grid-template-rows: auto minmax(420px, 1fr) auto;
+  gap: 12px;
+}
+
+.orbitals-workspace {
+  display: grid;
+  grid-template-rows: auto auto minmax(420px, 1fr);
   gap: 12px;
 }
 
@@ -761,7 +767,10 @@ textarea {
 }
 
 .spectrum-svg,
-.orbital-svg {
+.orbital-svg,
+.coordinate-svg,
+.state-svg,
+.trajectory-svg {
   width: 100%;
   min-width: 760px;
   height: 100%;
@@ -818,6 +827,160 @@ textarea {
 .orbital-level.frontier {
   stroke: var(--amber);
   stroke-width: 6;
+}
+
+.axis-controls {
+  gap: 8px;
+}
+
+.segmented {
+  min-height: 32px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  color: var(--blue);
+  background: #e8f0ff;
+  font-weight: 900;
+}
+
+.segmented.active {
+  color: #ffffff;
+  background: var(--blue);
+}
+
+.atom-dot {
+  fill: var(--blue);
+  stroke: #ffffff;
+  stroke-width: 2;
+  opacity: 0.92;
+}
+
+.atom-dot:hover {
+  opacity: 1;
+  stroke: #111827;
+}
+
+.element-h {
+  fill: #94a3b8;
+}
+
+.element-c {
+  fill: #334155;
+}
+
+.element-n {
+  fill: var(--blue);
+}
+
+.element-o {
+  fill: var(--red);
+}
+
+.element-s {
+  fill: var(--amber);
+}
+
+.element-br,
+.element-cl,
+.element-i {
+  fill: var(--green);
+}
+
+.atom-label {
+  fill: #1f2a3a;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.population-chart {
+  overflow: auto;
+}
+
+.population-bar-list {
+  display: grid;
+  gap: 7px;
+  min-width: 620px;
+}
+
+.population-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(90px, 160px) minmax(280px, 1fr) 94px;
+  align-items: center;
+  gap: 10px;
+  min-height: 34px;
+  padding: 5px 7px;
+  border-radius: 8px;
+  color: var(--ink);
+  background: transparent;
+  text-align: left;
+}
+
+.population-row:hover {
+  background: #eef4ff;
+}
+
+.population-row span {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.population-row .zero-axis {
+  position: absolute;
+  left: calc(160px + 10px + 50%);
+  width: 1px;
+  height: 22px;
+  background: #9aadbf;
+}
+
+.population-row i {
+  display: block;
+  height: 16px;
+  border-radius: 999px;
+  background: var(--cyan);
+  justify-self: end;
+}
+
+.population-row.negative i {
+  background: var(--rose);
+  justify-self: start;
+}
+
+.population-row strong {
+  font-size: 0.84rem;
+  text-align: right;
+}
+
+.state-level {
+  stroke: var(--violet);
+  stroke-width: 3;
+  stroke-linecap: round;
+}
+
+.state-dot {
+  fill: rgb(124 58 237 / 0.72);
+  stroke: #ffffff;
+  stroke-width: 2;
+}
+
+.state-dot:hover {
+  fill: var(--rose);
+}
+
+.trajectory-line {
+  stroke: var(--green);
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.trajectory-point {
+  fill: var(--green);
+  stroke: #ffffff;
+  stroke-width: 2;
 }
 
 .plot-readout {

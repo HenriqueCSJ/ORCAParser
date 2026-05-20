@@ -68,6 +68,30 @@ async function main() {
     await page.locator(".orbitals-workspace").waitFor({ state: "visible", timeout: 10000 });
     checks.orbitalCharts = await page.locator(".orbital-svg").count();
     checks.orbitalScalarBars = await page.locator(".scalar-bar-row").count();
+    await page.screenshot({ path: path.join(screenshotDir, "workbench-redesign-orbitals.png"), fullPage: false });
+  }
+
+  if (checks.domainTexts.some((text) => text.includes("Geometry"))) {
+    await page.locator(".domain-button").filter({ hasText: "Geometry" }).click();
+    await page.locator(".coordinate-svg").waitFor({ state: "visible", timeout: 10000 });
+    checks.coordinateCharts = await page.locator(".coordinate-svg").count();
+    checks.atomDots = await page.locator(".atom-dot").count();
+    await page.screenshot({ path: path.join(screenshotDir, "workbench-redesign-geometry.png"), fullPage: false });
+  }
+
+  if (checks.domainTexts.some((text) => text.includes("Populations"))) {
+    await page.locator(".domain-button").filter({ hasText: "Populations" }).click();
+    await page.locator(".population-row").first().waitFor({ state: "visible", timeout: 10000 });
+    checks.populationRows = await page.locator(".population-row").count();
+    await page.screenshot({ path: path.join(screenshotDir, "workbench-redesign-populations.png"), fullPage: false });
+  }
+
+  if (checks.domainTexts.some((text) => text.includes("Excited states"))) {
+    await page.locator(".domain-button").filter({ hasText: "Excited states" }).click();
+    await page.locator(".state-svg").waitFor({ state: "visible", timeout: 10000 });
+    checks.stateCharts = await page.locator(".state-svg").count();
+    checks.stateDots = await page.locator(".state-dot").count();
+    await page.screenshot({ path: path.join(screenshotDir, "workbench-redesign-excited.png"), fullPage: false });
   }
 
   await page.locator(".domain-button").filter({ hasText: "Tables" }).click();
@@ -115,6 +139,15 @@ async function main() {
   }
   if (checks.hasSpectraPanel && checks.spectrumCharts < 1) {
     process.exit(6);
+  }
+  if (checks.coordinateCharts !== undefined && (checks.coordinateCharts < 1 || checks.atomDots < 3)) {
+    process.exit(61);
+  }
+  if (checks.populationRows !== undefined && checks.populationRows < 3) {
+    process.exit(62);
+  }
+  if (checks.stateCharts !== undefined && (checks.stateCharts < 1 || checks.stateDots < 1)) {
+    process.exit(63);
   }
   if (checks.summaryFields < 4 || checks.tableDatasetCount < 1 || checks.richTableRows < 1 || checks.rawChars < 100) {
     process.exit(7);

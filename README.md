@@ -201,6 +201,12 @@ adds the multireference workspace; a plain optimization does not pretend to have
 spectra. Utility views such as `Overview`, `Tables`, `Provenance`, `Raw data`,
 and `Exports` remain available when the parsed payload supports them.
 
+Plots are chosen by data type, not forced through one generic chart. Spectra are
+shown as oscillator-strength stick plots, orbital energies as level ladders,
+geometries as coordinate projections, populations as signed charge/spin/bond
+bars, excited and multireference states as energy ladders, and optimization
+lines are drawn only for ordered cycle/iteration series.
+
 Global JSON/CSV/Markdown/HDF5 exports remain available through the parser
 backend. The workbench also provides immediate client-side exports for the
 currently selected structured JSON, all visible tables, and filtered table rows.

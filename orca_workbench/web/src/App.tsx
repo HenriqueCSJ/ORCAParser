@@ -585,6 +585,21 @@ function WorkspaceContent({
   if (activeView === "orbitals") {
     return <OrbitalsWorkspace tables={tables} properties={properties} summary={job.summary ?? null} />;
   }
+  if (activeView === "geometry") {
+    return <GeometryWorkspace tables={tables} properties={properties} visibleKeys={visibleKeys} />;
+  }
+  if (activeView === "populations") {
+    return <PopulationWorkspace tables={tables} properties={properties} visibleKeys={visibleKeys} />;
+  }
+  if (activeView === "excited") {
+    return <ExcitedStatesWorkspace tables={tables} properties={properties} visibleKeys={visibleKeys} />;
+  }
+  if (activeView === "optimization") {
+    return <OptimizationWorkspace tables={tables} properties={properties} visibleKeys={visibleKeys} />;
+  }
+  if (activeView === "multireference") {
+    return <MultiReferenceWorkspace tables={tables} properties={properties} visibleKeys={visibleKeys} />;
+  }
   if (activeView === "tables") {
     return <TablesWorkspace tables={tables} />;
   }
@@ -1050,6 +1065,471 @@ function OrbitalLadder({ orbitals, windowSize }: { orbitals: OrbitalPoint[]; win
         {hovered
           ? `${hovered.label}: ${shortValue(hovered.energy)} eV, occ=${hovered.occupation === null ? "unknown" : shortValue(hovered.occupation)}`
           : `Showing orbitals ${visible[0]?.label ?? ""} to ${visible[visible.length - 1]?.label ?? ""}.`}
+      </div>
+    </div>
+  );
+}
+
+function GeometryWorkspace({
+  tables,
+  properties,
+  visibleKeys
+}: {
+  tables: TableDataset[];
+  properties: PropertiesResponse | null;
+  visibleKeys: string[];
+}) {
+  const geometryTables = tables.filter(isGeometryTable);
+  const [activeId, setActiveId] = useState("");
+  const activeTable = geometryTables.find((table) => table.id === activeId) ?? geometryTables[0] ?? null;
+
+  useEffect(() => {
+    if (geometryTables.length && !geometryTables.some((table) => table.id === activeId)) {
+      setActiveId(geometryTables[0].id);
+    }
+  }, [activeId, geometryTables]);
+
+  if (!activeTable) {
+    return (
+      <DomainEmpty
+        title="No coordinate table was detected"
+        body="Geometry data is being kept as structured data because no honest coordinate projection can be built from the selected properties."
+        fallback={properties ? <DomainWorkspace view="geometry" properties={properties} visibleKeys={visibleKeys} focusedProperty="" onFocusProperty={() => undefined} tables={tables} /> : null}
+      />
+    );
+  }
+
+  return (
+    <div className="domain-visual-workspace">
+      <div className="canvas-toolbar">
+        <div>
+          <p className="eyebrow">Coordinate projection</p>
+          <h3>{activeTable.title}</h3>
+        </div>
+        <select value={activeTable.id} onChange={(event) => setActiveId(event.target.value)}>
+          {geometryTables.map((table) => <option key={table.id} value={table.id}>{table.title}</option>)}
+        </select>
+      </div>
+      <CoordinateProjection table={activeTable} />
+      <TablePreview table={activeTable} maxRows={8} />
+    </div>
+  );
+}
+
+function CoordinateProjection({ table }: { table: TableDataset }) {
+  const columns = getGeometryColumns(table);
+  const [projection, setProjection] = useState<"xy" | "xz" | "yz">("xy");
+  const [hovered, setHovered] = useState<{ label: string; x: number; y: number; z: number | null; row: number } | null>(null);
+  if (!columns) {
+    return <div className="empty-state">This table does not contain recognizable coordinate columns.</div>;
+  }
+  const atoms = table.rows
+    .map((row, index) => {
+      const x = toNumber(row[columns.x]);
+      const y = toNumber(row[columns.y]);
+      const z = columns.z ? toNumber(row[columns.z]) : null;
+      if (x === null || y === null) {
+        return null;
+      }
+      const symbol = columns.symbol ? String(row[columns.symbol] ?? `Atom ${index + 1}`) : `Atom ${index + 1}`;
+      return { label: symbol, x, y, z, row: index + 1 };
+    })
+    .filter((point): point is { label: string; x: number; y: number; z: number | null; row: number } => point !== null)
+    .slice(0, 350);
+  if (!atoms.length) {
+    return <div className="empty-state">The coordinate columns did not contain numeric atoms.</div>;
+  }
+  const axis = projection === "xy" ? ["x", "y"] : projection === "xz" ? ["x", "z"] : ["y", "z"];
+  const xValues = atoms.map((atom) => atom[axis[0] as "x" | "y"] ?? 0);
+  const yValues = atoms.map((atom) => (axis[1] === "z" ? atom.z ?? 0 : atom.y));
+  const minX = Math.min(...xValues);
+  const maxX = Math.max(...xValues);
+  const minY = Math.min(...yValues);
+  const maxY = Math.max(...yValues);
+  const spanX = maxX - minX || 1;
+  const spanY = maxY - minY || 1;
+  const width = 1040;
+  const height = 520;
+  const pad = { left: 70, right: 30, top: 34, bottom: 58 };
+  const xScale = (value: number) => pad.left + ((value - minX) / spanX) * (width - pad.left - pad.right);
+  const yScale = (value: number) => height - pad.bottom - ((value - minY) / spanY) * (height - pad.top - pad.bottom);
+  return (
+    <div className="primary-chart">
+      <div className="axis-controls">
+        {(["xy", "xz", "yz"] as const).map((option) => (
+          <button type="button" key={option} className={projection === option ? "segmented active" : "segmented"} onClick={() => setProjection(option)}>
+            {option.toUpperCase()}
+          </button>
+        ))}
+      </div>
+      <svg className="coordinate-svg" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Coordinate projection">
+        <rect x="0" y="0" width={width} height={height} className="chart-bg" />
+        <line x1={pad.left} y1={height - pad.bottom} x2={width - pad.right} y2={height - pad.bottom} className="axis-line" />
+        <line x1={pad.left} y1={pad.top} x2={pad.left} y2={height - pad.bottom} className="axis-line" />
+        {atoms.map((atom) => {
+          const x = atom[axis[0] as "x" | "y"];
+          const y = axis[1] === "z" ? atom.z ?? 0 : atom.y;
+          return (
+            <g key={`${atom.row}-${atom.label}`} onMouseEnter={() => setHovered(atom)} onMouseLeave={() => setHovered(null)}>
+              <circle cx={xScale(x)} cy={yScale(y)} r={elementRadius(atom.label)} className={`atom-dot element-${elementClass(atom.label)}`} />
+              <text x={xScale(x) + 8} y={yScale(y) - 8} className="atom-label">{atom.label}</text>
+            </g>
+          );
+        })}
+        <text x={width / 2} y={height - 12} textAnchor="middle" className="axis-title">{axis[0]} coordinate</text>
+        <text x={16} y={24} className="axis-title">{axis[1]} coordinate</text>
+      </svg>
+      <div className="plot-readout">
+        {hovered
+          ? `Row ${hovered.row} ${hovered.label}: x=${shortValue(hovered.x)}, y=${shortValue(hovered.y)}, z=${hovered.z === null ? "N/A" : shortValue(hovered.z)}`
+          : `Showing ${atoms.length} atom(s) as a ${projection.toUpperCase()} coordinate projection.`}
+      </div>
+    </div>
+  );
+}
+
+function PopulationWorkspace({
+  tables,
+  properties,
+  visibleKeys
+}: {
+  tables: TableDataset[];
+  properties: PropertiesResponse | null;
+  visibleKeys: string[];
+}) {
+  const populationTables = tables.filter(isPopulationTable);
+  const [activeId, setActiveId] = useState("");
+  const activeTable = populationTables.find((table) => table.id === activeId) ?? populationTables[0] ?? null;
+
+  useEffect(() => {
+    if (populationTables.length && !populationTables.some((table) => table.id === activeId)) {
+      setActiveId(populationTables[0].id);
+    }
+  }, [activeId, populationTables]);
+
+  if (!activeTable) {
+    return (
+      <DomainEmpty
+        title="No population table was detected"
+        body="The selected data did not expose charge, spin-population, or bond-order columns suitable for a population chart."
+        fallback={properties ? <DomainWorkspace view="populations" properties={properties} visibleKeys={visibleKeys} focusedProperty="" onFocusProperty={() => undefined} tables={tables} /> : null}
+      />
+    );
+  }
+  return (
+    <div className="domain-visual-workspace">
+      <div className="canvas-toolbar">
+        <div>
+          <p className="eyebrow">Signed population bars</p>
+          <h3>{activeTable.title}</h3>
+        </div>
+        <select value={activeTable.id} onChange={(event) => setActiveId(event.target.value)}>
+          {populationTables.map((table) => <option key={table.id} value={table.id}>{table.title}</option>)}
+        </select>
+      </div>
+      <PopulationBarChart table={activeTable} />
+      <TablePreview table={activeTable} maxRows={10} />
+    </div>
+  );
+}
+
+function PopulationBarChart({ table }: { table: TableDataset }) {
+  const columns = getPopulationColumns(table);
+  const [hovered, setHovered] = useState<{ label: string; value: number; row: number } | null>(null);
+  if (!columns) {
+    return <div className="empty-state">This table does not contain a recognizable population value.</div>;
+  }
+  const points = table.rows
+    .map((row, index) => {
+      const value = toNumber(row[columns.value]);
+      if (value === null) {
+        return null;
+      }
+      const label = columns.label ? String(row[columns.label] ?? `Row ${index + 1}`) : `Row ${index + 1}`;
+      return { label, value, row: index + 1 };
+    })
+    .filter((point): point is { label: string; value: number; row: number } => point !== null)
+    .slice(0, 80);
+  if (!points.length) {
+    return <div className="empty-state">No numeric population values were found.</div>;
+  }
+  const maxAbs = Math.max(...points.map((point) => Math.abs(point.value)), 1);
+  return (
+    <div className="primary-chart population-chart">
+      <div className="population-bar-list">
+        {points.map((point) => (
+          <button
+            type="button"
+            key={`${point.row}-${point.label}`}
+            className={point.value < 0 ? "population-row negative" : "population-row"}
+            onMouseEnter={() => setHovered(point)}
+            onMouseLeave={() => setHovered(null)}
+          >
+            <span>{point.label}</span>
+            <b className="zero-axis" />
+            <i style={{ width: `${Math.max(2, (Math.abs(point.value) / maxAbs) * 48)}%` }} />
+            <strong>{shortValue(point.value)}</strong>
+          </button>
+        ))}
+      </div>
+      <div className="plot-readout">
+        {hovered
+          ? `Row ${hovered.row} ${hovered.label}: ${columns.value}=${shortValue(hovered.value)}`
+          : `Showing ${points.length} value(s) from ${columns.value}. Positive and negative bars are separated by the center axis.`}
+      </div>
+    </div>
+  );
+}
+
+function ExcitedStatesWorkspace({
+  tables,
+  properties,
+  visibleKeys
+}: {
+  tables: TableDataset[];
+  properties: PropertiesResponse | null;
+  visibleKeys: string[];
+}) {
+  const stateTables = tables.filter(isExcitedStateTable);
+  const [activeId, setActiveId] = useState("");
+  const activeTable = stateTables.find((table) => table.id === activeId) ?? stateTables[0] ?? null;
+
+  useEffect(() => {
+    if (stateTables.length && !stateTables.some((table) => table.id === activeId)) {
+      setActiveId(stateTables[0].id);
+    }
+  }, [activeId, stateTables]);
+
+  if (!activeTable) {
+    return (
+      <DomainEmpty
+        title="No excited-state energy table was detected"
+        body="Excited-state data is available only as structured records or spectra for this selection."
+        fallback={properties ? <DomainWorkspace view="excited" properties={properties} visibleKeys={visibleKeys} focusedProperty="" onFocusProperty={() => undefined} tables={tables} /> : null}
+      />
+    );
+  }
+  return (
+    <div className="domain-visual-workspace">
+      <div className="canvas-toolbar">
+        <div>
+          <p className="eyebrow">State energy ladder</p>
+          <h3>{activeTable.title}</h3>
+        </div>
+        <select value={activeTable.id} onChange={(event) => setActiveId(event.target.value)}>
+          {stateTables.map((table) => <option key={table.id} value={table.id}>{table.title}</option>)}
+        </select>
+      </div>
+      <StateEnergyChart table={activeTable} />
+      <TablePreview table={activeTable} maxRows={10} />
+    </div>
+  );
+}
+
+function MultiReferenceWorkspace({
+  tables,
+  properties,
+  visibleKeys
+}: {
+  tables: TableDataset[];
+  properties: PropertiesResponse | null;
+  visibleKeys: string[];
+}) {
+  const stateTables = tables.filter((table) => isMultiReferenceTable(table) && isExcitedStateTable(table));
+  const [activeId, setActiveId] = useState("");
+  const activeTable = stateTables.find((table) => table.id === activeId) ?? stateTables[0] ?? null;
+
+  useEffect(() => {
+    if (stateTables.length && !stateTables.some((table) => table.id === activeId)) {
+      setActiveId(stateTables[0].id);
+    }
+  }, [activeId, stateTables]);
+
+  if (!activeTable) {
+    return (
+      <DomainEmpty
+        title="No multireference state table was detected"
+        body="The CASSCF/NEVPT2 domain is present, but no energy-ladder table was found in the selected properties."
+        fallback={properties ? <DomainWorkspace view="multireference" properties={properties} visibleKeys={visibleKeys} focusedProperty="" onFocusProperty={() => undefined} tables={tables} /> : null}
+      />
+    );
+  }
+  return (
+    <div className="domain-visual-workspace">
+      <div className="canvas-toolbar">
+        <div>
+          <p className="eyebrow">CASSCF / NEVPT2 state ladder</p>
+          <h3>{activeTable.title}</h3>
+        </div>
+        <select value={activeTable.id} onChange={(event) => setActiveId(event.target.value)}>
+          {stateTables.map((table) => <option key={table.id} value={table.id}>{table.title}</option>)}
+        </select>
+      </div>
+      <StateEnergyChart table={activeTable} />
+      <TablePreview table={activeTable} maxRows={10} />
+    </div>
+  );
+}
+
+function StateEnergyChart({ table }: { table: TableDataset }) {
+  const columns = getStateColumns(table);
+  const [hovered, setHovered] = useState<{ label: string; energy: number; oscillator: number | null; row: number } | null>(null);
+  if (!columns) {
+    return <div className="empty-state">This table does not contain state/root energy columns.</div>;
+  }
+  const states = table.rows
+    .map((row, index) => {
+      const energy = toNumber(row[columns.energy]);
+      if (energy === null) {
+        return null;
+      }
+      const state = columns.state ? String(row[columns.state] ?? index + 1) : String(index + 1);
+      const root = columns.root ? String(row[columns.root] ?? "") : "";
+      return {
+        label: root ? `S${state} / root ${root}` : `State ${state}`,
+        energy,
+        oscillator: columns.oscillator ? toNumber(row[columns.oscillator]) : null,
+        row: index + 1
+      };
+    })
+    .filter((point): point is { label: string; energy: number; oscillator: number | null; row: number } => point !== null)
+    .slice(0, 80);
+  if (!states.length) {
+    return <div className="empty-state">No numeric state energies were found.</div>;
+  }
+  const minEnergy = Math.min(...states.map((state) => state.energy), 0);
+  const maxEnergy = Math.max(...states.map((state) => state.energy), 1);
+  const span = maxEnergy - minEnergy || 1;
+  const width = 1040;
+  const height = 520;
+  const pad = { left: 72, right: 28, top: 36, bottom: 66 };
+  const xStep = (width - pad.left - pad.right) / Math.max(states.length, 1);
+  const yScale = (value: number) => height - pad.bottom - ((value - minEnergy) / span) * (height - pad.top - pad.bottom);
+  const maxOsc = Math.max(...states.map((state) => state.oscillator ?? 0), 0);
+  return (
+    <div className="primary-chart">
+      <svg className="state-svg" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Excited state energy ladder">
+        <rect x="0" y="0" width={width} height={height} className="chart-bg" />
+        <line x1={pad.left} y1={height - pad.bottom} x2={width - pad.right} y2={height - pad.bottom} className="axis-line" />
+        <line x1={pad.left} y1={pad.top} x2={pad.left} y2={height - pad.bottom} className="axis-line" />
+        {states.map((state, index) => {
+          const x = pad.left + index * xStep + xStep / 2;
+          const y = yScale(state.energy);
+          const radius = state.oscillator && maxOsc > 0 ? 5 + (state.oscillator / maxOsc) * 12 : 6;
+          return (
+            <g key={`${state.row}-${state.label}`} onMouseEnter={() => setHovered(state)} onMouseLeave={() => setHovered(null)}>
+              <line x1={x - 14} x2={x + 14} y1={y} y2={y} className="state-level" />
+              <circle cx={x} cy={y} r={radius} className="state-dot" />
+              {index < 24 && <text x={x} y={height - 32} textAnchor="middle" className="axis-label">{index + 1}</text>}
+            </g>
+          );
+        })}
+        <text x={width / 2} y={height - 10} textAnchor="middle" className="axis-title">state order</text>
+        <text x={16} y={24} className="axis-title">{columns.energy}</text>
+      </svg>
+      <div className="plot-readout">
+        {hovered
+          ? `${hovered.label}: ${columns.energy}=${shortValue(hovered.energy)}${hovered.oscillator !== null ? `, oscillator=${shortValue(hovered.oscillator)}` : ""}`
+          : `Showing ${states.length} state(s). Circle size reflects oscillator strength when available.`}
+      </div>
+    </div>
+  );
+}
+
+function OptimizationWorkspace({
+  tables,
+  properties,
+  visibleKeys
+}: {
+  tables: TableDataset[];
+  properties: PropertiesResponse | null;
+  visibleKeys: string[];
+}) {
+  const seriesTables = tables.filter(isOptimizationTable);
+  const [activeId, setActiveId] = useState("");
+  const activeTable = seriesTables.find((table) => table.id === activeId) ?? seriesTables[0] ?? null;
+
+  useEffect(() => {
+    if (seriesTables.length && !seriesTables.some((table) => table.id === activeId)) {
+      setActiveId(seriesTables[0].id);
+    }
+  }, [activeId, seriesTables]);
+
+  if (!activeTable) {
+    return (
+      <DomainEmpty
+        title="No trajectory-like optimization table was detected"
+        body="No line plot was drawn because the selected data does not contain an ordered cycle/iteration series."
+        fallback={properties ? <DomainWorkspace view="optimization" properties={properties} visibleKeys={visibleKeys} focusedProperty="" onFocusProperty={() => undefined} tables={tables} /> : null}
+      />
+    );
+  }
+  return (
+    <div className="domain-visual-workspace">
+      <div className="canvas-toolbar">
+        <div>
+          <p className="eyebrow">Optimization trajectory</p>
+          <h3>{activeTable.title}</h3>
+        </div>
+        <select value={activeTable.id} onChange={(event) => setActiveId(event.target.value)}>
+          {seriesTables.map((table) => <option key={table.id} value={table.id}>{table.title}</option>)}
+        </select>
+      </div>
+      <OptimizationTrajectory table={activeTable} />
+      <TablePreview table={activeTable} maxRows={10} />
+    </div>
+  );
+}
+
+function OptimizationTrajectory({ table }: { table: TableDataset }) {
+  const columns = getOptimizationColumns(table);
+  const [hovered, setHovered] = useState<{ x: number; y: number; row: number } | null>(null);
+  if (!columns) {
+    return <div className="empty-state">This table does not contain cycle/iteration and value columns.</div>;
+  }
+  const points = table.rows
+    .map((row, index) => {
+      const x = columns.x ? toNumber(row[columns.x]) ?? index + 1 : index + 1;
+      const y = toNumber(row[columns.y]);
+      if (y === null) {
+        return null;
+      }
+      return { x, y, row: index + 1 };
+    })
+    .filter((point): point is { x: number; y: number; row: number } => point !== null)
+    .slice(0, 250);
+  if (points.length < 2) {
+    return <div className="empty-state">A trajectory plot needs at least two numeric ordered points.</div>;
+  }
+  const width = 1040;
+  const height = 500;
+  const pad = { left: 72, right: 28, top: 36, bottom: 62 };
+  const xMin = Math.min(...points.map((point) => point.x));
+  const xMax = Math.max(...points.map((point) => point.x));
+  const yMin = Math.min(...points.map((point) => point.y));
+  const yMax = Math.max(...points.map((point) => point.y));
+  const xSpan = xMax - xMin || 1;
+  const ySpan = yMax - yMin || 1;
+  const xScale = (value: number) => pad.left + ((value - xMin) / xSpan) * (width - pad.left - pad.right);
+  const yScale = (value: number) => height - pad.bottom - ((value - yMin) / ySpan) * (height - pad.top - pad.bottom);
+  const linePoints = points.map((point) => `${xScale(point.x)},${yScale(point.y)}`).join(" ");
+  return (
+    <div className="primary-chart">
+      <svg className="trajectory-svg" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Optimization trajectory">
+        <rect x="0" y="0" width={width} height={height} className="chart-bg" />
+        <line x1={pad.left} y1={height - pad.bottom} x2={width - pad.right} y2={height - pad.bottom} className="axis-line" />
+        <line x1={pad.left} y1={pad.top} x2={pad.left} y2={height - pad.bottom} className="axis-line" />
+        <polyline points={linePoints} className="trajectory-line" fill="none" />
+        {points.map((point) => (
+          <circle key={`${point.row}-${point.x}-${point.y}`} cx={xScale(point.x)} cy={yScale(point.y)} r={5} className="trajectory-point" onMouseEnter={() => setHovered(point)} onMouseLeave={() => setHovered(null)} />
+        ))}
+        <text x={width / 2} y={height - 10} textAnchor="middle" className="axis-title">{columns.x ?? "row index"}</text>
+        <text x={16} y={24} className="axis-title">{columns.y}</text>
+      </svg>
+      <div className="plot-readout">
+        {hovered
+          ? `Row ${hovered.row}: ${columns.x ?? "index"}=${shortValue(hovered.x)}, ${columns.y}=${shortValue(hovered.y)}`
+          : `Showing ${points.length} ordered optimization point(s).`}
       </div>
     </div>
   );
@@ -1606,6 +2086,85 @@ function collectNumericPoints(value: unknown, path: string, points: NumericPoint
   return points;
 }
 
+function isGeometryTable(table: TableDataset) {
+  const context = `${table.title} ${table.path} ${table.propertyKey}`.toLowerCase();
+  return /geometry|coordinate|cartesian/.test(context) && Boolean(getGeometryColumns(table));
+}
+
+function getGeometryColumns(table: TableDataset) {
+  const x = findExactColumn(table.columns, ["x_ang", "x_au", "x", "x_coord", "x_coordinate"]);
+  const y = findExactColumn(table.columns, ["y_ang", "y_au", "y", "y_coord", "y_coordinate"]);
+  if (!x || !y) {
+    return null;
+  }
+  return {
+    symbol: findExactColumn(table.columns, ["symbol", "element", "atom", "atom_symbol"]),
+    x,
+    y,
+    z: findExactColumn(table.columns, ["z_ang", "z_au", "z", "z_coord", "z_coordinate"])
+  };
+}
+
+function isPopulationTable(table: TableDataset) {
+  const context = `${table.title} ${table.path} ${table.propertyKey}`.toLowerCase();
+  const hasPopulationContext = /population|mulliken|loewdin|nbo|npa|mayer|hirshfeld|mbis|chelpg|charge|bond/.test(context);
+  return hasPopulationContext && Boolean(getPopulationColumns(table));
+}
+
+function getPopulationColumns(table: TableDataset) {
+  const value =
+    findExactColumn(table.columns, ["natural_charge", "charge", "spin_population", "population", "bond_order", "order"]) ??
+    findColumn(table.columns, ["charge", "spinpopulation", "population", "bondorder"]);
+  if (!value) {
+    return null;
+  }
+  return {
+    label: findExactColumn(table.columns, ["label", "atom", "symbol", "element", "atom_label", "bond"]),
+    value
+  };
+}
+
+function isExcitedStateTable(table: TableDataset) {
+  const context = `${table.title} ${table.path} ${table.propertyKey}`.toLowerCase();
+  const hasStateContext = /state|root|tddft|cis|excited|eom|steom|casscf|nevpt2|transition/.test(context);
+  return hasStateContext && Boolean(getStateColumns(table));
+}
+
+function getStateColumns(table: TableDataset) {
+  const energy = findExactColumn(table.columns, ["energy_ev", "de_ev", "de_ev_", "excitation_energy_ev", "energy"]) ?? findColumn(table.columns, ["energyev", "deev"]);
+  if (!energy) {
+    return null;
+  }
+  return {
+    state: findExactColumn(table.columns, ["state", "state_index", "energy_rank"]),
+    root: findExactColumn(table.columns, ["root", "orca_root", "root_index"]),
+    energy,
+    oscillator: findColumn(table.columns, ["fosc", "oscillator", "intensity"])
+  };
+}
+
+function isOptimizationTable(table: TableDataset) {
+  const context = `${table.title} ${table.path} ${table.propertyKey}`.toLowerCase();
+  const hasSeriesContext = /optimization|trajectory|convergence|cycle|iteration|geom_opt|job_series/.test(context);
+  return hasSeriesContext && Boolean(getOptimizationColumns(table));
+}
+
+function getOptimizationColumns(table: TableDataset) {
+  const x = findExactColumn(table.columns, ["cycle", "iteration", "step", "macro_iteration", "row"]);
+  const y =
+    findExactColumn(table.columns, ["energy", "energy_eh", "delta_e", "de", "gradient", "rms_gradient", "max_gradient", "residual"]) ??
+    findColumn(table.columns, ["energy", "gradient", "residual", "delta"]);
+  if (!y) {
+    return null;
+  }
+  return { x, y };
+}
+
+function isMultiReferenceTable(table: TableDataset) {
+  const context = `${table.title} ${table.path} ${table.propertyKey}`.toLowerCase();
+  return /casscf|nevpt2|qd|soc|multireference/.test(context);
+}
+
 function isSpectraTable(table: TableDataset) {
   const context = `${table.title} ${table.path} ${table.propertyKey}`.toLowerCase();
   const hasSpectrumContext = /spectr|absorption|cd|transition/.test(context);
@@ -1688,6 +2247,25 @@ function findExactColumn(columns: string[], needles: string[]) {
 
 function normalizeColumn(column: string) {
   return column.toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
+function elementClass(symbol: string) {
+  const clean = symbol.replace(/[^A-Za-z]/g, "").slice(0, 2).toLowerCase();
+  return clean || "x";
+}
+
+function elementRadius(symbol: string) {
+  const clean = elementClass(symbol);
+  if (clean === "h") {
+    return 5;
+  }
+  if (clean === "br" || clean === "i") {
+    return 10;
+  }
+  if (clean === "s" || clean === "p" || clean === "cl") {
+    return 8;
+  }
+  return 7;
 }
 
 function compactPathLabel(path: string) {
