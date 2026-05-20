@@ -86,6 +86,11 @@ export type SnapshotResponse = {
   snapshots: Record<string, unknown>;
 };
 
+export type PropertiesResponse = {
+  property_keys: string[];
+  properties: Record<string, unknown>;
+};
+
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, {
     headers: {
@@ -154,4 +159,8 @@ export function getProvenance(jobId: string) {
 
 export function getSnapshots(jobId: string) {
   return request<SnapshotResponse>(`/api/jobs/${jobId}/snapshots`);
+}
+
+export function getProperties(jobId: string) {
+  return request<PropertiesResponse>(`/api/jobs/${jobId}/properties`);
 }

@@ -187,11 +187,14 @@ orca_workbench
 
 After a build, open `http://127.0.0.1:8765`.
 
-ORCA Workbench is a parser-backed scientific dashboard. It lets you paste local
-ORCA `.out` / `.log` files or folders, ask the backend to discover outputs,
-choose parser aliases/sections, run a batch parse, export
-JSON/CSV/Markdown/HDF5 artifacts, and inspect normalized `job_snapshot`,
-`job_series`, and `final_snapshot` views without reading raw ORCA text first.
+ORCA Workbench is a parser-backed scientific dashboard. It lets you open local
+ORCA `.out` / `.log` files or folders with native file dialogs, automatically
+parses the selected outputs, discovers the property blocks actually present,
+selects those parsed properties for viewing by default, and then lets you
+unselect/reselect properties as a visualization filter. JSON/CSV/Markdown/HDF5
+exports remain available, but the default workflow is now data-first:
+open outputs -> parse everything discoverable -> inspect and filter the
+scientific data surface.
 
 The workbench is intentionally a wrapper around the existing parser. It does
 not reimplement population, NBO, spectra, TDDFT, CASSCF, NEVPT2, or any other

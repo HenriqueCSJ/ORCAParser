@@ -1,6 +1,6 @@
 from fastapi.testclient import TestClient
 
-from orca_workbench.server import create_app
+from orca_workbench.server import _parsed_property_payload, create_app
 
 
 def test_workbench_server_health_and_registries():
@@ -80,3 +80,21 @@ def test_workbench_server_empty_batch_rejects_cleanly(tmp_path):
 
     assert response.status_code == 400
     assert "No ORCA" in response.text
+
+
+def test_parsed_property_payload_exposes_real_blocks_only():
+    payload = _parsed_property_payload(
+        {
+            "source_file": "x.out",
+            "context": {"ignored": True},
+            "metadata": {"method": "DFT"},
+            "scf": {"energy": -1},
+            "empty": {},
+            "nbo_parse_error": "bad",
+            "final_snapshot": {"selection": "single_reported_state"},
+        }
+    )
+
+    assert payload["property_keys"] == ["final_snapshot", "metadata", "scf"]
+    assert "context" not in payload["properties"]
+    assert "nbo_parse_error" not in payload["properties"]

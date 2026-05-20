@@ -3,8 +3,8 @@ import {
   DiscoveredFile,
   ExportOptions,
   PluginOption,
+  PropertiesResponse,
   ProvenanceResponse,
-  SectionChoice,
   SnapshotResponse,
   WorkbenchBatch,
   WorkbenchJob,
@@ -12,9 +12,9 @@ import {
   getBatch,
   getHealth,
   getPluginOptions,
+  getProperties,
   getProvenance,
   getSampleFiles,
-  getSections,
   getSnapshots,
   openFilesDialog,
   openFolderDialog,
@@ -23,9 +23,9 @@ import {
 
 const defaultExportOptions: ExportOptions = {
   output_dir: null,
-  write_json: true,
-  write_csv: true,
-  write_markdown: true,
+  write_json: false,
+  write_csv: false,
+  write_markdown: false,
   write_hdf5: false,
   compare_markdown: false,
   detail_scope: "auto"
@@ -35,8 +35,6 @@ function App() {
   const [health, setHealth] = useState("Starting");
   const [pathText, setPathText] = useState("");
   const [outputDir, setOutputDir] = useState("");
-  const [sections, setSections] = useState<SectionChoice[]>([]);
-  const [selectedSections, setSelectedSections] = useState<string[]>(["all"]);
   const [pluginOptions, setPluginOptions] = useState<PluginOption[]>([]);
   const [pluginValues, setPluginValues] = useState<Record<string, string | number | boolean | null>>({});
   const [files, setFiles] = useState<DiscoveredFile[]>([]);
@@ -44,20 +42,20 @@ function App() {
   const [selectedJobId, setSelectedJobId] = useState<string>("");
   const [provenance, setProvenance] = useState<ProvenanceResponse | null>(null);
   const [snapshots, setSnapshots] = useState<SnapshotResponse | null>(null);
-  const [activeTab, setActiveTab] = useState<"summary" | "provenance" | "snapshots" | "outputs">("summary");
+  const [properties, setProperties] = useState<PropertiesResponse | null>(null);
+  const [selectedProperties, setSelectedProperties] = useState<string[]>([]);
+  const [activeTab, setActiveTab] = useState<"summary" | "data" | "provenance" | "snapshots" | "outputs">("summary");
   const [exports, setExports] = useState<ExportOptions>(defaultExportOptions);
   const [message, setMessage] = useState("");
 
   useEffect(() => {
     async function loadMetadata() {
       try {
-        const [healthResponse, sectionResponse, optionResponse] = await Promise.all([
+        const [healthResponse, optionResponse] = await Promise.all([
           getHealth(),
-          getSections(),
           getPluginOptions()
         ]);
         setHealth(`${healthResponse.name} ${healthResponse.version}`);
-        setSections(sectionResponse.sections);
         setPluginOptions(optionResponse.options);
         const values: Record<string, string | number | boolean | null> = {};
         for (const option of optionResponse.options) {
@@ -99,12 +97,20 @@ function App() {
       if (job.status !== "parsed") {
         setProvenance(null);
         setSnapshots(null);
+        setProperties(null);
+        setSelectedProperties([]);
         return;
       }
       try {
-        const [prov, snap] = await Promise.all([getProvenance(job.id), getSnapshots(job.id)]);
+        const [prov, snap, props] = await Promise.all([
+          getProvenance(job.id),
+          getSnapshots(job.id),
+          getProperties(job.id)
+        ]);
         setProvenance(prov);
         setSnapshots(snap);
+        setProperties(props);
+        setSelectedProperties(props.property_keys);
       } catch (error) {
         setMessage(error instanceof Error ? error.message : String(error));
       }
@@ -123,8 +129,7 @@ function App() {
     }
     try {
       const response = await discoverFiles(paths);
-      setFiles(response.files);
-      setMessage(`Discovered ${response.files.length} ORCA output file(s).`);
+      applyDiscoveredFiles(response.files, "Discovered", true);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : String(error));
     }
@@ -134,13 +139,7 @@ function App() {
     setMessage("");
     try {
       const response = await getSampleFiles();
-      setFiles(response.files);
-      setPathText(response.files.map((file) => file.path).join("\n"));
-      setMessage(
-        response.files.length
-          ? `Loaded ${response.files.length} local sample file(s).`
-          : "No local sample_outs folder was found."
-      );
+      applyDiscoveredFiles(response.files, "Loaded", true);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : String(error));
     }
@@ -150,7 +149,7 @@ function App() {
     setMessage("");
     try {
       const response = await openFilesDialog();
-      applyDiscoveredFiles(response.files, "Opened");
+      applyDiscoveredFiles(response.files, "Opened", true);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : String(error));
     }
@@ -160,13 +159,13 @@ function App() {
     setMessage("");
     try {
       const response = await openFolderDialog();
-      applyDiscoveredFiles(response.files, "Opened folder and discovered");
+      applyDiscoveredFiles(response.files, "Opened folder and discovered", true);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : String(error));
     }
   }
 
-  function applyDiscoveredFiles(discoveredFiles: DiscoveredFile[], verb: string) {
+  function applyDiscoveredFiles(discoveredFiles: DiscoveredFile[], verb: string, autoParse = false) {
     setFiles(discoveredFiles);
     setPathText(discoveredFiles.map((file) => file.path).join("\n"));
     setMessage(
@@ -174,6 +173,9 @@ function App() {
         ? `${verb} ${discoveredFiles.length} ORCA output file(s).`
         : "No ORCA .out/.log files were selected."
     );
+    if (autoParse && discoveredFiles.length) {
+      void startParseForFiles(discoveredFiles, `${verb} and parsing ${discoveredFiles.length} file(s)...`);
+    }
   }
 
   async function handleParse() {
@@ -183,11 +185,22 @@ function App() {
       setMessage("Discover or paste at least one ORCA output path first.");
       return;
     }
-    const requestedSections = selectedSections.includes("all") ? null : selectedSections;
+    await startParseForPaths(parsePaths, "Parsing all discovered properties...");
+  }
+
+  async function startParseForFiles(discoveredFiles: DiscoveredFile[], startMessage: string) {
+    await startParseForPaths(discoveredFiles.map((file) => file.path), startMessage);
+  }
+
+  async function startParseForPaths(parsePaths: string[], startMessage: string) {
+    if (!parsePaths.length) {
+      setMessage("No ORCA output paths were found.");
+      return;
+    }
     try {
       const response = await startBatch({
         paths: parsePaths,
-        sections: requestedSections,
+        sections: null,
         plugin_options: pluginValues,
         export_options: {
           ...exports,
@@ -196,25 +209,28 @@ function App() {
       });
       setBatch(response);
       setSelectedJobId(response.jobs[0]?.id ?? "");
-      setMessage(`Started batch with ${response.jobs.length} job(s).`);
+      setActiveTab("summary");
+      setMessage(startMessage || `Started batch with ${response.jobs.length} job(s).`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : String(error));
     }
   }
 
-  function toggleSection(key: string) {
-    if (key === "all") {
-      setSelectedSections(["all"]);
-      return;
-    }
-    setSelectedSections((current) => {
-      const withoutAll = current.filter((item) => item !== "all");
-      if (withoutAll.includes(key)) {
-        const next = withoutAll.filter((item) => item !== key);
-        return next.length ? next : ["all"];
+  function toggleProperty(key: string) {
+    setSelectedProperties((current) => {
+      if (current.includes(key)) {
+        return current.filter((item) => item !== key);
       }
-      return [...withoutAll, key];
+      return [...current, key];
     });
+  }
+
+  function selectAllProperties() {
+    setSelectedProperties(properties?.property_keys ?? []);
+  }
+
+  function clearProperties() {
+    setSelectedProperties([]);
   }
 
   const parsedCount = batch?.jobs.filter((job) => job.status === "parsed").length ?? 0;
@@ -254,22 +270,27 @@ function App() {
 
         <section className="panel">
           <div className="section-head">
-            <h2>Sections</h2>
-            <span>{selectedSections.includes("all") ? "all" : `${selectedSections.length} selected`}</span>
+            <h2>Parsed properties</h2>
+            <span>{selectedProperties.length}/{properties?.property_keys.length ?? 0}</span>
+          </div>
+          <div className="button-pair property-actions">
+            <button type="button" onClick={selectAllProperties}>Select all</button>
+            <button type="button" onClick={clearProperties}>Clear</button>
           </div>
           <div className="chip-grid">
-            {sections.map((section) => (
+            {(properties?.property_keys ?? []).map((key) => (
               <button
                 type="button"
-                key={`${section.kind}-${section.key}`}
-                className={selectedSections.includes(section.key) ? "chip selected" : "chip"}
-                onClick={() => toggleSection(section.key)}
-                title={section.label}
+                key={key}
+                className={selectedProperties.includes(key) ? "chip selected" : "chip"}
+                onClick={() => toggleProperty(key)}
+                title={key}
               >
-                {section.key}
+                {key}
               </button>
             ))}
           </div>
+          {!properties && <p className="quiet-text">Open outputs and Workbench will parse all discoverable properties automatically.</p>}
         </section>
 
         <section className="panel">
@@ -322,7 +343,7 @@ function App() {
             onChange={(event) => setOutputDir(event.target.value)}
             placeholder="Optional output folder"
           />
-          <button className="primary-action" type="button" onClick={handleParse}>Parse queue</button>
+          <button className="primary-action" type="button" onClick={handleParse}>Reparse / export current queue</button>
         </section>
       </aside>
 
@@ -382,7 +403,7 @@ function App() {
               <h2>{selectedJob?.name ?? "No job selected"}</h2>
             </div>
             <div className="tab-row">
-              {(["summary", "provenance", "snapshots", "outputs"] as const).map((tab) => (
+              {(["summary", "data", "provenance", "snapshots", "outputs"] as const).map((tab) => (
                 <button key={tab} className={activeTab === tab ? "tab active" : "tab"} onClick={() => setActiveTab(tab)}>
                   {tab}
                 </button>
@@ -394,6 +415,8 @@ function App() {
             job={selectedJob}
             provenance={provenance}
             snapshots={snapshots}
+            properties={properties}
+            selectedProperties={selectedProperties}
             comparisonPath={batch?.comparison_path ?? null}
           />
         </section>
@@ -420,12 +443,16 @@ function DetailTab({
   job,
   provenance,
   snapshots,
+  properties,
+  selectedProperties,
   comparisonPath
 }: {
-  tab: "summary" | "provenance" | "snapshots" | "outputs";
+  tab: "summary" | "data" | "provenance" | "snapshots" | "outputs";
   job: WorkbenchJob | null;
   provenance: ProvenanceResponse | null;
   snapshots: SnapshotResponse | null;
+  properties: PropertiesResponse | null;
+  selectedProperties: string[];
   comparisonPath: string | null;
 }) {
   if (!job) {
@@ -463,6 +490,23 @@ function DetailTab({
 
   if (tab === "provenance") {
     return <pre className="text-panel">{provenance?.text ?? "Loading provenance..."}</pre>;
+  }
+
+  if (tab === "data") {
+    const selectedData = Object.fromEntries(
+      selectedProperties
+        .filter((key) => properties?.properties && key in properties.properties)
+        .map((key) => [key, properties?.properties[key]])
+    );
+    return (
+      <div className="data-view">
+        <div className="data-view-header">
+          <span>{selectedProperties.length} selected property block(s)</span>
+          <span>{properties?.property_keys.length ?? 0} parsed property block(s)</span>
+        </div>
+        <pre className="text-panel">{JSON.stringify(selectedData, null, 2)}</pre>
+      </div>
+    );
   }
 
   if (tab === "snapshots") {

@@ -314,6 +314,13 @@ def create_app() -> FastAPI:
             return {"snapshots": {}}
         return {"snapshots": _json_preview_to_object(preview_json_views(job.result.data))}
 
+    @app.get("/api/jobs/{job_id}/properties")
+    def get_job_properties(job_id: str) -> dict[str, Any]:
+        job = _get_existing_job(app, job_id)
+        if not job.result or job.result.status != "parsed":
+            return {"properties": {}, "property_keys": []}
+        return _parsed_property_payload(job.result.data)
+
     _mount_frontend(app)
     return app
 
@@ -340,6 +347,53 @@ def _files_payload(paths: list[Path]) -> dict[str, Any]:
             }
             for path in paths
         ]
+    }
+
+
+def _parsed_property_payload(data: dict[str, Any]) -> dict[str, Any]:
+    """Return top-level parsed properties suitable for Workbench visualization."""
+
+    hidden = {
+        "source_file",
+        "context",
+        "plugin_options",
+    }
+    priority = {
+        "job_snapshot": 0,
+        "final_snapshot": 1,
+        "job_series": 2,
+        "metadata": 3,
+        "scf": 4,
+        "geometry": 5,
+        "geom_opt": 6,
+        "surface_scan": 7,
+        "goat": 8,
+        "orbital_energies": 9,
+        "dipole": 10,
+        "tddft": 11,
+        "casscf": 12,
+        "coupled_cluster": 13,
+        "eom_steom": 14,
+        "density_analysis": 15,
+        "nbo": 16,
+        "mulliken": 17,
+        "loewdin": 18,
+        "mayer": 19,
+        "hirshfeld": 20,
+        "mbis": 21,
+        "chelpg": 22,
+    }
+    entries: list[tuple[str, Any]] = []
+    for key, value in data.items():
+        if key in hidden or key.endswith("_parse_error"):
+            continue
+        if value in (None, {}, []):
+            continue
+        entries.append((key, value))
+    entries.sort(key=lambda item: (priority.get(item[0], 100), item[0]))
+    return {
+        "property_keys": [key for key, _value in entries],
+        "properties": {key: value for key, value in entries},
     }
 
 

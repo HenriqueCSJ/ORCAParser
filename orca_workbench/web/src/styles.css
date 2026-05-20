@@ -130,6 +130,10 @@ button {
   margin-bottom: 8px;
 }
 
+.property-actions {
+  margin-bottom: 8px;
+}
+
 textarea {
   width: 100%;
   min-height: 100px;
@@ -448,6 +452,23 @@ tr:hover,
   color: #1c282e;
   overflow: auto;
   white-space: pre-wrap;
+}
+
+.data-view {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.data-view-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 12px;
+  color: #65747d;
+  font-size: 0.84rem;
+  font-weight: 700;
 }
 
 .empty-state {
