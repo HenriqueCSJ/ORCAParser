@@ -129,6 +129,105 @@ def _render_tddft_spectra_section(
     return "\n\n".join(sections)
 
 
+def _render_tddft_trajectory_section(
+    tddft: Dict[str, Any],
+    *,
+    format_number: FormatNumber,
+    make_table: MakeTable,
+    yes_no_unknown: YesNoUnknown,
+) -> str:
+    """Render the cycle-aware TDDFT/CIS optimization trajectory diagnostics."""
+    trajectory = tddft.get("trajectory") or {}
+    step_summaries = trajectory.get("step_summaries") or []
+    if not step_summaries:
+        return ""
+
+    final_summary = trajectory.get("final_summary") or {}
+    lines = ["### TDDFT/CIS Optimization-Step State Tracking"]
+    meta_bits = []
+    if final_summary.get("trajectory_class"):
+        meta_bits.append(f"class={final_summary['trajectory_class']}")
+    if final_summary.get("manifold"):
+        meta_bits.append(f"manifold={final_summary['manifold']}")
+    if final_summary.get("step_count"):
+        meta_bits.append(f"steps={final_summary['step_count']}")
+    if final_summary.get("final_S1_wavelength_nm") not in (None, ""):
+        meta_bits.append(
+            "final S1="
+            + format_number(final_summary.get("final_S1_wavelength_nm"), ".1f")
+            + " nm"
+        )
+    if final_summary.get("final_S1_oscillator_strength") not in (None, ""):
+        meta_bits.append(
+            "f(S1)="
+            + format_number(final_summary.get("final_S1_oscillator_strength"), ".6f")
+        )
+    if final_summary.get("final_brightest_state_label"):
+        meta_bits.append(
+            "brightest="
+            + str(final_summary.get("final_brightest_state_label"))
+            + f" (root {final_summary.get('final_brightest_orca_root')})"
+        )
+    if meta_bits:
+        lines.append(" | ".join(meta_bits))
+
+    optimization_steps = [
+        step
+        for step in step_summaries
+        if step.get("source_context") == "optimization_step_spectrum"
+    ]
+    display_steps = optimization_steps or step_summaries
+    if len(display_steps) > 12:
+        display_steps = display_steps[:4] + display_steps[-8:]
+
+    rows = [(
+        "step",
+        "cycle",
+        "manifold",
+        "followed root",
+        "followed state",
+        "S1 root",
+        "S1 eV",
+        "S1 nm",
+        "f(S1)",
+        "S2-S1 eV",
+        "brightest",
+        "overlap",
+        "near?",
+        "flip?",
+    )]
+    for step in display_steps:
+        brightest = "—"
+        if step.get("brightest_all_state_label"):
+            brightest = (
+                str(step.get("brightest_all_state_label"))
+                + f"/root {step.get('brightest_all_orca_root')}"
+            )
+        rows.append((
+            str(step.get("step_index", "")),
+            str(step.get("optimization_cycle", "") or "—"),
+            str(step.get("manifold", "") or "—"),
+            str(step.get("followed_or_target_root", "") or "—"),
+            str(step.get("followed_or_target_state_label", "") or "—"),
+            str(step.get("S1_orca_root", "") or "—"),
+            format_number(step.get("S1_energy_eV"), ".4f"),
+            format_number(step.get("S1_wavelength_nm"), ".1f"),
+            format_number(step.get("S1_oscillator_strength"), ".6f"),
+            format_number(step.get("S2_minus_S1_eV"), ".4f"),
+            brightest,
+            format_number(step.get("root_following_overlap"), ".4f"),
+            yes_no_unknown(step.get("near_degeneracy_flag")),
+            yes_no_unknown(step.get("possible_root_flip_flag")),
+        ))
+    lines.append(make_table(rows))
+
+    if len(step_summaries) != len(display_steps):
+        lines.append(
+            "Full per-state and per-step trajectory diagnostics are exported in the TDDFT trajectory CSV files."
+        )
+    return "\n\n".join(lines)
+
+
 def _significant_state_transitions(
     state: Dict[str, Any],
     *,
@@ -375,6 +474,15 @@ def render_tddft_section(
     )
     if spectra_section:
         lines.append(spectra_section)
+
+    trajectory_section = _render_tddft_trajectory_section(
+        tddft,
+        format_number=format_number,
+        make_table=make_table,
+        yes_no_unknown=yes_no_unknown,
+    )
+    if trajectory_section:
+        lines.append(trajectory_section)
 
     total_energy = tddft.get("total_energy", {})
     if total_energy:

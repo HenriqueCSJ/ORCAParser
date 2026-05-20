@@ -15,9 +15,13 @@ Extracts all NBO sections:
   - NLMO analysis (hybridization/polarization, bond orders, steric)
   - NPEPA
   - NBO summary table
+  - Repeated-block provenance for optimization outputs
 
 For UHF/UKS: all NBO sections are parsed separately for alpha and beta spins.
 The overall NPA (with spin density column) is also captured.
+For optimization outputs with repeated NBO runs, the final valid block is used
+for density-sensitive NPA data while non-density subsections printed only in an
+earlier block are preserved with supplemental block provenance.
 """
 
 from __future__ import annotations
@@ -46,10 +50,183 @@ from .base import BaseModule
 # ---------------------------------------------------------------------------
 
 def _find_nbo_start(lines: List[str]) -> int:
-    for i, ln in enumerate(lines):
-        if "NBO 7." in ln and "***" in ln:
-            return i
-    return -1
+    blocks = _find_nbo_blocks(lines)
+    if not blocks:
+        return -1
+    return int(blocks[0]["line_start_index"])
+
+
+def _find_nbo_blocks(lines: List[str]) -> List[Dict[str, Any]]:
+    """Return all NBO 7 blocks with enough provenance to choose safely."""
+
+    blocks: List[Dict[str, Any]] = []
+    current_cycle: Optional[int] = None
+    last_final_stationary: Optional[int] = None
+
+    for idx, line in enumerate(lines):
+        cycle_match = re.search(r"GEOMETRY OPTIMIZATION CYCLE\s+(\d+)", line, re.I)
+        if cycle_match:
+            current_cycle = int(cycle_match.group(1))
+        if "FINAL ENERGY EVALUATION AT THE STATIONARY POINT" in line.upper():
+            last_final_stationary = idx
+        if "NBO 7." in line and "***" in line:
+            blocks.append({
+                "line_start_index": idx,
+                "line_start": idx + 1,
+                "optimization_cycle": current_cycle,
+                "is_after_final_stationary": last_final_stationary is not None,
+                "final_stationary_line": (
+                    last_final_stationary + 1
+                    if last_final_stationary is not None
+                    else None
+                ),
+            })
+
+    for block_index, block in enumerate(blocks):
+        start = int(block["line_start_index"])
+        end = (
+            int(blocks[block_index + 1]["line_start_index"])
+            if block_index + 1 < len(blocks)
+            else len(lines)
+        )
+        block["nbo_block_index"] = block_index + 1
+        block["nbo_block_count"] = len(blocks)
+        block["line_end_index"] = end
+        block["line_end"] = end
+        block["has_npa_summary"] = any(
+            "Summary of Natural Population Analysis:" in line
+            for line in lines[start:end]
+        )
+        block.update(_infer_nbo_density_context(lines, start))
+
+    return blocks
+
+
+def _infer_nbo_density_context(lines: List[str], nbo_start: int) -> Dict[str, Any]:
+    """Infer which density a printed NBO block follows."""
+
+    meta: Dict[str, Any] = {
+        "density_context": "reference_scf",
+        "density_kind": "scf",
+        "excited_state_specific": False,
+    }
+    scan_start = max(0, nbo_start - 6000)
+    context_line: Optional[int] = None
+    for idx in range(nbo_start - 1, scan_start - 1, -1):
+        upper = lines[idx].upper()
+        if "NBO 7." in upper and "***" in upper:
+            break
+        if "RELAXED CIS/TDA DENSITY POPULATION ANALYSIS" in upper:
+            context_line = idx
+            meta.update({
+                "density_context": "excited_state",
+                "density_kind": "relaxed_cis_tda",
+                "excited_state_specific": True,
+                "density_context_line": idx + 1,
+            })
+            break
+        if "UNRELAXED CIS/TDA DENSITY POPULATION ANALYSIS" in upper:
+            context_line = idx
+            meta.update({
+                "density_context": "excited_state",
+                "density_kind": "unrelaxed_cis_tda",
+                "excited_state_specific": True,
+                "density_context_line": idx + 1,
+            })
+            break
+
+    if context_line is not None:
+        for idx in range(context_line, nbo_start):
+            root_match = re.search(r"\bIROOT\s+(\d+)\b", lines[idx], re.I)
+            if root_match:
+                meta["root"] = int(root_match.group(1))
+            density_match = re.search(
+                r"Input electron density\s+\.+\s+(\S+)",
+                lines[idx],
+                re.I,
+            )
+            if density_match:
+                meta["input_electron_density_file"] = density_match.group(1)
+            base_match = re.search(
+                r"BaseName \([^)]*\)\s+\.+\s+(\S+)",
+                lines[idx],
+                re.I,
+            )
+            if base_match:
+                meta["base_name"] = base_match.group(1)
+
+    return meta
+
+
+def _select_nbo_block(blocks: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Choose the final trustworthy NBO block instead of the first occurrence."""
+
+    valid = [block for block in blocks if block.get("has_npa_summary")]
+    if not valid:
+        valid = list(blocks)
+    if not valid:
+        return None
+
+    final_excited = [
+        block
+        for block in valid
+        if block.get("is_after_final_stationary")
+        and block.get("density_context") == "excited_state"
+    ]
+    if final_excited:
+        return final_excited[-1]
+
+    final_blocks = [
+        block
+        for block in valid
+        if block.get("is_after_final_stationary")
+    ]
+    if final_blocks:
+        return final_blocks[-1]
+
+    return valid[-1]
+
+
+def _stage_from_source_path(context: Dict[str, Any]) -> Optional[str]:
+    """Infer a dossier-like stage label from the source path when obvious."""
+
+    source = str(context.get("source_path") or "")
+    if not source:
+        return None
+    parts = re.split(r"[\\/]+", source)
+    known = {"S0", "S1", "S1B", "TDDFT", "TDDFT_S1"}
+    for part in reversed(parts):
+        normalized = part.upper()
+        if normalized in known:
+            return "S1b" if normalized == "S1B" else normalized
+    return None
+
+
+def _nbo_block_public_metadata(block: Dict[str, Any]) -> Dict[str, Any]:
+    """Return JSON-safe NBO provenance fields without raw ORCA text."""
+
+    keys = (
+        "nbo_block_index",
+        "nbo_block_count",
+        "line_start",
+        "line_end",
+        "optimization_cycle",
+        "is_after_final_stationary",
+        "final_stationary_line",
+        "density_context",
+        "density_kind",
+        "density_context_line",
+        "excited_state_specific",
+        "input_electron_density_file",
+        "base_name",
+        "root",
+        "has_npa_summary",
+    )
+    return {
+        key: block.get(key)
+        for key in keys
+        if block.get(key) is not None
+    }
 
 
 def _nbo_to_orca_index(index: Optional[int]) -> Optional[int]:
@@ -739,13 +916,82 @@ class NBOModule(BaseModule):
     name = "nbo"
 
     def parse(self, lines):
+        all_lines = list(lines)
         is_uhf = self.context.get("is_uhf", False)
-        data = {}
 
-        nbo_start = _find_nbo_start(lines)
-        if nbo_start == -1:
+        nbo_blocks = _find_nbo_blocks(all_lines)
+        selected_block = _select_nbo_block(nbo_blocks)
+        if not selected_block:
             return None
+        nbo_start = int(selected_block["line_start_index"])
+        # Bound the parse at the end of the selected NBO block.  ORCA can print
+        # NBO repeatedly during optimizations; unbounded first-hit searches must
+        # not drift into a later density context.
+        lines = all_lines[: int(selected_block["line_end_index"])]
+        block_metadata = _nbo_block_public_metadata(selected_block)
+        block_metadata["is_final_cycle"] = bool(
+            selected_block.get("is_after_final_stationary")
+        )
+        stage = _stage_from_source_path(self.context)
+        if stage:
+            block_metadata["stage"] = stage
 
+        data = self._parse_nbo_payload(lines, nbo_start, is_uhf)
+        supplemental = self._supplement_missing_subsections(
+            data=data,
+            all_lines=all_lines,
+            blocks=nbo_blocks,
+            selected_block=selected_block,
+            is_uhf=is_uhf,
+        )
+
+        if data:
+            data.update(block_metadata)
+            data["selected_nbo_block"] = dict(block_metadata)
+            data["nbo_blocks"] = [
+                _nbo_block_public_metadata(block)
+                for block in nbo_blocks
+            ]
+            if supplemental:
+                data["supplemental_nbo_blocks"] = supplemental
+            warnings = []
+            if len(nbo_blocks) > 1:
+                warnings.append(
+                    "Multiple NBO blocks found; selected the final valid block "
+                    f"{block_metadata.get('nbo_block_index')}/"
+                    f"{block_metadata.get('nbo_block_count')}."
+                )
+            if supplemental:
+                warnings.append(
+                    "Some NBO subsections were only printed in other NBO blocks "
+                    "and were preserved with supplemental block provenance."
+                )
+            input_echo = self.context.get("input_echo") or {}
+            block_names = {
+                str(name).lower()
+                for name in input_echo.get("block_names", [])
+            }
+            settings = (
+                ((input_echo.get("blocks") or {}).get("tddft") or {}).get("settings")
+                or ((input_echo.get("blocks") or {}).get("cis") or {}).get("settings")
+                or {}
+            )
+            if (
+                block_names & {"tddft", "cis"}
+                and settings.get("iroot") is not None
+                and block_metadata.get("density_context") != "excited_state"
+            ):
+                warnings.append(
+                    "NBO/NPA was not marked as an excited-state density block; "
+                    "do not interpret these NPA charges as excited-state charges."
+                )
+            if warnings:
+                data["warnings"] = warnings
+
+        return data if data else None
+
+    def _parse_nbo_payload(self, lines, nbo_start: int, is_uhf: bool) -> Dict[str, Any]:
+        data: Dict[str, Any] = {}
         # NBO Mulliken population by AO (overall, always present)
         idx = self.find_line(lines, "Mulliken Population Analysis (by orbital):", nbo_start)
         if idx != -1:
@@ -803,11 +1049,65 @@ class NBOModule(BaseModule):
                 data["beta_spin"] = self._parse_spin_nbo(lines, idx_beta, "beta")
 
         # NPEPA
-        idx_npepa = self.find_line(lines, "NATURAL POLY-ELECTRON POPULATION ANALYSIS")
+        idx_npepa = self.find_line(lines, "NATURAL POLY-ELECTRON POPULATION ANALYSIS", nbo_start)
         if idx_npepa != -1:
             data["npepa"] = self._parse_npepa(lines, idx_npepa)
 
-        return data if data else None
+        return data
+
+    def _supplement_missing_subsections(
+        self,
+        *,
+        data: Dict[str, Any],
+        all_lines: List[str],
+        blocks: List[Dict[str, Any]],
+        selected_block: Dict[str, Any],
+        is_uhf: bool,
+    ) -> List[Dict[str, Any]]:
+        """Preserve non-density NBO subsections absent from the selected block."""
+
+        supplemental_keys = (
+            "cmo_analysis",
+            "cmo_bonding_character",
+            "npepa",
+            "nlmo_hybridization",
+            "nlmo_bond_orders",
+            "nlmo_steric",
+            "lmo_bond_orders",
+            "nho_interhybrid_angles_raw",
+        )
+        missing = {
+            key
+            for key in supplemental_keys
+            if not data.get(key)
+        }
+        if not missing:
+            return []
+
+        supplemental: List[Dict[str, Any]] = []
+        selected_start = int(selected_block["line_start_index"])
+        for block in reversed(blocks):
+            if int(block["line_start_index"]) == selected_start:
+                continue
+            block_lines = all_lines[: int(block["line_end_index"])]
+            parsed = self._parse_nbo_payload(
+                block_lines,
+                int(block["line_start_index"]),
+                is_uhf,
+            )
+            added = []
+            for key in sorted(missing):
+                if parsed.get(key):
+                    data[key] = parsed[key]
+                    added.append(key)
+            if added:
+                meta = _nbo_block_public_metadata(block)
+                meta["provided_sections"] = added
+                supplemental.append(meta)
+                missing.difference_update(added)
+            if not missing:
+                break
+        return list(reversed(supplemental))
 
     # ------------------------------------------------------------------
     # RHF/RKS sub-parsers

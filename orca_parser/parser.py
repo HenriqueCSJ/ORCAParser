@@ -53,7 +53,7 @@ _AUXILIARY_ATOM_FILE_RE = re.compile(
     r"_atom\d+\.(?:out|log)$",
     re.IGNORECASE,
 )
-_INPUT_NAME_RE = re.compile(r"^NAME\s*=\s*(\S+)")
+_INPUT_NAME_RE = re.compile(r"^NAME\s*=\s*(\S+)", re.IGNORECASE)
 _INPUT_END_RE = re.compile(r"\*{4}END OF INPUT\*{4}", re.IGNORECASE)
 _INPUT_ECHO_LINE_RE = re.compile(r"^\|\s*(\d+)>\s*(.*)$")
 _INPUT_BANG_RE = re.compile(r"^\|\s*\d+>\s*!\s*(.+)$")

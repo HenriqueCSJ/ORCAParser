@@ -127,6 +127,10 @@ def write_tddft_section(
             )
             state_rows.append({
                 "block_index": state.get("block_index"),
+                "source_context": state.get("source_context", ""),
+                "step_index": state.get("step_index", ""),
+                "optimization_cycle": state.get("optimization_cycle", ""),
+                "optimization_cycle_label": state.get("optimization_cycle_label", ""),
                 "method": state.get("method"),
                 "manifold": state.get("manifold", ""),
                 "order_in_block": state.get("order_in_block"),
@@ -193,6 +197,8 @@ def write_tddft_section(
             directory, f"{stem}_tddft_states.csv", state_rows,
             [
                 "block_index", "method", "manifold", "order_in_block",
+                "source_context", "step_index", "optimization_cycle",
+                "optimization_cycle_label",
                 "state", "energy_rank", "state_label", "symmetry", "energy_au", "energy_eV", "energy_cm1",
                 "wavelength_nm", "s_squared", "multiplicity",
                 "significant_transition_weight_threshold", "significant_transition_count",
@@ -305,6 +311,89 @@ def write_tddft_section(
             base_fields + extra_fields + [
                 "center_of_mass_x", "center_of_mass_y", "center_of_mass_z",
             ],
+        ))
+
+    trajectory = tddft.get("trajectory") or {}
+    trajectory_state_rows = trajectory.get("state_rows") or []
+    if trajectory_state_rows:
+        trajectory_state_fields = [
+            "source_context", "step_index", "optimization_cycle",
+            "optimization_cycle_label", "excited_state_block_index",
+            "spectrum_table_index", "method", "manifold", "orca_root_printed",
+            "normalized_manifold", "energy_rank", "state_label", "state_label_meaning",
+            "excitation_energy_au", "excitation_energy_eV",
+            "excitation_energy_cm1", "wavelength_nm", "oscillator_strength",
+            "transition_dipole_x", "transition_dipole_y", "transition_dipole_z",
+            "transition_dipole_norm_or_T2", "spin_expectation", "symmetry",
+            "multiplicity", "dominant_transition", "dominant_transition_weight",
+            "dominant_transition_coefficient", "significant_transitions",
+            "significant_transition_weights", "followed_or_target_root",
+            "is_followed_or_target_root", "root_following_overlap",
+            "transition_density_overlap", "root_following_second_largest_ratio",
+            "parse_quality_flag",
+        ]
+        files.append(write_csv(
+            directory,
+            f"{stem}_tddft_trajectory_states.csv",
+            trajectory_state_rows,
+            trajectory_state_fields,
+        ))
+
+    trajectory_step_rows = trajectory.get("step_summaries") or []
+    if trajectory_step_rows:
+        trajectory_step_fields = [
+            "source_context", "step_index", "optimization_cycle",
+            "optimization_cycle_label", "manifold", "state_count", "followed_or_target_root",
+            "followed_or_target_state_label", "root_following_overlap",
+            "transition_density_overlap", "root_following_second_largest_ratio",
+            "S1_orca_root", "S1_energy_eV", "S1_wavelength_nm",
+            "S1_oscillator_strength", "S1_dominant_transition",
+            "S2_orca_root", "S2_energy_eV", "S2_wavelength_nm",
+            "S2_oscillator_strength", "S2_dominant_transition",
+            "S3_orca_root", "S3_energy_eV", "S3_wavelength_nm",
+            "S3_oscillator_strength", "S3_dominant_transition",
+            "S4_orca_root", "S4_energy_eV", "S4_wavelength_nm",
+            "S4_oscillator_strength", "S4_dominant_transition",
+            "S5_orca_root", "S5_energy_eV", "S5_wavelength_nm",
+            "S5_oscillator_strength", "S5_dominant_transition",
+            "S2_minus_S1_eV", "S3_minus_S1_eV",
+            "brightest_all_state_label", "brightest_all_orca_root",
+            "brightest_all_oscillator_strength", "brightest_all_wavelength_nm",
+            "brightest_240_310_state_label", "brightest_240_310_orca_root",
+            "brightest_240_310_oscillator_strength",
+            "brightest_240_310_wavelength_nm",
+            "S1_fosc_fraction_of_brightest",
+            "brightest_minus_S1_wavelength_nm",
+            "near_degeneracy_flag", "state_mixing_flag",
+            "oscillator_strength_jump_flag", "possible_root_flip_flag",
+        ]
+        files.append(write_csv(
+            directory,
+            f"{stem}_tddft_trajectory_steps.csv",
+            trajectory_step_rows,
+            trajectory_step_fields,
+        ))
+
+    trajectory_final_summary = trajectory.get("final_summary") or {}
+    if trajectory_final_summary:
+        trajectory_final_fields = [
+            "source_context", "manifold", "final_step_index", "final_optimization_cycle",
+            "final_S1_energy_eV", "final_S1_wavelength_nm",
+            "final_S1_oscillator_strength", "final_S1_orca_root",
+            "final_S2_minus_S1_eV", "final_brightest_state_label",
+            "final_brightest_orca_root", "final_brightest_oscillator_strength",
+            "step_count", "near_degeneracy_step_count", "state_mixing_step_count",
+            "oscillator_strength_jump_count", "possible_root_flip_count",
+            "minimum_S2_minus_S1_eV", "maximum_S1_wavelength_nm",
+            "minimum_S1_energy_eV", "maximum_S1_oscillator_strength",
+            "step_of_maximum_S1_oscillator_strength",
+            "brightest_state_change_count", "trajectory_class",
+        ]
+        files.append(write_csv(
+            directory,
+            f"{stem}_tddft_trajectory_final.csv",
+            [trajectory_final_summary],
+            trajectory_final_fields,
         ))
 
     total_energy_blocks = tddft.get("total_energy_blocks", [])

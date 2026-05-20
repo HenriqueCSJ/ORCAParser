@@ -44,6 +44,12 @@ _NTO_ENERGY_MATCH_TOLERANCE_EV = 0.005
 _SIGNIFICANT_TRANSITION_WEIGHT_THRESHOLD = 0.10
 _SIGNIFICANT_NTO_OCCUPATION_THRESHOLD = 0.10
 _MINIMUM_RECOMMENDED_ROOT_COUNT = 5
+_TRAJECTORY_NEAR_DEGENERACY_EV = 0.10
+_TRAJECTORY_STATE_MIXING_EV = 0.15
+_TRAJECTORY_BRIGHT_OSCILLATOR_STRENGTH = 0.05
+_TRAJECTORY_FOSC_JUMP_ABS = 0.10
+_TRAJECTORY_FOSC_JUMP_FACTOR = 2.0
+_TRAJECTORY_WAVELENGTH_SHIFT_NM = 5.0
 
 
 class TDDFTModule(BaseModule):
@@ -111,8 +117,19 @@ class TDDFTModule(BaseModule):
         r"WARNING:\s*\((?:CIS/TDDFT|TDDFT/CIS)\)\s*:\s*Analytic excited state gradients requested",
         re.I,
     )
-    _GEOM_OPT_CYCLE_RE = re.compile(r"GEOMETRY OPTIMIZATION CYCLE\s+(\d+)", re.I)
+    _GEOM_OPT_CYCLE_RE = re.compile(
+        r"(?:GEOMETRY\s+OPTIMIZATION\s+CYCLE|OPTIMIZATION\s+CYCLE)\s+(\d+)",
+        re.I,
+    )
     _FOLLOW_IROOT_RE = re.compile(r"Follow IRoot\s+\.+\s+(\S+)", re.I)
+    _ROOT_FOLLOW_OVERLAP_RE = re.compile(
+        r"Largest overlap:\s*(?:\.{3}\s*)?([-\d.eE+]+)",
+        re.I,
+    )
+    _ROOT_FOLLOW_RATIO_RE = re.compile(
+        r"Ratio second largest/largest:\s*(?:\.{3}\s*)?([-\d.eE+]+)",
+        re.I,
+    )
     _STATE_OF_INTEREST_RE = re.compile(r"State of interest\s+\.+\s+(\d+)", re.I)
     _BLOCK_IROOT_RE = re.compile(r"^\s*IROOT\s+(\d+)\s*$", re.I)
     _INPUT_ELECTRON_DENSITY_RE = re.compile(
@@ -165,7 +182,15 @@ class TDDFTModule(BaseModule):
                 for block in excited_state_blocks
                 for state in block.get("states", [])
             ]
-            data["final_excited_state_block"] = excited_state_blocks[-1]
+            final_blocks = self._final_excited_state_blocks(excited_state_blocks)
+            data["final_excited_state_blocks"] = final_blocks
+            data["final_excited_state_block"] = (
+                self._select_primary_final_state_block(
+                    final_blocks,
+                    input_blocks=input_blocks,
+                )
+                or excited_state_blocks[-1]
+            )
 
         total_energy_blocks = self._parse_total_energy_blocks(lines)
         has_tddft_context = self._has_tddft_cis_context(
@@ -213,12 +238,23 @@ class TDDFTModule(BaseModule):
         if not data:
             return None
 
+        trajectory = self._build_tddft_trajectory(
+            input_blocks=input_blocks,
+            excited_state_blocks=excited_state_blocks,
+            spectra_history=spectra_history,
+            total_energy_blocks=total_energy_blocks,
+            excited_state_optimization=excited_state_optimization,
+        )
+        if trajectory:
+            data["trajectory"] = trajectory
+
         summary = self._build_summary(
             input_blocks=input_blocks,
             excited_state_blocks=excited_state_blocks,
             nto_states=nto_states,
             spectra=spectra,
             total_energy_blocks=total_energy_blocks,
+            trajectory=trajectory,
         )
         if excited_state_optimization:
             summary.update(
@@ -288,8 +324,10 @@ class TDDFTModule(BaseModule):
                 "method": header_match.group("method").upper(),
                 "manifold": header_match.group("manifold"),
                 "header": lines[i].strip(),
+                "line_start": i + 1,
                 "states": [],
             }
+            block.update(self._step_metadata(lines, i))
 
             print_threshold = self._find_print_threshold(lines, i + 1, i + 8)
             if print_threshold is not None:
@@ -331,6 +369,7 @@ class TDDFTModule(BaseModule):
 
             if block["states"]:
                 block["state_count"] = len(block["states"])
+                block["line_end"] = j
                 blocks.append(block)
                 block_index += 1
 
@@ -407,6 +446,84 @@ class TDDFTModule(BaseModule):
                     state.get("state") == state.get("energy_rank")
                     for state in states
                 )
+
+    def _final_excited_state_blocks(
+        self,
+        excited_state_blocks: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """Return the latest state block for each final-step manifold."""
+        if not excited_state_blocks:
+            return []
+
+        preferred_context = (
+            "optimization_step_spectrum"
+            if any(
+                block.get("source_context") == "optimization_step_spectrum"
+                for block in excited_state_blocks
+            )
+            else "final_single_point_tddft"
+        )
+        context_blocks = [
+            block
+            for block in excited_state_blocks
+            if block.get("source_context") == preferred_context
+        ] or list(excited_state_blocks)
+        max_step = max(
+            self._sort_number(block.get("step_index"))
+            for block in context_blocks
+            if block.get("step_index") not in (None, "")
+        )
+        final_step_blocks = [
+            block
+            for block in context_blocks
+            if self._sort_number(block.get("step_index")) == max_step
+        ]
+
+        grouped: Dict[Any, List[Dict[str, Any]]] = {}
+        for block in final_step_blocks:
+            grouped.setdefault(
+                self._normalize_manifold(block.get("manifold")),
+                [],
+            ).append(block)
+
+        final_blocks = [
+            max(blocks, key=lambda block: int(block.get("line_start") or 0))
+            for blocks in grouped.values()
+        ]
+        final_blocks.sort(key=lambda block: int(block.get("line_start") or 0))
+        return final_blocks
+
+    def _select_primary_final_state_block(
+        self,
+        final_blocks: List[Dict[str, Any]],
+        *,
+        input_blocks: List[Dict[str, Any]],
+    ) -> Optional[Dict[str, Any]]:
+        """Choose the final block used by legacy single-table renderers."""
+        if not final_blocks:
+            return None
+
+        target_block = next(
+            (
+                block
+                for block in input_blocks
+                if block.get("block") in {"tddft", "cis"}
+            ),
+            {},
+        )
+        target_manifold = self._normalize_manifold(
+            (target_block.get("settings") or {}).get("irootmult")
+        )
+        if target_manifold:
+            for block in final_blocks:
+                if self._normalize_manifold(block.get("manifold")) == target_manifold:
+                    return block
+
+        for preferred in ("singlet", None):
+            for block in final_blocks:
+                if self._normalize_manifold(block.get("manifold")) == preferred:
+                    return block
+        return final_blocks[0]
 
     def _annotate_nto_state_matches(
         self,
@@ -617,6 +734,12 @@ class TDDFTModule(BaseModule):
 
             if last_center_of_mass is not None:
                 table["center_of_mass"] = dict(last_center_of_mass)
+            table["table_index"] = len(spectra_history)
+            table["line_start"] = i + 1
+            table["line_end"] = next_index
+            table.update(self._step_metadata(lines, i))
+            for transition in table.get("transitions", []):
+                transition["table_index"] = table["table_index"]
 
             if table["transitions"]:
                 kind = table["kind"]
@@ -632,9 +755,14 @@ class TDDFTModule(BaseModule):
         header_indices = self.find_all_lines(lines, self._TOTAL_ENERGY_HEADER)
 
         for block_index, idx in enumerate(header_indices):
+            block_end = (
+                header_indices[block_index + 1]
+                if block_index + 1 < len(header_indices)
+                else len(lines)
+            )
             block: Dict[str, Any] = {"block_index": block_index}
 
-            for line in lines[idx : idx + 20]:
+            for line in lines[idx : min(idx + 20, block_end)]:
                 scf_match = self._TOTAL_SCF_RE.search(line)
                 if scf_match:
                     block["scf_energy_Eh"] = float(scf_match.group(1))
@@ -650,7 +778,7 @@ class TDDFTModule(BaseModule):
                 if total_match:
                     block["total_energy_Eh"] = float(total_match.group(1))
 
-            for line in lines[idx : idx + 40]:
+            for line in lines[idx : min(idx + 40, block_end)]:
                 memory_match = self._MAX_MEMORY_RE.search(line)
                 if memory_match:
                     block["maximum_memory_MB"] = float(memory_match.group(1))
@@ -660,11 +788,13 @@ class TDDFTModule(BaseModule):
             if cycle_number is not None:
                 block["optimization_cycle"] = cycle_number
 
-            followiroot_runtime = self._nearest_followiroot_setting(lines, idx)
+            followiroot_runtime = self._followiroot_setting_in_block(lines, idx, block_end)
+            if followiroot_runtime is None:
+                followiroot_runtime = self._nearest_followiroot_setting(lines, idx)
             if followiroot_runtime is not None:
                 block["followiroot_runtime"] = followiroot_runtime
 
-            for line in lines[idx : idx + 320]:
+            for line in lines[idx:block_end]:
                 state_match = self._STATE_OF_INTEREST_RE.search(line)
                 if state_match:
                     block["state_of_interest"] = int(state_match.group(1))
@@ -737,6 +867,12 @@ class TDDFTModule(BaseModule):
             for line in lines
             if (match := self._ROOT_UPDATE_RE.search(line))
         ]
+        root_following_records = self._parse_root_following_records(lines)
+        root_following_by_cycle = {
+            record.get("optimization_cycle"): record
+            for record in root_following_records
+            if record.get("optimization_cycle") is not None
+        }
         cycle_records = [
             {
                 "block_index": block.get("block_index"),
@@ -753,6 +889,19 @@ class TDDFTModule(BaseModule):
                 "total_energy_Eh": block.get("total_energy_Eh"),
                 "followiroot_runtime": block.get("followiroot_runtime"),
                 "input_electron_density": block.get("input_electron_density"),
+                **{
+                    key: value
+                    for key, value in root_following_by_cycle.get(
+                        block.get("optimization_cycle"), {}
+                    ).items()
+                    if key
+                    in {
+                        "root_following_overlap",
+                        "transition_density_overlap",
+                        "root_following_second_largest_ratio",
+                        "updated_iroot",
+                    }
+                },
             }
             for block in total_energy_blocks
         ]
@@ -792,6 +941,7 @@ class TDDFTModule(BaseModule):
             "analytic_excited_state_gradients": analytic_gradients_requested,
             "gradient_block_count": gradient_count,
             "root_follow_updates": root_updates,
+            "root_following_records": root_following_records,
             "final_root": final_root,
             "final_state_of_interest": final_state_of_interest,
             "input_electron_density": final_density,
@@ -805,6 +955,958 @@ class TDDFTModule(BaseModule):
             if value not in (None, [], {})
         }
 
+    def _build_tddft_trajectory(
+        self,
+        *,
+        input_blocks: List[Dict[str, Any]],
+        excited_state_blocks: List[Dict[str, Any]],
+        spectra_history: List[Dict[str, Any]],
+        total_energy_blocks: List[Dict[str, Any]],
+        excited_state_optimization: Optional[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """Build a cycle-aware TDDFT/CIS trajectory diagnostic view.
+
+        The ordinary spectra payload keeps the final/latest table for classic
+        UV-vis reporting. This view keeps every optimization-cycle table
+        separate and joins it to the same-cycle excited-state roots.
+        """
+        if not excited_state_blocks and not spectra_history:
+            return {}
+
+        target_block = next(
+            (
+                block
+                for block in input_blocks
+                if block.get("block") in {"tddft", "cis"}
+            ),
+            {},
+        )
+        settings = target_block.get("settings", {})
+        excopt = excited_state_optimization or {}
+        root_following_records = list(excopt.get("root_following_records") or [])
+        cycle_records = list(excopt.get("cycle_records") or [])
+        if not cycle_records and total_energy_blocks:
+            cycle_records = [
+                {
+                    "optimization_cycle": block.get("optimization_cycle"),
+                    "root": block.get("root"),
+                    "current_iroot": block.get("current_iroot"),
+                    "state_of_interest": block.get("state_of_interest"),
+                    "delta_energy_Eh": block.get("delta_energy_Eh"),
+                    "total_energy_Eh": block.get("total_energy_Eh"),
+                    "followiroot_runtime": block.get("followiroot_runtime"),
+                }
+                for block in total_energy_blocks
+            ]
+
+        cycle_payloads = self._trajectory_cycle_payloads(
+            cycle_records=cycle_records,
+            root_following_records=root_following_records,
+            default_target_root=self.safe_int(settings.get("iroot")),
+        )
+        absorption_lookup = self._trajectory_absorption_lookup(spectra_history)
+        selected_state_blocks = self._select_trajectory_state_blocks(
+            excited_state_blocks,
+            spectra_history,
+        )
+
+        state_rows: List[Dict[str, Any]] = []
+        seen_state_keys = set()
+        for block in selected_state_blocks:
+            cycle_payload = self._trajectory_payload_for_step(block, cycle_payloads)
+            for state in block.get("states", []):
+                row = self._trajectory_row_from_state(
+                    block=block,
+                    state=state,
+                    absorption_lookup=absorption_lookup,
+                    cycle_payload=cycle_payload,
+                )
+                seen_state_keys.add(
+                    (
+                        row.get("source_context"),
+                        row.get("step_index"),
+                        row.get("orca_root_printed"),
+                        self._normalize_manifold(
+                            row.get("normalized_manifold") or row.get("manifold")
+                        ),
+                    )
+                )
+                state_rows.append(row)
+
+        for table in spectra_history:
+            if table.get("kind") != "absorption_electric_dipole":
+                continue
+            cycle_payload = self._trajectory_payload_for_step(table, cycle_payloads)
+            for transition in table.get("transitions") or []:
+                root = transition.get("to_root")
+                state_key = (
+                    table.get("source_context"),
+                    table.get("step_index"),
+                    root,
+                    self._spectrum_transition_manifold(transition),
+                )
+                if root is None or state_key in seen_state_keys:
+                    continue
+                state_rows.append(
+                    self._trajectory_row_from_spectrum(
+                        table=table,
+                        transition=transition,
+                        cycle_payload=cycle_payload,
+                    )
+                )
+
+        if not state_rows:
+            return {}
+
+        self._normalize_trajectory_state_labels(state_rows)
+        step_summaries = self._build_trajectory_step_summaries(state_rows)
+        target_manifold = self._normalize_manifold(
+            excopt.get("target_multiplicity")
+            or settings.get("irootmult")
+            or (selected_state_blocks[0].get("manifold") if selected_state_blocks else None)
+        )
+        final_summary = self._build_trajectory_final_summary(
+            step_summaries,
+            target_manifold=target_manifold,
+        )
+
+        return {
+            "kind": "tddft_cis_optimization_trajectory",
+            "state_rows": state_rows,
+            "step_summaries": step_summaries,
+            "final_summary": final_summary,
+            "root_following_records": root_following_records,
+            "classification_thresholds": {
+                "near_degeneracy_eV": _TRAJECTORY_NEAR_DEGENERACY_EV,
+                "state_mixing_eV": _TRAJECTORY_STATE_MIXING_EV,
+                "bright_oscillator_strength": _TRAJECTORY_BRIGHT_OSCILLATOR_STRENGTH,
+                "fosc_jump_abs": _TRAJECTORY_FOSC_JUMP_ABS,
+                "fosc_jump_factor": _TRAJECTORY_FOSC_JUMP_FACTOR,
+                "wavelength_shift_nm": _TRAJECTORY_WAVELENGTH_SHIFT_NM,
+            },
+        }
+
+    def _select_trajectory_state_blocks(
+        self,
+        excited_state_blocks: List[Dict[str, Any]],
+        spectra_history: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """Choose one state block per step/manifold for trajectory joins.
+
+        ORCA can print a TDDFT state block more than once for the same
+        optimization cycle. The trajectory view should describe the state set
+        associated with the same-cycle spectrum, so prefer the block nearest
+        before the electric-dipole spectrum table.
+        """
+        if not excited_state_blocks:
+            return []
+
+        absorption_starts: Dict[Tuple[Any, Any], int] = {}
+        for table in spectra_history:
+            if table.get("kind") != "absorption_electric_dipole":
+                continue
+            key = (table.get("source_context"), table.get("step_index"))
+            line_start = table.get("line_start")
+            if line_start is None:
+                continue
+            if key not in absorption_starts or int(line_start) < absorption_starts[key]:
+                absorption_starts[key] = int(line_start)
+
+        grouped: Dict[Tuple[Any, Any, Any], List[Dict[str, Any]]] = {}
+        for block in excited_state_blocks:
+            grouped.setdefault(
+                (
+                    block.get("source_context"),
+                    block.get("step_index"),
+                    self._normalize_manifold(block.get("manifold")),
+                ),
+                [],
+            ).append(block)
+
+        selected: List[Dict[str, Any]] = []
+        for key, blocks in grouped.items():
+            source_context, step_index, _ = key
+            table_start = absorption_starts.get((source_context, step_index))
+            if table_start is not None:
+                before_table = [
+                    block
+                    for block in blocks
+                    if block.get("line_start") is not None
+                    and int(block["line_start"]) <= table_start
+                ]
+                if before_table:
+                    selected.append(
+                        max(before_table, key=lambda block: int(block["line_start"]))
+                    )
+                    continue
+            selected.append(
+                max(
+                    blocks,
+                    key=lambda block: int(block.get("line_start") or 0),
+                )
+            )
+
+        selected.sort(key=lambda block: int(block.get("line_start") or 0))
+        return selected
+
+    def _trajectory_cycle_payloads(
+        self,
+        *,
+        cycle_records: List[Dict[str, Any]],
+        root_following_records: List[Dict[str, Any]],
+        default_target_root: Optional[int],
+    ) -> Dict[Any, Dict[str, Any]]:
+        payloads: Dict[Any, Dict[str, Any]] = {}
+        for record in cycle_records:
+            cycle = record.get("optimization_cycle")
+            if cycle is None:
+                continue
+            payloads.setdefault(cycle, {}).update(record)
+
+        for record in root_following_records:
+            cycle = record.get("optimization_cycle")
+            if cycle is None:
+                continue
+            payloads.setdefault(cycle, {}).update(record)
+
+        for payload in payloads.values():
+            followed_root = (
+                payload.get("current_iroot")
+                or payload.get("updated_iroot")
+                or payload.get("root")
+                or payload.get("state_of_interest")
+                or default_target_root
+            )
+            if followed_root is not None:
+                payload["followed_or_target_root"] = followed_root
+
+        if default_target_root is not None:
+            payloads.setdefault(None, {})["followed_or_target_root"] = (
+                default_target_root
+            )
+
+        return payloads
+
+    def _trajectory_absorption_lookup(
+        self, spectra_history: List[Dict[str, Any]]
+    ) -> Dict[Tuple[Any, Any, Any, Any], Dict[str, Any]]:
+        lookup: Dict[Tuple[Any, Any, Any, Any], Dict[str, Any]] = {}
+        for table in spectra_history:
+            if table.get("kind") != "absorption_electric_dipole":
+                continue
+            for transition in table.get("transitions") or []:
+                root = transition.get("to_root")
+                if root is None:
+                    continue
+                transition_manifold = self._spectrum_transition_manifold(transition)
+                lookup[
+                    (
+                        table.get("source_context"),
+                        table.get("step_index"),
+                        root,
+                        transition_manifold,
+                    )
+                ] = transition
+        return lookup
+
+    def _lookup_trajectory_absorption(
+        self,
+        absorption_lookup: Dict[Tuple[Any, Any, Any, Any], Dict[str, Any]],
+        *,
+        source_context: Any,
+        step_index: Any,
+        root: Any,
+        manifold: Any,
+    ) -> Optional[Dict[str, Any]]:
+        normalized_manifold = self._normalize_manifold(manifold)
+        transition = absorption_lookup.get(
+            (source_context, step_index, root, normalized_manifold)
+        )
+        if transition is not None:
+            return transition
+        if normalized_manifold is not None:
+            return None
+
+        candidates = [
+            candidate
+            for (candidate_context, candidate_step, candidate_root, _), candidate
+            in absorption_lookup.items()
+            if candidate_context == source_context
+            and candidate_step == step_index
+            and candidate_root == root
+        ]
+        if len(candidates) == 1:
+            return candidates[0]
+        return None
+
+    def _trajectory_payload_for_step(
+        self,
+        item: Dict[str, Any],
+        cycle_payloads: Dict[Any, Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        cycle = item.get("optimization_cycle")
+        if cycle in cycle_payloads:
+            return cycle_payloads[cycle]
+        return cycle_payloads.get(None, {})
+
+    def _trajectory_row_from_state(
+        self,
+        *,
+        block: Dict[str, Any],
+        state: Dict[str, Any],
+        absorption_lookup: Dict[Tuple[Any, Any, Any, Any], Dict[str, Any]],
+        cycle_payload: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        root = state.get("state")
+        normalized_manifold = self._normalize_manifold(
+            state.get("manifold") or block.get("manifold")
+        )
+        spectrum_transition = self._lookup_trajectory_absorption(
+            absorption_lookup,
+            source_context=block.get("source_context"),
+            step_index=block.get("step_index"),
+            root=root,
+            manifold=normalized_manifold,
+        )
+        quality_flags: List[str] = []
+        if spectrum_transition is None:
+            quality_flags.append("missing_electric_dipole_spectrum")
+
+        dominant = max(
+            state.get("transitions") or [],
+            key=lambda transition: transition.get("weight", 0.0),
+            default={},
+        )
+        significant = state.get("significant_transitions") or []
+        row = {
+            "source_context": block.get("source_context"),
+            "step_index": block.get("step_index"),
+            "optimization_cycle": block.get("optimization_cycle"),
+            "optimization_cycle_label": block.get("optimization_cycle_label"),
+            "excited_state_block_index": block.get("block_index"),
+            "spectrum_table_index": "",
+            "method": state.get("method") or block.get("method"),
+            "manifold": state.get("manifold") or block.get("manifold"),
+            "normalized_manifold": normalized_manifold or "",
+            "orca_root_printed": root,
+            "energy_rank": state.get("energy_rank"),
+            "state_label": self._ranked_state_label(
+                state.get("manifold") or block.get("manifold"),
+                state.get("energy_rank"),
+            ),
+            "state_label_meaning": "energy_ranked_state",
+            "excitation_energy_au": state.get("energy_au"),
+            "excitation_energy_eV": state.get("energy_eV"),
+            "excitation_energy_cm1": state.get("energy_cm1"),
+            "wavelength_nm": (
+                spectrum_transition.get("wavelength_nm")
+                if spectrum_transition
+                else state.get("wavelength_nm")
+            ),
+            "oscillator_strength": (
+                spectrum_transition.get("oscillator_strength")
+                if spectrum_transition
+                else None
+            ),
+            "transition_dipole_x": (
+                spectrum_transition.get("dx_au") if spectrum_transition else None
+            ),
+            "transition_dipole_y": (
+                spectrum_transition.get("dy_au") if spectrum_transition else None
+            ),
+            "transition_dipole_z": (
+                spectrum_transition.get("dz_au") if spectrum_transition else None
+            ),
+            "transition_dipole_norm_or_T2": (
+                spectrum_transition.get("dipole_strength_au2")
+                if spectrum_transition
+                else None
+            ),
+            "spin_expectation": state.get("s_squared"),
+            "symmetry": state.get("symmetry", ""),
+            "multiplicity": state.get("multiplicity", ""),
+            "dominant_transition": self._format_transition_label(dominant),
+            "dominant_transition_weight": dominant.get("weight", ""),
+            "dominant_transition_coefficient": dominant.get("coefficient", ""),
+            "significant_transitions": "; ".join(
+                self._format_transition_label(transition)
+                for transition in significant
+                if self._format_transition_label(transition)
+            ),
+            "significant_transition_weights": "; ".join(
+                f"{float(transition.get('weight')):.6f}"
+                for transition in significant
+                if transition.get("weight") is not None
+            ),
+            "followed_or_target_root": cycle_payload.get("followed_or_target_root", ""),
+            "is_followed_or_target_root": (
+                root == cycle_payload.get("followed_or_target_root")
+                if cycle_payload.get("followed_or_target_root") is not None
+                else ""
+            ),
+            "root_following_overlap": cycle_payload.get("root_following_overlap", ""),
+            "transition_density_overlap": cycle_payload.get(
+                "transition_density_overlap", ""
+            ),
+            "root_following_second_largest_ratio": cycle_payload.get(
+                "root_following_second_largest_ratio", ""
+            ),
+            "parse_quality_flag": "; ".join(quality_flags),
+        }
+        if spectrum_transition is not None:
+            row["spectrum_table_index"] = spectrum_transition.get("table_index", "")
+        return row
+
+    def _trajectory_row_from_spectrum(
+        self,
+        *,
+        table: Dict[str, Any],
+        transition: Dict[str, Any],
+        cycle_payload: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        root = transition.get("to_root")
+        normalized_manifold = self._spectrum_transition_manifold(transition)
+        return {
+            "source_context": table.get("source_context"),
+            "step_index": table.get("step_index"),
+            "optimization_cycle": table.get("optimization_cycle"),
+            "optimization_cycle_label": table.get("optimization_cycle_label"),
+            "excited_state_block_index": "",
+            "spectrum_table_index": table.get("table_index", ""),
+            "method": "",
+            "manifold": normalized_manifold or "",
+            "normalized_manifold": normalized_manifold or "",
+            "orca_root_printed": root,
+            "energy_rank": "",
+            "state_label": "",
+            "state_label_meaning": "energy_ranked_state",
+            "excitation_energy_au": "",
+            "excitation_energy_eV": transition.get("energy_eV"),
+            "excitation_energy_cm1": transition.get("energy_cm1"),
+            "wavelength_nm": transition.get("wavelength_nm"),
+            "oscillator_strength": transition.get("oscillator_strength"),
+            "transition_dipole_x": transition.get("dx_au"),
+            "transition_dipole_y": transition.get("dy_au"),
+            "transition_dipole_z": transition.get("dz_au"),
+            "transition_dipole_norm_or_T2": transition.get("dipole_strength_au2"),
+            "spin_expectation": "",
+            "symmetry": "",
+            "multiplicity": "",
+            "dominant_transition": "",
+            "dominant_transition_weight": "",
+            "dominant_transition_coefficient": "",
+            "significant_transitions": "",
+            "significant_transition_weights": "",
+            "followed_or_target_root": cycle_payload.get("followed_or_target_root", ""),
+            "is_followed_or_target_root": (
+                root == cycle_payload.get("followed_or_target_root")
+                if cycle_payload.get("followed_or_target_root") is not None
+                else ""
+            ),
+            "root_following_overlap": cycle_payload.get("root_following_overlap", ""),
+            "transition_density_overlap": cycle_payload.get(
+                "transition_density_overlap", ""
+            ),
+            "root_following_second_largest_ratio": cycle_payload.get(
+                "root_following_second_largest_ratio", ""
+            ),
+            "parse_quality_flag": "missing_excited_state_block",
+        }
+
+    def _normalize_trajectory_state_labels(
+        self,
+        state_rows: List[Dict[str, Any]],
+    ) -> None:
+        grouped: Dict[Tuple[Any, Any], List[Dict[str, Any]]] = {}
+        for row in state_rows:
+            grouped.setdefault(
+                (
+                    row.get("source_context"),
+                    row.get("step_index"),
+                    self._normalize_manifold(row.get("normalized_manifold") or row.get("manifold")),
+                ),
+                [],
+            ).append(row)
+
+        for rows in grouped.values():
+            ranked = sorted(
+                rows,
+                key=lambda row: (
+                    self._sort_number(row.get("excitation_energy_eV")),
+                    self._sort_number(row.get("orca_root_printed")),
+                ),
+            )
+            for rank, row in enumerate(ranked, start=1):
+                if not row.get("energy_rank"):
+                    row["energy_rank"] = rank
+                if not row.get("state_label"):
+                    row["state_label"] = self._ranked_state_label(
+                        row.get("manifold"),
+                        row.get("energy_rank"),
+                    )
+
+    def _build_trajectory_step_summaries(
+        self,
+        state_rows: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        grouped: Dict[Tuple[Any, Any], List[Dict[str, Any]]] = {}
+        for row in state_rows:
+            grouped.setdefault(
+                (
+                    row.get("source_context"),
+                    row.get("step_index"),
+                    self._normalize_manifold(row.get("normalized_manifold") or row.get("manifold")),
+                ),
+                [],
+            ).append(row)
+
+        summaries: List[Dict[str, Any]] = []
+        for _, rows in grouped.items():
+            ranked_rows = sorted(
+                rows,
+                key=lambda row: (
+                    self._sort_number(row.get("energy_rank")),
+                    self._sort_number(row.get("excitation_energy_eV")),
+                    self._sort_number(row.get("orca_root_printed")),
+                ),
+            )
+            first = ranked_rows[0]
+            summary: Dict[str, Any] = {
+                "source_context": first.get("source_context"),
+                "step_index": first.get("step_index"),
+                "optimization_cycle": first.get("optimization_cycle"),
+                "optimization_cycle_label": first.get("optimization_cycle_label"),
+                "manifold": first.get("normalized_manifold") or first.get("manifold") or "",
+                "state_count": len(ranked_rows),
+                "followed_or_target_root": first.get("followed_or_target_root", ""),
+                "root_following_overlap": first.get("root_following_overlap", ""),
+                "transition_density_overlap": first.get("transition_density_overlap", ""),
+                "root_following_second_largest_ratio": first.get(
+                    "root_following_second_largest_ratio", ""
+                ),
+            }
+
+            followed_state = next(
+                (
+                    row
+                    for row in ranked_rows
+                    if row.get("orca_root_printed")
+                    == summary.get("followed_or_target_root")
+                ),
+                None,
+            )
+            if followed_state:
+                summary["followed_or_target_state_label"] = followed_state.get(
+                    "state_label", ""
+                )
+
+            for rank in range(1, 6):
+                row = next(
+                    (
+                        candidate
+                        for candidate in ranked_rows
+                        if candidate.get("energy_rank") == rank
+                    ),
+                    None,
+                )
+                if row is None:
+                    continue
+                prefix = f"S{rank}"
+                summary[f"{prefix}_orca_root"] = row.get("orca_root_printed", "")
+                summary[f"{prefix}_energy_eV"] = row.get("excitation_energy_eV", "")
+                summary[f"{prefix}_wavelength_nm"] = row.get("wavelength_nm", "")
+                summary[f"{prefix}_oscillator_strength"] = row.get(
+                    "oscillator_strength", ""
+                )
+                summary[f"{prefix}_dominant_transition"] = row.get(
+                    "dominant_transition", ""
+                )
+
+            self._annotate_step_energy_gaps(summary, ranked_rows)
+            self._annotate_step_brightness(summary, ranked_rows)
+            summary["near_degeneracy_flag"] = self._step_has_near_degeneracy(
+                ranked_rows
+            )
+            summary["state_mixing_flag"] = self._step_has_state_mixing(ranked_rows)
+            summaries.append(summary)
+
+        summaries.sort(
+            key=lambda item: (
+                self._sort_number(item.get("step_index")),
+                str(item.get("source_context") or ""),
+            )
+        )
+        self._annotate_step_sequence_flags(summaries)
+        return summaries
+
+    def _annotate_step_energy_gaps(
+        self,
+        summary: Dict[str, Any],
+        ranked_rows: List[Dict[str, Any]],
+    ) -> None:
+        rows_by_rank = {row.get("energy_rank"): row for row in ranked_rows}
+        s1 = rows_by_rank.get(1)
+        s2 = rows_by_rank.get(2)
+        s3 = rows_by_rank.get(3)
+        if s1 and s2:
+            gap = self._signed_energy_gap(s2, s1)
+            if gap is not None:
+                summary["S2_minus_S1_eV"] = gap
+        if s1 and s3:
+            gap = self._signed_energy_gap(s3, s1)
+            if gap is not None:
+                summary["S3_minus_S1_eV"] = gap
+
+    def _annotate_step_brightness(
+        self,
+        summary: Dict[str, Any],
+        ranked_rows: List[Dict[str, Any]],
+    ) -> None:
+        rows_with_fosc = [
+            row
+            for row in ranked_rows
+            if row.get("oscillator_strength") not in (None, "")
+        ]
+        if not rows_with_fosc:
+            return
+
+        brightest = max(
+            rows_with_fosc,
+            key=lambda row: float(row.get("oscillator_strength") or 0.0),
+        )
+        summary["brightest_all_state_label"] = brightest.get("state_label", "")
+        summary["brightest_all_orca_root"] = brightest.get("orca_root_printed", "")
+        summary["brightest_all_oscillator_strength"] = brightest.get(
+            "oscillator_strength", ""
+        )
+        summary["brightest_all_wavelength_nm"] = brightest.get("wavelength_nm", "")
+
+        window_rows = [
+            row
+            for row in rows_with_fosc
+            if row.get("wavelength_nm") not in (None, "")
+            and 240.0 <= float(row.get("wavelength_nm")) <= 310.0
+        ]
+        if window_rows:
+            brightest_window = max(
+                window_rows,
+                key=lambda row: float(row.get("oscillator_strength") or 0.0),
+            )
+            summary["brightest_240_310_state_label"] = brightest_window.get(
+                "state_label", ""
+            )
+            summary["brightest_240_310_orca_root"] = brightest_window.get(
+                "orca_root_printed", ""
+            )
+            summary["brightest_240_310_oscillator_strength"] = (
+                brightest_window.get("oscillator_strength", "")
+            )
+            summary["brightest_240_310_wavelength_nm"] = brightest_window.get(
+                "wavelength_nm", ""
+            )
+
+        s1 = next((row for row in ranked_rows if row.get("energy_rank") == 1), None)
+        if s1 and s1.get("oscillator_strength") not in (None, ""):
+            brightest_f = float(brightest.get("oscillator_strength") or 0.0)
+            if brightest_f:
+                summary["S1_fosc_fraction_of_brightest"] = (
+                    float(s1.get("oscillator_strength") or 0.0) / brightest_f
+                )
+            if s1.get("wavelength_nm") not in (None, "") and brightest.get(
+                "wavelength_nm"
+            ) not in (None, ""):
+                summary["brightest_minus_S1_wavelength_nm"] = (
+                    float(brightest.get("wavelength_nm"))
+                    - float(s1.get("wavelength_nm"))
+                )
+
+    def _annotate_step_sequence_flags(
+        self,
+        summaries: List[Dict[str, Any]],
+    ) -> None:
+        previous: Optional[Dict[str, Any]] = None
+        for summary in summaries:
+            summary["oscillator_strength_jump_flag"] = False
+            summary["possible_root_flip_flag"] = False
+            if previous is not None:
+                previous_f = previous.get("S1_oscillator_strength")
+                current_f = summary.get("S1_oscillator_strength")
+                summary["oscillator_strength_jump_flag"] = self._has_fosc_jump(
+                    previous_f,
+                    current_f,
+                )
+                previous_root = previous.get("followed_or_target_root")
+                current_root = summary.get("followed_or_target_root")
+                if previous_root not in (None, "") and current_root not in (None, ""):
+                    summary["possible_root_flip_flag"] = previous_root != current_root
+
+                if (
+                    not summary["possible_root_flip_flag"]
+                    and summary.get("near_degeneracy_flag")
+                    and summary.get("root_following_second_largest_ratio")
+                    not in (None, "")
+                ):
+                    summary["possible_root_flip_flag"] = (
+                        float(summary["root_following_second_largest_ratio"]) >= 0.5
+                    )
+
+                if (
+                    not summary["possible_root_flip_flag"]
+                    and summary.get("near_degeneracy_flag")
+                    and previous.get("brightest_all_orca_root") not in (None, "")
+                    and summary.get("brightest_all_orca_root") not in (None, "")
+                ):
+                    summary["possible_root_flip_flag"] = (
+                        previous.get("brightest_all_orca_root")
+                        != summary.get("brightest_all_orca_root")
+                    )
+            previous = summary
+
+    def _build_trajectory_final_summary(
+        self,
+        step_summaries: List[Dict[str, Any]],
+        *,
+        target_manifold: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        if not step_summaries:
+            return {}
+
+        optimization_steps = [
+            step
+            for step in step_summaries
+            if step.get("source_context") == "optimization_step_spectrum"
+        ]
+        steps = optimization_steps or step_summaries
+        if target_manifold:
+            target_steps = [
+                step
+                for step in steps
+                if self._normalize_manifold(step.get("manifold")) == target_manifold
+            ]
+            if target_steps:
+                steps = target_steps
+        elif any(self._normalize_manifold(step.get("manifold")) == "singlet" for step in steps):
+            steps = [
+                step
+                for step in steps
+                if self._normalize_manifold(step.get("manifold")) == "singlet"
+            ]
+        initial = steps[0]
+        final = steps[-1]
+        final_summary: Dict[str, Any] = {
+            "source_context": final.get("source_context"),
+            "manifold": final.get("manifold", ""),
+            "final_step_index": final.get("step_index"),
+            "final_optimization_cycle": final.get("optimization_cycle"),
+            "final_S1_energy_eV": final.get("S1_energy_eV", ""),
+            "final_S1_wavelength_nm": final.get("S1_wavelength_nm", ""),
+            "final_S1_oscillator_strength": final.get("S1_oscillator_strength", ""),
+            "final_S1_orca_root": final.get("S1_orca_root", ""),
+            "final_S2_minus_S1_eV": final.get("S2_minus_S1_eV", ""),
+            "final_brightest_state_label": final.get("brightest_all_state_label", ""),
+            "final_brightest_orca_root": final.get("brightest_all_orca_root", ""),
+            "final_brightest_oscillator_strength": final.get(
+                "brightest_all_oscillator_strength", ""
+            ),
+            "step_count": len(steps),
+            "near_degeneracy_step_count": sum(
+                1 for step in steps if step.get("near_degeneracy_flag")
+            ),
+            "state_mixing_step_count": sum(
+                1 for step in steps if step.get("state_mixing_flag")
+            ),
+            "oscillator_strength_jump_count": sum(
+                1 for step in steps if step.get("oscillator_strength_jump_flag")
+            ),
+            "possible_root_flip_count": sum(
+                1 for step in steps if step.get("possible_root_flip_flag")
+            ),
+        }
+
+        s2_s1_gaps = [
+            float(step["S2_minus_S1_eV"])
+            for step in steps
+            if step.get("S2_minus_S1_eV") not in (None, "")
+        ]
+        if s2_s1_gaps:
+            final_summary["minimum_S2_minus_S1_eV"] = min(s2_s1_gaps)
+
+        s1_wavelengths = [
+            float(step["S1_wavelength_nm"])
+            for step in steps
+            if step.get("S1_wavelength_nm") not in (None, "")
+        ]
+        if s1_wavelengths:
+            final_summary["maximum_S1_wavelength_nm"] = max(s1_wavelengths)
+
+        s1_energies = [
+            float(step["S1_energy_eV"])
+            for step in steps
+            if step.get("S1_energy_eV") not in (None, "")
+        ]
+        if s1_energies:
+            final_summary["minimum_S1_energy_eV"] = min(s1_energies)
+
+        s1_fosc_steps = [
+            step
+            for step in steps
+            if step.get("S1_oscillator_strength") not in (None, "")
+        ]
+        if s1_fosc_steps:
+            max_fosc_step = max(
+                s1_fosc_steps,
+                key=lambda step: float(step.get("S1_oscillator_strength") or 0.0),
+            )
+            final_summary["maximum_S1_oscillator_strength"] = max_fosc_step.get(
+                "S1_oscillator_strength"
+            )
+            final_summary["step_of_maximum_S1_oscillator_strength"] = (
+                max_fosc_step.get("step_index")
+            )
+
+        final_summary["brightest_state_change_count"] = self._count_value_changes(
+            [step.get("brightest_all_orca_root") for step in steps]
+        )
+        final_summary["trajectory_class"] = self._classify_trajectory(
+            initial,
+            final,
+            final_summary,
+        )
+        return final_summary
+
+    def _classify_trajectory(
+        self,
+        initial: Dict[str, Any],
+        final: Dict[str, Any],
+        final_summary: Dict[str, Any],
+    ) -> str:
+        if final_summary.get("step_count", 0) < 2:
+            return "insufficient_data"
+        if final_summary.get("possible_root_flip_count", 0):
+            return "mixed_or_state_instability"
+
+        initial_wavelength = initial.get("S1_wavelength_nm")
+        final_wavelength = final.get("S1_wavelength_nm")
+        if initial_wavelength in (None, "") or final_wavelength in (None, ""):
+            return "insufficient_data"
+        delta_nm = float(final_wavelength) - float(initial_wavelength)
+        if delta_nm >= _TRAJECTORY_WAVELENGTH_SHIFT_NM:
+            return "red_relaxation_like"
+        if delta_nm <= -_TRAJECTORY_WAVELENGTH_SHIFT_NM:
+            return "blue_relaxation_like"
+        if (
+            final_summary.get("near_degeneracy_step_count", 0)
+            or final_summary.get("state_mixing_step_count", 0)
+        ):
+            return "mixed_or_state_instability"
+        return "insufficient_data"
+
+    def _step_has_near_degeneracy(self, ranked_rows: List[Dict[str, Any]]) -> bool:
+        low_rows = [
+            row
+            for row in ranked_rows
+            if row.get("energy_rank") not in (None, "")
+            and int(row.get("energy_rank")) <= 5
+        ]
+        for left, right in zip(low_rows, low_rows[1:]):
+            gap = self._signed_energy_gap(right, left)
+            if gap is not None and gap < _TRAJECTORY_NEAR_DEGENERACY_EV:
+                return True
+        return False
+
+    def _step_has_state_mixing(self, ranked_rows: List[Dict[str, Any]]) -> bool:
+        bright_low_rows = [
+            row
+            for row in ranked_rows
+            if row.get("energy_rank") not in (None, "")
+            and int(row.get("energy_rank")) <= 5
+            and row.get("oscillator_strength") not in (None, "")
+            and float(row.get("oscillator_strength")) >= _TRAJECTORY_BRIGHT_OSCILLATOR_STRENGTH
+        ]
+        if len(bright_low_rows) < 2:
+            return False
+        for left, right in zip(bright_low_rows, bright_low_rows[1:]):
+            gap = self._signed_energy_gap(right, left)
+            if gap is not None and gap < _TRAJECTORY_STATE_MIXING_EV:
+                return True
+        return False
+
+    def _has_fosc_jump(self, previous: Any, current: Any) -> bool:
+        if previous in (None, "") or current in (None, ""):
+            return False
+        previous_value = float(previous)
+        current_value = float(current)
+        if abs(current_value - previous_value) > _TRAJECTORY_FOSC_JUMP_ABS:
+            return True
+        smaller = min(abs(previous_value), abs(current_value))
+        larger = max(abs(previous_value), abs(current_value))
+        return (
+            smaller > 0.0
+            and larger >= _TRAJECTORY_BRIGHT_OSCILLATOR_STRENGTH
+            and larger / smaller > _TRAJECTORY_FOSC_JUMP_FACTOR
+        )
+
+    def _signed_energy_gap(
+        self,
+        higher: Dict[str, Any],
+        lower: Dict[str, Any],
+    ) -> Optional[float]:
+        high_energy = higher.get("excitation_energy_eV")
+        low_energy = lower.get("excitation_energy_eV")
+        if high_energy in (None, "") or low_energy in (None, ""):
+            return None
+        return float(high_energy) - float(low_energy)
+
+    def _format_transition_label(self, transition: Dict[str, Any]) -> str:
+        from_orbital = transition.get("from_orbital")
+        to_orbital = transition.get("to_orbital")
+        if from_orbital and to_orbital:
+            return f"{from_orbital} -> {to_orbital}"
+        return ""
+
+    def _ranked_state_label(self, manifold: Any, rank: Any) -> str:
+        if rank in (None, ""):
+            return ""
+        normalized = self._normalize_manifold(manifold)
+        prefix = {
+            "singlet": "S",
+            "doublet": "D",
+            "triplet": "T",
+            "quartet": "Q",
+            "spin-flip": "SF",
+            "soc": "SOC",
+        }.get(normalized or "", "S")
+        return f"{prefix}{rank}"
+
+    def _spectrum_transition_manifold(
+        self,
+        transition: Dict[str, Any],
+    ) -> Optional[str]:
+        suffix = str(transition.get("to_state_suffix") or "").strip()
+        match = re.match(r"(\d+)", suffix)
+        if not match:
+            return None
+        multiplicity = int(match.group(1))
+        return {
+            1: "singlet",
+            2: "doublet",
+            3: "triplet",
+            4: "quartet",
+        }.get(multiplicity)
+
+    def _sort_number(self, value: Any) -> float:
+        if value in (None, ""):
+            return float("inf")
+        return float(value)
+
+    def _count_value_changes(self, values: List[Any]) -> int:
+        cleaned = [value for value in values if value not in (None, "")]
+        return sum(
+            1
+            for previous, current in zip(cleaned, cleaned[1:])
+            if previous != current
+        )
+
     def _build_summary(
         self,
         input_blocks: List[Dict[str, Any]],
@@ -812,6 +1914,7 @@ class TDDFTModule(BaseModule):
         nto_states: List[Dict[str, Any]],
         spectra: Dict[str, Dict[str, Any]],
         total_energy_blocks: List[Dict[str, Any]],
+        trajectory: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         summary: Dict[str, Any] = {}
 
@@ -823,8 +1926,16 @@ class TDDFTModule(BaseModule):
                     summary[key] = first_block["settings"][key]
 
         if excited_state_blocks:
-            final_block = excited_state_blocks[-1]
+            final_blocks = self._final_excited_state_blocks(excited_state_blocks)
+            final_block = (
+                self._select_primary_final_state_block(
+                    final_blocks,
+                    input_blocks=input_blocks,
+                )
+                or excited_state_blocks[-1]
+            )
             summary["excited_state_block_count"] = len(excited_state_blocks)
+            summary["final_state_manifold_count"] = len(final_blocks)
             summary["final_method"] = final_block.get("method")
             if final_block.get("manifold") is not None:
                 summary["final_manifold"] = final_block.get("manifold")
@@ -878,7 +1989,82 @@ class TDDFTModule(BaseModule):
             if "delta_energy_Eh" in final_energy:
                 summary["delta_energy_Eh"] = final_energy["delta_energy_Eh"]
 
+        if trajectory:
+            summary["trajectory_state_row_count"] = len(
+                trajectory.get("state_rows") or []
+            )
+            summary["trajectory_step_count"] = len(
+                trajectory.get("step_summaries") or []
+            )
+            final_summary = trajectory.get("final_summary") or {}
+            if final_summary.get("trajectory_class"):
+                summary["trajectory_class"] = final_summary.get("trajectory_class")
+
         return summary
+
+    def _step_metadata(self, lines: List[str], index: int) -> Dict[str, Any]:
+        cycle = self._nearest_geometry_optimization_cycle(lines, index)
+        if cycle is None:
+            return {
+                "source_context": "final_single_point_tddft",
+                "step_index": 1,
+                "optimization_cycle_label": "single_point_or_initial_spectrum",
+            }
+        return {
+            "source_context": "optimization_step_spectrum",
+            "step_index": cycle,
+            "optimization_cycle": cycle,
+            "optimization_cycle_label": f"optimization_cycle_{cycle}",
+        }
+
+    def _parse_root_following_records(
+        self,
+        lines: List[str],
+    ) -> List[Dict[str, Any]]:
+        records: Dict[Any, Dict[str, Any]] = {}
+        current_cycle: Optional[int] = None
+
+        for index, line in enumerate(lines):
+            cycle_match = self._GEOM_OPT_CYCLE_RE.search(line)
+            if cycle_match:
+                current_cycle = int(cycle_match.group(1))
+
+            overlap_match = self._ROOT_FOLLOW_OVERLAP_RE.search(line)
+            ratio_match = self._ROOT_FOLLOW_RATIO_RE.search(line)
+            root_update_match = self._ROOT_UPDATE_RE.search(line)
+            if not (overlap_match or ratio_match or root_update_match):
+                continue
+
+            cycle = current_cycle
+            if cycle is None:
+                cycle = self._nearest_geometry_optimization_cycle(lines, index)
+            key: Any = cycle if cycle is not None else f"line_{index + 1}"
+            record = records.setdefault(
+                key,
+                {
+                    "line_start": index + 1,
+                    **self._step_metadata(lines, index),
+                },
+            )
+            record["line_end"] = index + 1
+            if overlap_match:
+                overlap = float(overlap_match.group(1))
+                record["root_following_overlap"] = overlap
+                record["transition_density_overlap"] = overlap
+            if ratio_match:
+                record["root_following_second_largest_ratio"] = float(
+                    ratio_match.group(1)
+                )
+            if root_update_match:
+                record["updated_iroot"] = int(root_update_match.group(1))
+
+        return sorted(
+            records.values(),
+            key=lambda record: (
+                self._sort_number(record.get("step_index")),
+                self._sort_number(record.get("line_start")),
+            ),
+        )
 
     def _nearest_geometry_optimization_cycle(
         self, lines: List[str], index: int
@@ -894,6 +2080,15 @@ class TDDFTModule(BaseModule):
     ) -> Optional[bool]:
         for j in range(index, max(-1, index - 1200), -1):
             match = self._FOLLOW_IROOT_RE.search(lines[j])
+            if match:
+                return self._parse_bool_like(match.group(1))
+        return None
+
+    def _followiroot_setting_in_block(
+        self, lines: List[str], start: int, stop: int
+    ) -> Optional[bool]:
+        for line in lines[start:stop]:
+            match = self._FOLLOW_IROOT_RE.search(line)
             if match:
                 return self._parse_bool_like(match.group(1))
         return None
@@ -916,6 +2111,10 @@ class TDDFTModule(BaseModule):
         energy_cm1 = float(state_match.group("energy_cm1"))
         state_data: Dict[str, Any] = {
             "block_index": block["block_index"],
+            "source_context": block.get("source_context"),
+            "step_index": block.get("step_index"),
+            "optimization_cycle": block.get("optimization_cycle"),
+            "optimization_cycle_label": block.get("optimization_cycle_label"),
             "method": block.get("method"),
             "manifold": block.get("manifold"),
             "order_in_block": order_in_block,
@@ -1032,7 +2231,9 @@ class TDDFTModule(BaseModule):
             cleaned = cleaned[:-1]
         aliases = {
             "singlet": "singlet",
+            "doublet": "doublet",
             "triplet": "triplet",
+            "quartet": "quartet",
             "sf": "spin-flip",
             "spin-flip": "spin-flip",
             "soc": "soc",

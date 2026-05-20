@@ -220,6 +220,29 @@ def render_analysis_sections(
     is_uhf = bool(context.get("is_uhf", False))
     if nbo:
         blocks.append(f"{h2} NBO Analysis")
+        provenance_bits = []
+        if nbo.get("nbo_block_index") is not None and nbo.get("nbo_block_count") is not None:
+            provenance_bits.append(
+                f"block {nbo.get('nbo_block_index')}/{nbo.get('nbo_block_count')}"
+            )
+        if nbo.get("optimization_cycle") is not None:
+            provenance_bits.append(f"cycle {nbo.get('optimization_cycle')}")
+        if nbo.get("is_final_cycle") is not None:
+            provenance_bits.append(
+                "final cycle" if nbo.get("is_final_cycle") else "non-final cycle"
+            )
+        if nbo.get("density_context"):
+            provenance_bits.append(f"density={nbo.get('density_context')}")
+        if nbo.get("density_kind"):
+            provenance_bits.append(f"kind={nbo.get('density_kind')}")
+        if nbo.get("root") is not None:
+            provenance_bits.append(f"root={nbo.get('root')}")
+        if nbo.get("input_electron_density_file"):
+            provenance_bits.append(f"file={nbo.get('input_electron_density_file')}")
+        if provenance_bits:
+            blocks.append(f"{h3} NBO/NPA Provenance\n" + "; ".join(provenance_bits))
+        for warning in nbo.get("warnings") or []:
+            blocks.append(f"**NBO warning:** {warning}")
 
         npa = nbo.get("overall_npa_summary") if is_uhf else nbo.get("npa_summary", [])
         if npa:
