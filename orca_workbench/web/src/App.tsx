@@ -216,6 +216,7 @@ function App() {
   const [activeView, setActiveView] = useState<WorkspaceView>("overview");
   const [exports, setExports] = useState<ExportOptions>(defaultExportOptions);
   const [message, setMessage] = useState("");
+  const [openingDialog, setOpeningDialog] = useState<"files" | "folder" | null>(null);
 
   useEffect(() => {
     async function loadMetadata() {
@@ -361,22 +362,30 @@ function App() {
   }
 
   async function handleOpenFiles() {
-    setMessage("");
+    const initialDir = preferredDialogDirectory(files, pathText);
+    setOpeningDialog("files");
+    setMessage("Opening the Windows file picker...");
     try {
-      const response = await openFilesDialog();
+      const response = await openFilesDialog(initialDir);
       applyDiscoveredFiles(response.files, "Opened", true);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setOpeningDialog(null);
     }
   }
 
   async function handleOpenFolder() {
-    setMessage("");
+    const initialDir = preferredDialogDirectory(files, pathText);
+    setOpeningDialog("folder");
+    setMessage("Opening the Windows folder picker...");
     try {
-      const response = await openFolderDialog();
+      const response = await openFolderDialog(initialDir);
       applyDiscoveredFiles(response.files, "Opened folder and discovered", true);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setOpeningDialog(null);
     }
   }
 
@@ -464,9 +473,13 @@ function App() {
           <span className="health-pill">{health}</span>
         </div>
         <div className="global-actions">
-          <button type="button" onClick={handleOpenFiles}>Open files</button>
-          <button type="button" onClick={handleOpenFolder}>Open folder</button>
-          <button type="button" onClick={handleLoadSamples}>Load samples</button>
+          <button type="button" onClick={handleOpenFiles} disabled={openingDialog !== null}>
+            {openingDialog === "files" ? "Opening..." : "Open files"}
+          </button>
+          <button type="button" onClick={handleOpenFolder} disabled={openingDialog !== null}>
+            {openingDialog === "folder" ? "Opening..." : "Open folder"}
+          </button>
+          <button type="button" onClick={handleLoadSamples} disabled={openingDialog !== null}>Load samples</button>
         </div>
         <div className="run-counters">
           <Metric label="Parsed" value={parsedCount} tone="ok" />
@@ -3866,6 +3879,14 @@ function splitPaths(text: string) {
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean);
+}
+
+function preferredDialogDirectory(files: DiscoveredFile[], pathText: string) {
+  const candidate = files[0]?.parent || splitPaths(pathText)[0] || "";
+  if (!candidate) {
+    return null;
+  }
+  return candidate.replace(/[\\/][^\\/]*\.(out|log)$/i, "");
 }
 
 function coerceOptionValue(value: string, defaultValue: string | number | boolean | null) {

@@ -49,14 +49,15 @@ def test_workbench_server_native_open_files_endpoint(monkeypatch, tmp_path):
     keep.write_text("placeholder", encoding="utf-8")
     monkeypatch.setattr(
         "orca_workbench.server._run_native_dialog",
-        lambda kind: [str(keep)] if kind == "files" else [],
+        lambda kind, initial_dir=None: [str(keep)] if kind == "files" else [],
     )
     client = TestClient(create_app())
 
-    response = client.get("/api/dialog/open-files")
+    response = client.get(f"/api/dialog/open-files?initial_dir={tmp_path}")
 
     assert response.status_code == 200
     assert response.json()["files"][0]["name"] == "selected.out"
+    assert client.app.state.workbench_last_dialog_dir == tmp_path
 
 
 def test_workbench_server_native_open_folder_endpoint(monkeypatch, tmp_path):
@@ -64,7 +65,7 @@ def test_workbench_server_native_open_folder_endpoint(monkeypatch, tmp_path):
     keep.write_text("placeholder", encoding="utf-8")
     monkeypatch.setattr(
         "orca_workbench.server._run_native_dialog",
-        lambda kind: [str(tmp_path)] if kind == "folder" else [],
+        lambda kind, initial_dir=None: [str(tmp_path)] if kind == "folder" else [],
     )
     client = TestClient(create_app())
 

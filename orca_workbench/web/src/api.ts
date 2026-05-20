@@ -129,12 +129,14 @@ export function getSampleFiles(limit = 12) {
   return request<{ files: DiscoveredFile[] }>(`/api/sample-files?limit=${limit}`);
 }
 
-export function openFilesDialog() {
-  return request<{ files: DiscoveredFile[] }>("/api/dialog/open-files");
+export function openFilesDialog(initialDir?: string | null) {
+  const query = initialDir ? `?initial_dir=${encodeURIComponent(initialDir)}` : "";
+  return request<{ files: DiscoveredFile[] }>(`/api/dialog/open-files${query}`);
 }
 
-export function openFolderDialog() {
-  return request<{ files: DiscoveredFile[] }>("/api/dialog/open-folder");
+export function openFolderDialog(initialDir?: string | null) {
+  const query = initialDir ? `?initial_dir=${encodeURIComponent(initialDir)}` : "";
+  return request<{ files: DiscoveredFile[] }>(`/api/dialog/open-folder${query}`);
 }
 
 export function startBatch(payload: {

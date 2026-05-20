@@ -260,13 +260,15 @@ def create_app() -> FastAPI:
         }
 
     @app.get("/api/dialog/open-files")
-    def open_files_dialog() -> dict[str, Any]:
-        paths = _run_native_dialog("files")
+    def open_files_dialog(initial_dir: str | None = None) -> dict[str, Any]:
+        paths = _run_native_dialog("files", _dialog_initial_dir(app, initial_dir))
+        _remember_dialog_dir(app, paths)
         return _files_payload(discover_orca_outputs(paths))
 
     @app.get("/api/dialog/open-folder")
-    def open_folder_dialog() -> dict[str, Any]:
-        paths = _run_native_dialog("folder")
+    def open_folder_dialog(initial_dir: str | None = None) -> dict[str, Any]:
+        paths = _run_native_dialog("folder", _dialog_initial_dir(app, initial_dir))
+        _remember_dialog_dir(app, paths)
         return _files_payload(discover_orca_outputs(paths))
 
     @app.post("/api/batches")
@@ -397,7 +399,7 @@ def _parsed_property_payload(data: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _run_native_dialog(kind: str) -> list[str]:
+def _run_native_dialog(kind: str, initial_dir: Path | None = None) -> list[str]:
     """Open a native file/folder dialog in a short-lived Python subprocess.
 
     Tk dialogs are intentionally isolated in a helper process because FastAPI
@@ -409,7 +411,7 @@ def _run_native_dialog(kind: str) -> list[str]:
     code = _native_dialog_script(kind)
     try:
         completed = subprocess.run(
-            [sys.executable, "-c", code],
+            [sys.executable, "-c", code, str(initial_dir or "")],
             check=True,
             capture_output=True,
             text=True,
@@ -428,34 +430,78 @@ def _run_native_dialog(kind: str) -> list[str]:
     return [str(item) for item in value if str(item).strip()]
 
 
+def _dialog_initial_dir(app: FastAPI, requested: str | None) -> Path | None:
+    """Return a valid starting directory for the native picker."""
+
+    candidates = [
+        requested,
+        getattr(app.state, "workbench_last_dialog_dir", None),
+        Path.home(),
+    ]
+    for candidate in candidates:
+        if not candidate:
+            continue
+        path = Path(candidate).expanduser()
+        if path.is_file():
+            path = path.parent
+        if path.is_dir():
+            return path
+    return None
+
+
+def _remember_dialog_dir(app: FastAPI, paths: list[str]) -> None:
+    """Keep the next native picker near the user's last selected location."""
+
+    if not paths:
+        return
+    path = Path(paths[0]).expanduser()
+    app.state.workbench_last_dialog_dir = path if path.is_dir() else path.parent
+
+
 def _native_dialog_script(kind: str) -> str:
     """Return Python code for a native Tk file/folder chooser."""
 
     if kind == "files":
         return r'''
 import json
+import sys
 import tkinter as tk
 from tkinter import filedialog
 
 root = tk.Tk()
 root.withdraw()
 root.attributes("-topmost", True)
-paths = filedialog.askopenfilenames(
-    title="Open ORCA output files",
-    filetypes=(("ORCA outputs", "*.out *.log"), ("All files", "*.*")),
-)
+root.update_idletasks()
+root.update()
+options = {
+    "title": "Open ORCA output files",
+    "filetypes": (("ORCA outputs", "*.out *.log"), ("All files", "*.*")),
+    "parent": root,
+}
+if len(sys.argv) > 1 and sys.argv[1]:
+    options["initialdir"] = sys.argv[1]
+paths = filedialog.askopenfilenames(**options)
 root.destroy()
 print(json.dumps(list(paths)))
 '''
     return r'''
 import json
+import sys
 import tkinter as tk
 from tkinter import filedialog
 
 root = tk.Tk()
 root.withdraw()
 root.attributes("-topmost", True)
-path = filedialog.askdirectory(title="Open folder with ORCA outputs")
+root.update_idletasks()
+root.update()
+options = {
+    "title": "Open folder with ORCA outputs",
+    "parent": root,
+}
+if len(sys.argv) > 1 and sys.argv[1]:
+    options["initialdir"] = sys.argv[1]
+path = filedialog.askdirectory(**options)
 root.destroy()
 print(json.dumps([path] if path else []))
 '''
