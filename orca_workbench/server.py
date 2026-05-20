@@ -10,7 +10,10 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 import argparse
+import json
 from pathlib import Path
+import subprocess
+import sys
 import threading
 from typing import Any
 from uuid import uuid4
@@ -256,6 +259,16 @@ def create_app() -> FastAPI:
             ]
         }
 
+    @app.get("/api/dialog/open-files")
+    def open_files_dialog() -> dict[str, Any]:
+        paths = _run_native_dialog("files")
+        return _files_payload(discover_orca_outputs(paths))
+
+    @app.get("/api/dialog/open-folder")
+    def open_folder_dialog() -> dict[str, Any]:
+        paths = _run_native_dialog("folder")
+        return _files_payload(discover_orca_outputs(paths))
+
     @app.post("/api/batches")
     def start_batch(request: ParseBatchRequest) -> dict[str, Any]:
         paths = discover_orca_outputs(request.paths)
@@ -313,6 +326,85 @@ def _get_existing_job(app: FastAPI, job_id: str) -> StoredJob:
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found.")
     return job
+
+
+def _files_payload(paths: list[Path]) -> dict[str, Any]:
+    """Serialize discovered files for API responses."""
+
+    return {
+        "files": [
+            {
+                "path": str(path),
+                "name": path.name,
+                "parent": str(path.parent),
+            }
+            for path in paths
+        ]
+    }
+
+
+def _run_native_dialog(kind: str) -> list[str]:
+    """Open a native file/folder dialog in a short-lived Python subprocess.
+
+    Tk dialogs are intentionally isolated in a helper process because FastAPI
+    route handlers run in worker threads and Tk is fussy about thread ownership.
+    """
+
+    if kind not in {"files", "folder"}:
+        raise ValueError(f"Unsupported dialog kind: {kind}")
+    code = _native_dialog_script(kind)
+    try:
+        completed = subprocess.run(
+            [sys.executable, "-c", code],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"Could not open native dialog: {exc}") from exc
+    text = completed.stdout.strip()
+    if not text:
+        return []
+    try:
+        value = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=500, detail="Native dialog returned invalid data.") from exc
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value if str(item).strip()]
+
+
+def _native_dialog_script(kind: str) -> str:
+    """Return Python code for a native Tk file/folder chooser."""
+
+    if kind == "files":
+        return r'''
+import json
+import tkinter as tk
+from tkinter import filedialog
+
+root = tk.Tk()
+root.withdraw()
+root.attributes("-topmost", True)
+paths = filedialog.askopenfilenames(
+    title="Open ORCA output files",
+    filetypes=(("ORCA outputs", "*.out *.log"), ("All files", "*.*")),
+)
+root.destroy()
+print(json.dumps(list(paths)))
+'''
+    return r'''
+import json
+import tkinter as tk
+from tkinter import filedialog
+
+root = tk.Tk()
+root.withdraw()
+root.attributes("-topmost", True)
+path = filedialog.askdirectory(title="Open folder with ORCA outputs")
+root.destroy()
+print(json.dumps([path] if path else []))
+'''
 
 
 def _curated_sample_outputs(sample_root: Path, *, limit: int) -> list[Path]:

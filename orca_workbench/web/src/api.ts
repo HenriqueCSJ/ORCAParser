@@ -124,6 +124,14 @@ export function getSampleFiles(limit = 12) {
   return request<{ files: DiscoveredFile[] }>(`/api/sample-files?limit=${limit}`);
 }
 
+export function openFilesDialog() {
+  return request<{ files: DiscoveredFile[] }>("/api/dialog/open-files");
+}
+
+export function openFolderDialog() {
+  return request<{ files: DiscoveredFile[] }>("/api/dialog/open-folder");
+}
+
 export function startBatch(payload: {
   paths: string[];
   sections: string[] | null;

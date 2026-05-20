@@ -16,6 +16,8 @@ import {
   getSampleFiles,
   getSections,
   getSnapshots,
+  openFilesDialog,
+  openFolderDialog,
   startBatch
 } from "./api";
 
@@ -144,6 +146,36 @@ function App() {
     }
   }
 
+  async function handleOpenFiles() {
+    setMessage("");
+    try {
+      const response = await openFilesDialog();
+      applyDiscoveredFiles(response.files, "Opened");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function handleOpenFolder() {
+    setMessage("");
+    try {
+      const response = await openFolderDialog();
+      applyDiscoveredFiles(response.files, "Opened folder and discovered");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  function applyDiscoveredFiles(discoveredFiles: DiscoveredFile[], verb: string) {
+    setFiles(discoveredFiles);
+    setPathText(discoveredFiles.map((file) => file.path).join("\n"));
+    setMessage(
+      discoveredFiles.length
+        ? `${verb} ${discoveredFiles.length} ORCA output file(s).`
+        : "No ORCA .out/.log files were selected."
+    );
+  }
+
   async function handleParse() {
     setMessage("");
     const parsePaths = files.length ? files.map((file) => file.path) : splitPaths(pathText);
@@ -204,16 +236,20 @@ function App() {
           <div className="section-head">
             <h2>Inputs</h2>
             <div className="button-pair">
-              <button type="button" onClick={handleLoadSamples}>Load samples</button>
-              <button type="button" onClick={handleDiscover}>Discover</button>
+              <button type="button" onClick={handleOpenFiles}>Open files</button>
+              <button type="button" onClick={handleOpenFolder}>Open folder</button>
             </div>
+          </div>
+          <div className="button-pair input-actions">
+            <button type="button" onClick={handleLoadSamples}>Load samples</button>
+            <button type="button" onClick={handleDiscover}>Discover pasted paths</button>
           </div>
           <textarea
             value={pathText}
             onChange={(event) => setPathText(event.target.value)}
             placeholder={"Paste local files or folders, one per line\nC:\\\\Users\\\\henri\\\\Downloads\\\\rdb_lmmp"}
           />
-          <p className="quiet-text">Browser security cannot read folders directly, so Workbench asks the local backend to scan paths you paste here.</p>
+          <p className="quiet-text">Use Open files/folder for the normal desktop flow, or paste local paths for batch discovery.</p>
         </section>
 
         <section className="panel">

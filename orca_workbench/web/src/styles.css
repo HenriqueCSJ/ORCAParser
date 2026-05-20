@@ -113,6 +113,7 @@ button {
 .button-pair {
   display: flex;
   gap: 6px;
+  flex-wrap: wrap;
 }
 
 .section-head button,
@@ -123,6 +124,10 @@ button {
   background: #126c7a;
   color: #ffffff;
   font-weight: 700;
+}
+
+.input-actions {
+  margin-bottom: 8px;
 }
 
 textarea {

@@ -43,6 +43,36 @@ def test_workbench_server_sample_files_endpoint():
     assert all(file["name"].endswith((".out", ".log")) for file in response.json()["files"])
 
 
+def test_workbench_server_native_open_files_endpoint(monkeypatch, tmp_path):
+    keep = tmp_path / "selected.out"
+    keep.write_text("placeholder", encoding="utf-8")
+    monkeypatch.setattr(
+        "orca_workbench.server._run_native_dialog",
+        lambda kind: [str(keep)] if kind == "files" else [],
+    )
+    client = TestClient(create_app())
+
+    response = client.get("/api/dialog/open-files")
+
+    assert response.status_code == 200
+    assert response.json()["files"][0]["name"] == "selected.out"
+
+
+def test_workbench_server_native_open_folder_endpoint(monkeypatch, tmp_path):
+    keep = tmp_path / "selected.log"
+    keep.write_text("placeholder", encoding="utf-8")
+    monkeypatch.setattr(
+        "orca_workbench.server._run_native_dialog",
+        lambda kind: [str(tmp_path)] if kind == "folder" else [],
+    )
+    client = TestClient(create_app())
+
+    response = client.get("/api/dialog/open-folder")
+
+    assert response.status_code == 200
+    assert response.json()["files"][0]["name"] == "selected.log"
+
+
 def test_workbench_server_empty_batch_rejects_cleanly(tmp_path):
     client = TestClient(create_app())
 
