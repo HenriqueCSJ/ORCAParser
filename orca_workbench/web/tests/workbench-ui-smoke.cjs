@@ -177,6 +177,9 @@ async function main() {
     checks.casscfActiveRows = await page.locator(".casscf-active-row").count();
     checks.casscfConfigCards = await page.locator(".casscf-config-card").count();
     checks.casscfActiveSvg = await page.locator(".casscf-active-svg").count();
+    checks.casscfNoonPoints = await page.locator(".casscf-noon-point").count();
+    checks.casscfQualityChips = await page.locator(".casscf-quality-chip").count();
+    checks.casscfCompositionCells = await page.locator(".casscf-composition-cell").count();
     checks.casscfConvergenceSvg = await page.locator(".casscf-convergence-svg").count();
     checks.casscfNevpt2Panels = await page.locator(".casscf-nevpt2-panel").count();
     checks.casscfNevpt2Dots = await page.locator(".casscf-dot").count();
@@ -263,6 +266,9 @@ async function main() {
     checks.isCasscfSample &&
     (
       checks.casscfConvergenceSvg < 1 ||
+      checks.casscfNoonPoints < 3 ||
+      checks.casscfQualityChips < 4 ||
+      checks.casscfCompositionCells < 6 ||
       checks.casscfNevpt2Panels < 1 ||
       checks.casscfNevpt2Dots < 6 ||
       checks.casscfRelativisticPanels < 1 ||

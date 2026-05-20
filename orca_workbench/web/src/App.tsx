@@ -1,4 +1,4 @@
-import { ReactNode, useEffect, useMemo, useState } from "react";
+import { Fragment, ReactNode, useEffect, useMemo, useState } from "react";
 import {
   DiscoveredFile,
   ExportOptions,
@@ -2390,11 +2390,15 @@ function CasscfActiveSpacePanel({
           <small>{getArray(qdNevpt2.state_results).length ? "QD-NEVPT2 present" : "No QD correction detected"}</small>
         </article>
       </div>
+      {activeOrbitals.length > 0 && (
+        <CasscfActiveSpaceDiagnostics activeOrbitals={activeOrbitals} nel={nel} norb={norb} />
+      )}
       {activeOrbitals.length ? (
         <CasscfActiveOrbitalChart orbitals={activeOrbitals} rangeFirst={rangeFirst} rangeLast={rangeLast} />
       ) : (
         <div className="empty-state small">No active-orbital energies or occupations were exposed in the selected properties.</div>
       )}
+      {activeOrbitals.length > 0 && <CasscfCompositionHeatmap orbitals={activeOrbitals} />}
       {dominantRows.length > 0 && (
         <section className="casscf-config-strip">
           <div className="panel-headline compact">
@@ -2829,7 +2833,154 @@ type CasscfActiveOrbital = {
   occupation: number | null;
   active: boolean;
   composition: string;
+  contributions: CasscfOrbitalContribution[];
+  nContributions: number | null;
 };
+
+type CasscfOrbitalContribution = {
+  atomIndex: number | null;
+  element: string;
+  aoLabel: string;
+  percent: number | null;
+};
+
+function CasscfActiveSpaceDiagnostics({
+  activeOrbitals,
+  nel,
+  norb
+}: {
+  activeOrbitals: CasscfActiveOrbital[];
+  nel: number | null;
+  norb: number | null;
+}) {
+  const occupied = activeOrbitals.filter((orbital) => orbital.occupation !== null);
+  const openShell = occupied.filter((orbital) => {
+    const value = orbital.occupation ?? 0;
+    return value >= 0.65 && value <= 1.35;
+  });
+  const correlating = occupied.filter((orbital) => {
+    const value = orbital.occupation ?? 0;
+    return (value > 0.02 && value < 0.35) || (value > 1.65 && value < 1.98);
+  });
+  const edge = occupied.filter((orbital) => {
+    const value = orbital.occupation ?? 0;
+    return value <= 0.02 || value >= 1.98;
+  });
+  const fractionalStrength = occupied.reduce((sum, orbital) => sum + casscfOccupationImportance(orbital.occupation), 0);
+  const electronCheck = occupied.reduce((sum, orbital) => sum + (orbital.occupation ?? 0), 0);
+  const mismatch = nel !== null ? electronCheck - nel : null;
+  return (
+    <section className="casscf-as-diagnostics">
+      <div className="casscf-as-notes">
+        <article className="metric-card">
+          <span>NOON signal</span>
+          <strong>{formatNumber(fractionalStrength, 2, "")}</strong>
+          <small>sum of occupation distance from closed-shell limits</small>
+        </article>
+        <article className="metric-card">
+          <span>Open-shell-like</span>
+          <strong>{openShell.length}</strong>
+          <small>occupation between 0.65 and 1.35</small>
+        </article>
+        <article className="metric-card">
+          <span>Correlating edge</span>
+          <strong>{correlating.length}</strong>
+          <small>weakly occupied or almost filled, but not closed</small>
+        </article>
+        <article className={edge.length ? "metric-card warning-card" : "metric-card"}>
+          <span>Near 0/2</span>
+          <strong>{edge.length}</strong>
+          <small>{edge.length ? "inspect active-space necessity" : "no hard occupation-limit warnings"}</small>
+        </article>
+        <article className={mismatch !== null && Math.abs(mismatch) > 0.05 ? "metric-card warning-card" : "metric-card"}>
+          <span>Electron check</span>
+          <strong>{formatNumber(electronCheck, 2, "")}</strong>
+          <small>{nel !== null && norb !== null ? `target CAS(${nel}, ${norb})` : "target unknown"}</small>
+        </article>
+      </div>
+      <div className="casscf-noon-panel">
+        <div className="casscf-noon-axis">
+          {[0, 0.5, 1, 1.5, 2].map((tick) => (
+            <span key={tick} style={{ left: `${(tick / 2) * 100}%` }}>{tick.toFixed(tick % 1 === 0 ? 0 : 1)}</span>
+          ))}
+        </div>
+        <div className="casscf-noon-track">
+          {activeOrbitals.map((orbital, index) => {
+            const occ = orbital.occupation ?? 0;
+            const left = Math.max(0, Math.min(100, (occ / 2) * 100));
+            const quality = classifyCasscfOccupation(orbital.occupation);
+            return (
+              <span
+                key={orbital.index}
+                className={`casscf-noon-point ${quality.tone}`}
+                style={{ left: `${left}%`, top: `${18 + (index % 3) * 24}px` }}
+                title={`MO ${orbital.index}: occ ${orbital.occupation !== null ? orbital.occupation.toFixed(4) : "N/A"} (${quality.label})`}
+              >
+                {orbital.index}
+              </span>
+            );
+          })}
+        </div>
+        <div className="casscf-quality-legend">
+          <span className="casscf-quality-chip open">open-shell</span>
+          <span className="casscf-quality-chip correlating">correlating</span>
+          <span className="casscf-quality-chip moderate">moderate</span>
+          <span className="casscf-quality-chip edge">near 0/2</span>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function CasscfCompositionHeatmap({ orbitals }: { orbitals: CasscfActiveOrbital[] }) {
+  const labels = buildCasscfCompositionLabels(orbitals, 12);
+  if (!labels.length) {
+    return null;
+  }
+  const maxPercent = Math.max(
+    ...orbitals.flatMap((orbital) => labels.map((label) => casscfContributionPercent(orbital, label))),
+    1
+  );
+  return (
+    <section className="casscf-composition-panel">
+      <div className="panel-headline compact">
+        <div>
+          <p className="eyebrow">Active-orbital identity</p>
+          <h3>Loewdin AO-composition heatmap</h3>
+        </div>
+        <span className="quiet-text">Dominant atom/AO contributions across active orbitals; blank cells mean below printed threshold.</span>
+      </div>
+      <div
+        className="casscf-composition-grid"
+        style={{ gridTemplateColumns: `minmax(84px, 120px) repeat(${orbitals.length}, minmax(58px, 1fr))` }}
+      >
+        <span className="casscf-composition-corner">AO group</span>
+        {orbitals.map((orbital) => (
+          <strong key={`head-${orbital.index}`} className="casscf-composition-head">MO {orbital.index}</strong>
+        ))}
+        {labels.map((label) => (
+          <Fragment key={label}>
+            <strong className="casscf-composition-label">{label}</strong>
+            {orbitals.map((orbital) => {
+              const percent = casscfContributionPercent(orbital, label);
+              const alpha = percent > 0 ? Math.max(0.12, Math.min(0.95, percent / maxPercent)) : 0;
+              return (
+                <span
+                  key={`${label}-${orbital.index}`}
+                  className="casscf-composition-cell"
+                  style={{ backgroundColor: percent > 0 ? `rgba(14, 165, 233, ${alpha})` : "rgba(226, 232, 240, 0.55)" }}
+                  title={`${label} in MO ${orbital.index}: ${percent ? percent.toFixed(1) : "0.0"}%`}
+                >
+                  {percent >= 0.5 ? percent.toFixed(1) : ""}
+                </span>
+              );
+            })}
+          </Fragment>
+        ))}
+      </div>
+    </section>
+  );
+}
 
 function CasscfActiveOrbitalChart({
   orbitals,
@@ -2938,6 +3089,60 @@ function firstNumber(...values: unknown[]): number | null {
   return null;
 }
 
+function casscfOccupationImportance(occupation: number | null) {
+  if (occupation === null) {
+    return 0;
+  }
+  return Math.max(0, Math.min(1, 1 - Math.abs(occupation - 1)));
+}
+
+function classifyCasscfOccupation(occupation: number | null) {
+  if (occupation === null) {
+    return { label: "unknown", tone: "moderate" };
+  }
+  if (occupation <= 0.02 || occupation >= 1.98) {
+    return { label: "near 0/2", tone: "edge" };
+  }
+  if ((occupation > 0.02 && occupation < 0.35) || (occupation > 1.65 && occupation < 1.98)) {
+    return { label: "correlating", tone: "correlating" };
+  }
+  if (occupation >= 0.65 && occupation <= 1.35) {
+    return { label: "open-shell-like", tone: "open" };
+  }
+  return { label: "moderately fractional", tone: "moderate" };
+}
+
+function buildCasscfCompositionLabels(orbitals: CasscfActiveOrbital[], maxLabels: number) {
+  const scores = new Map<string, number>();
+  for (const orbital of orbitals) {
+    const top = orbital.contributions
+      .slice()
+      .sort((left, right) => (right.percent ?? 0) - (left.percent ?? 0))
+      .slice(0, 4);
+    for (const contribution of top) {
+      const label = casscfContributionLabel(contribution);
+      scores.set(label, Math.max(scores.get(label) ?? 0, contribution.percent ?? 0));
+    }
+  }
+  return Array.from(scores.entries())
+    .sort((left, right) => right[1] - left[1])
+    .slice(0, maxLabels)
+    .map(([label]) => label);
+}
+
+function casscfContributionPercent(orbital: CasscfActiveOrbital, label: string) {
+  return orbital.contributions
+    .filter((contribution) => casscfContributionLabel(contribution) === label)
+    .reduce((sum, contribution) => sum + (contribution.percent ?? 0), 0);
+}
+
+function casscfContributionLabel(contribution: CasscfOrbitalContribution) {
+  const atom = contribution.atomIndex !== null ? String(contribution.atomIndex) : "";
+  const element = contribution.element || "AO";
+  const ao = contribution.aoLabel || "?";
+  return `${element}${atom} ${ao}`.trim();
+}
+
 function buildCasscfMacroPoints(casscf: Record<string, unknown>): CasscfMacroPoint[] {
   const convergence = getRecord(casscf.convergence);
   const rows = getArray(convergence.macro_iterations).filter(isPlainObject);
@@ -3033,6 +3238,14 @@ function buildCasscfActiveOrbitals(casscf: Record<string, unknown> | null): Cass
   const rangeLast = toNumber(activeRange.last_index);
   const activeMoBlock = getRecord(casscf.loewdin_reduced_active_mos);
   const activeRows = getArray(activeMoBlock.orbitals).filter(isPlainObject);
+  const fullCompositionRows = getArray(getRecord(casscf.loewdin_orbital_compositions).orbitals).filter(isPlainObject);
+  const fullCompositionByIndex = new Map<number, Record<string, unknown>>();
+  fullCompositionRows.forEach((row) => {
+    const index = toNumber(row.index ?? row.orbital ?? row.mo);
+    if (index !== null) {
+      fullCompositionByIndex.set(index, row);
+    }
+  });
   const orbitalRows = activeRows.length
     ? activeRows
     : getArray(casscf.orbital_energies).filter(isPlainObject);
@@ -3046,12 +3259,19 @@ function buildCasscfActiveOrbitals(casscf: Record<string, unknown> | null): Cass
         toNumber(row.energy_eh) ??
         (toNumber(row.energy_eV) !== null ? toNumber(row.energy_eV)! / HARTREE_TO_EV : null);
       const active = rangeFirst !== null && rangeLast !== null && index >= rangeFirst && index <= rangeLast;
+      const fullRow = fullCompositionByIndex.get(index);
+      const rowContributions = parseCasscfContributions(row);
+      const fullContributions = fullRow ? parseCasscfContributions(fullRow) : [];
+      const contributions = fullContributions.length > rowContributions.length ? fullContributions : rowContributions;
+      const compositionSource = fullContributions.length > rowContributions.length ? fullRow ?? row : row;
       return {
         index,
         energyEh,
         occupation: toNumber(row.occupation),
         active,
-        composition: formatCasscfOrbitalComposition(row)
+        composition: formatCasscfOrbitalComposition(compositionSource),
+        contributions,
+        nContributions: toNumber(compositionSource.n_contributions)
       };
     })
     .filter((row): row is CasscfActiveOrbital => row !== null)
@@ -3065,17 +3285,29 @@ function buildCasscfActiveOrbitals(casscf: Record<string, unknown> | null): Cass
   return focused.length ? focused : rows.slice(0, 32);
 }
 
+function parseCasscfContributions(row: Record<string, unknown>): CasscfOrbitalContribution[] {
+  return getArray(row.contributions)
+    .filter(isPlainObject)
+    .map((item) => ({
+      atomIndex: toNumber(item.atom_index),
+      element: String(item.element ?? "").trim(),
+      aoLabel: String(item.ao_label ?? "").trim(),
+      percent: toNumber(item.percent)
+    }))
+    .filter((item) => item.element || item.aoLabel || item.percent !== null);
+}
+
 function formatCasscfOrbitalComposition(row: Record<string, unknown>) {
-  const contributions = getArray(row.contributions).filter(isPlainObject);
+  const contributions = parseCasscfContributions(row);
   return contributions
     .slice()
-    .sort((a, b) => (toNumber(b.percent) ?? 0) - (toNumber(a.percent) ?? 0))
+    .sort((a, b) => (b.percent ?? 0) - (a.percent ?? 0))
     .slice(0, 3)
     .map((item) => {
-      const element = String(item.element ?? "").trim();
-      const atom = item.atom_index !== undefined ? String(item.atom_index) : "";
-      const ao = String(item.ao_label ?? "").trim();
-      const percent = toNumber(item.percent);
+      const element = item.element;
+      const atom = item.atomIndex !== null ? String(item.atomIndex) : "";
+      const ao = item.aoLabel;
+      const percent = item.percent;
       const orbital = [element && `${element}${atom}`, ao].filter(Boolean).join(" ");
       return percent !== null ? `${orbital} ${percent.toFixed(1)}%` : orbital;
     })

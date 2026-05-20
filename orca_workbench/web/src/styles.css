@@ -822,6 +822,115 @@ textarea {
   background: #ffffff;
 }
 
+.casscf-as-diagnostics {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.95fr) minmax(360px, 1.25fr);
+  gap: 12px;
+  align-items: stretch;
+}
+
+.casscf-as-notes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+  gap: 8px;
+}
+
+.warning-card {
+  border-color: #fbbf24;
+  background: #fffbeb;
+}
+
+.casscf-noon-panel {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid #d7e3f4;
+  border-radius: 12px;
+  background: #ffffff;
+}
+
+.casscf-noon-axis,
+.casscf-noon-track {
+  position: relative;
+}
+
+.casscf-noon-axis {
+  height: 18px;
+  margin: 0 24px;
+  color: #64748b;
+  font-size: 0.72rem;
+  font-weight: 900;
+}
+
+.casscf-noon-axis span {
+  position: absolute;
+  transform: translateX(-50%);
+}
+
+.casscf-noon-track {
+  height: 92px;
+  margin: 0 24px;
+  border-radius: 999px;
+  background:
+    linear-gradient(90deg, rgba(239, 68, 68, 0.12), rgba(245, 158, 11, 0.18) 18%, rgba(16, 185, 129, 0.18) 50%, rgba(245, 158, 11, 0.18) 82%, rgba(239, 68, 68, 0.12)),
+    repeating-linear-gradient(90deg, transparent 0, transparent calc(25% - 1px), rgba(100, 116, 139, 0.22) calc(25% - 1px), rgba(100, 116, 139, 0.22) 25%);
+}
+
+.casscf-noon-point {
+  position: absolute;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 22px;
+  border: 2px solid #ffffff;
+  border-radius: 999px;
+  box-shadow: 0 6px 14px rgba(15, 23, 42, 0.14);
+  color: #ffffff;
+  font-size: 0.68rem;
+  font-weight: 1000;
+  transform: translateX(-50%);
+}
+
+.casscf-noon-point.open,
+.casscf-quality-chip.open {
+  background: #10b981;
+}
+
+.casscf-noon-point.correlating,
+.casscf-quality-chip.correlating {
+  background: #f59e0b;
+}
+
+.casscf-noon-point.moderate,
+.casscf-quality-chip.moderate {
+  background: #2563eb;
+}
+
+.casscf-noon-point.edge,
+.casscf-quality-chip.edge {
+  background: #ef4444;
+}
+
+.casscf-quality-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.casscf-quality-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 4px 7px;
+  border-radius: 8px;
+  color: #ffffff;
+  font-size: 0.72rem;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
 .casscf-active-chart {
   min-height: 0;
 }
@@ -917,6 +1026,59 @@ textarea {
   color: var(--muted);
   font-size: 0.8rem;
   font-weight: 900;
+}
+
+.casscf-composition-panel {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #d7e3f4;
+  border-radius: 12px;
+  background: #ffffff;
+  overflow-x: auto;
+}
+
+.casscf-composition-grid {
+  display: grid;
+  min-width: 720px;
+  gap: 4px;
+  align-items: stretch;
+}
+
+.casscf-composition-corner,
+.casscf-composition-head,
+.casscf-composition-label,
+.casscf-composition-cell {
+  min-height: 30px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  font-size: 0.74rem;
+  font-weight: 900;
+}
+
+.casscf-composition-corner,
+.casscf-composition-head,
+.casscf-composition-label {
+  background: #f1f5f9;
+  color: #334155;
+}
+
+.casscf-composition-head {
+  text-align: center;
+}
+
+.casscf-composition-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.casscf-composition-cell {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #0f172a;
+  font-variant-numeric: tabular-nums;
 }
 
 .casscf-convergence-chart,
@@ -2119,5 +2281,9 @@ textarea {
 
   .spectrum-transition-row {
     grid-template-columns: minmax(70px, 0.75fr) minmax(82px, 0.9fr) minmax(62px, 0.65fr) 68px minmax(130px, 1.4fr);
+  }
+
+  .casscf-as-diagnostics {
+    grid-template-columns: 1fr;
   }
 }
