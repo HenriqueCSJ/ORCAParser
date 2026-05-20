@@ -80,11 +80,9 @@ async function main() {
 
   if (checks.domainTexts.some((text) => text.includes("Geometry"))) {
     await page.locator(".domain-button").filter({ hasText: "Geometry" }).click();
-    await page.locator(".coordinate-svg").waitFor({ state: "visible", timeout: 10000 });
-    await page.getByRole("button", { name: "XZ", exact: true }).click();
-    checks.geometryProjection = await page.locator(".segmented.active").innerText();
-    checks.coordinateCharts = await page.locator(".coordinate-svg").count();
-    checks.atomDots = await page.locator(".atom-dot").count();
+    await page.locator(".geometry-bond-panel").waitFor({ state: "visible", timeout: 10000 });
+    checks.geometrySummaryCards = await page.locator(".geometry-summary-grid .metric-card").count();
+    checks.bondRows = await page.locator(".bond-row").count();
     await page.screenshot({ path: path.join(screenshotDir, "workbench-redesign-geometry.png"), fullPage: false });
   }
 
@@ -187,7 +185,7 @@ async function main() {
   ) {
     process.exit(60);
   }
-  if (checks.coordinateCharts !== undefined && (checks.coordinateCharts < 1 || checks.atomDots < 3 || checks.geometryProjection !== "XZ")) {
+  if (checks.bondRows !== undefined && (checks.geometrySummaryCards < 4 || checks.bondRows < 3)) {
     process.exit(61);
   }
   if (checks.populationRows !== undefined && checks.populationRows < 3) {

@@ -107,12 +107,48 @@ type OrbitalSetAnalysis = {
   gapEv: number | null;
 };
 
+type GeometryAtom = {
+  row: number;
+  label: string;
+  symbol: string;
+  x: number;
+  y: number;
+  z: number;
+  xAng: number;
+  yAng: number;
+  zAng: number;
+};
+
+type GeometryBond = {
+  from: GeometryAtom;
+  to: GeometryAtom;
+  distanceAng: number;
+  expectedAng: number;
+  ratio: number;
+};
+
 const HARTREE_TO_EV = 27.211386245988;
+const BOHR_TO_ANGSTROM = 0.529177210903;
 const ENERGY_UNITS: Record<EnergyUnit, { label: string; factor: number; decimals: number }> = {
   eV: { label: "eV", factor: 1, decimals: 4 },
   hartree: { label: "Eh", factor: 1 / HARTREE_TO_EV, decimals: 6 },
   "kcal/mol": { label: "kcal/mol", factor: 23.06054, decimals: 2 },
   "kj/mol": { label: "kJ/mol", factor: 96.4853, decimals: 2 }
+};
+
+const COVALENT_RADII_ANGSTROM: Record<string, number> = {
+  H: 0.31,
+  B: 0.84,
+  C: 0.76,
+  N: 0.71,
+  O: 0.66,
+  F: 0.57,
+  P: 1.07,
+  S: 1.05,
+  Cl: 1.02,
+  Br: 1.2,
+  I: 1.39,
+  Si: 1.11
 };
 
 function App() {
@@ -1307,6 +1343,8 @@ function GeometryWorkspace({
   const geometryTables = tables.filter(isGeometryTable);
   const [activeId, setActiveId] = useState("");
   const activeTable = geometryTables.find((table) => table.id === activeId) ?? geometryTables[0] ?? null;
+  const geometryAtoms = useMemo(() => activeTable ? extractGeometryAtoms(activeTable) : [], [activeTable]);
+  const geometryBonds = useMemo(() => inferGeometryBonds(geometryAtoms), [geometryAtoms]);
 
   useEffect(() => {
     if (geometryTables.length && !geometryTables.some((table) => table.id === activeId)) {
@@ -1325,95 +1363,84 @@ function GeometryWorkspace({
   }
 
   return (
-    <div className="domain-visual-workspace">
+    <div className="domain-visual-workspace geometry-workspace">
       <div className="canvas-toolbar">
         <div>
-          <p className="eyebrow">Coordinate projection</p>
+          <p className="eyebrow">Geometry coordinates</p>
           <h3>{activeTable.title}</h3>
         </div>
         <select value={activeTable.id} onChange={(event) => setActiveId(event.target.value)}>
           {geometryTables.map((table) => <option key={table.id} value={table.id}>{table.title}</option>)}
         </select>
       </div>
-      <CoordinateProjection table={activeTable} />
-      <TablePreview table={activeTable} maxRows={8} />
+      <GeometrySummaryCards atoms={geometryAtoms} bonds={geometryBonds} table={activeTable} />
+      <GeometryBondPanel atoms={geometryAtoms} bonds={geometryBonds} />
+      <TablePreview table={activeTable} maxRows={10} />
     </div>
   );
 }
 
-function CoordinateProjection({ table }: { table: TableDataset }) {
-  const columns = getGeometryColumns(table);
-  const [projection, setProjection] = useState<"xy" | "xz" | "yz">("xy");
-  const [hovered, setHovered] = useState<{ label: string; x: number; y: number; z: number | null; row: number } | null>(null);
-  if (!columns) {
-    return <div className="empty-state">This table does not contain recognizable coordinate columns.</div>;
-  }
-  const atoms = table.rows
-    .map((row, index) => {
-      const x = toNumber(row[columns.x]);
-      const y = toNumber(row[columns.y]);
-      const z = columns.z ? toNumber(row[columns.z]) : null;
-      if (x === null || y === null) {
-        return null;
-      }
-      const symbol = columns.symbol ? String(row[columns.symbol] ?? `Atom ${index + 1}`) : `Atom ${index + 1}`;
-      return { label: symbol, x, y, z, row: index + 1 };
-    })
-    .filter((point): point is { label: string; x: number; y: number; z: number | null; row: number } => point !== null)
-    .slice(0, 350);
-  if (!atoms.length) {
-    return <div className="empty-state">The coordinate columns did not contain numeric atoms.</div>;
-  }
-  const axis = projection === "xy" ? ["x", "y"] : projection === "xz" ? ["x", "z"] : ["y", "z"];
-  const xValues = atoms.map((atom) => atom[axis[0] as "x" | "y"] ?? 0);
-  const yValues = atoms.map((atom) => (axis[1] === "z" ? atom.z ?? 0 : atom.y));
-  const minX = Math.min(...xValues);
-  const maxX = Math.max(...xValues);
-  const minY = Math.min(...yValues);
-  const maxY = Math.max(...yValues);
-  const spanX = maxX - minX || 1;
-  const spanY = maxY - minY || 1;
-  const domainXMin = minX - spanX * 0.08;
-  const domainYMin = minY - spanY * 0.1;
-  const domainXSpan = spanX * 1.16 || 1;
-  const domainYSpan = spanY * 1.2 || 1;
-  const width = 1040;
-  const height = 520;
-  const pad = { left: 76, right: 54, top: 46, bottom: 68 };
-  const xScale = (value: number) => pad.left + ((value - domainXMin) / domainXSpan) * (width - pad.left - pad.right);
-  const yScale = (value: number) => height - pad.bottom - ((value - domainYMin) / domainYSpan) * (height - pad.top - pad.bottom);
+function GeometrySummaryCards({ atoms, bonds, table }: { atoms: GeometryAtom[]; bonds: GeometryBond[]; table: TableDataset }) {
+  const composition = summarizeComposition(atoms);
+  const ranges = coordinateRanges(atoms);
   return (
-    <div className="primary-chart">
-      <div className="axis-controls">
-        {(["xy", "xz", "yz"] as const).map((option) => (
-          <button type="button" key={option} className={projection === option ? "segmented active" : "segmented"} onClick={() => setProjection(option)}>
-            {option.toUpperCase()}
-          </button>
-        ))}
+    <div className="geometry-summary-grid">
+      <article className="metric-card">
+        <span>Atoms</span>
+        <strong>{atoms.length}</strong>
+        <small>{composition || "No element symbols detected"}</small>
+      </article>
+      <article className="metric-card">
+        <span>Inferred bonds</span>
+        <strong>{bonds.length}</strong>
+        <small>From covalent radii and parsed coordinates</small>
+      </article>
+      <article className="metric-card">
+        <span>Coordinate units</span>
+        <strong>{geometryUnitLabel(table)}</strong>
+        <small>Distances below are normalized to Angstrom</small>
+      </article>
+      <article className="metric-card">
+        <span>Extent</span>
+        <strong>{ranges}</strong>
+        <small>Bounding box in Angstrom</small>
+      </article>
+    </div>
+  );
+}
+
+function GeometryBondPanel({ atoms, bonds }: { atoms: GeometryAtom[]; bonds: GeometryBond[] }) {
+  const visible = bonds.slice(0, 90);
+  const maxDistance = visible.length ? Math.max(...visible.map((bond) => bond.distanceAng), 1) : 1;
+  return (
+    <section className="geometry-bond-panel">
+      <div className="canvas-toolbar compact-toolbar">
+        <div>
+          <p className="eyebrow">Inferred bond distances</p>
+          <h3>{visible.length ? `${visible.length} inferred covalent contact(s)` : "No inferred covalent contacts"}</h3>
+        </div>
+        <span className="quiet-text">Connectivity is inferred, not taken as an ORCA bond table.</span>
       </div>
-      <svg className="coordinate-svg" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Coordinate projection">
-        <rect x="0" y="0" width={width} height={height} className="chart-bg" />
-        <line x1={pad.left} y1={height - pad.bottom} x2={width - pad.right} y2={height - pad.bottom} className="axis-line" />
-        <line x1={pad.left} y1={pad.top} x2={pad.left} y2={height - pad.bottom} className="axis-line" />
-        {atoms.map((atom) => {
-          const x = atom[axis[0] as "x" | "y"];
-          const y = axis[1] === "z" ? atom.z ?? 0 : atom.y;
+      {!atoms.length && <div className="empty-state small">The coordinate table did not contain numeric atom rows.</div>}
+      {atoms.length > 0 && !visible.length && (
+        <div className="empty-state small">
+          No covalent contacts could be inferred from this coordinate table. The raw coordinates are still available below.
+        </div>
+      )}
+      <div className="bond-distance-list">
+        {visible.map((bond) => {
+          const stretched = bond.ratio > 1.16;
           return (
-            <g key={`${atom.row}-${atom.label}`} onMouseEnter={() => setHovered(atom)} onMouseLeave={() => setHovered(null)}>
-              <circle cx={xScale(x)} cy={yScale(y)} r={elementRadius(atom.label)} className={`atom-dot element-${elementClass(atom.label)}`} />
-              <text x={xScale(x) + 8} y={yScale(y) - 8} className="atom-label">{atom.label}</text>
-            </g>
+            <div className={stretched ? "bond-row stretched" : "bond-row"} key={`${bond.from.row}-${bond.to.row}`}>
+              <span>{bondLabel(bond)}</span>
+              <i style={{ width: `${Math.max(6, (bond.distanceAng / maxDistance) * 100)}%` }} />
+              <strong>{bond.distanceAng.toFixed(3)} A</strong>
+              <em>{bond.ratio.toFixed(2)}x</em>
+            </div>
           );
         })}
-        <text x={width / 2} y={height - 12} textAnchor="middle" className="axis-title">{axis[0]} coordinate</text>
-        <text x={16} y={24} className="axis-title">{axis[1]} coordinate</text>
-      </svg>
-      <div className="plot-readout">
-        {hovered
-          ? `Row ${hovered.row} ${hovered.label}: x=${shortValue(hovered.x)}, y=${shortValue(hovered.y)}, z=${hovered.z === null ? "N/A" : shortValue(hovered.z)}`
-          : `Showing ${atoms.length} atom(s) as a ${projection.toUpperCase()} coordinate projection.`}
       </div>
-    </div>
+    </section>
   );
 }
 
@@ -2353,6 +2380,114 @@ function getGeometryColumns(table: TableDataset) {
   };
 }
 
+function extractGeometryAtoms(table: TableDataset): GeometryAtom[] {
+  const columns = getGeometryColumns(table);
+  if (!columns) {
+    return [];
+  }
+  const factor = geometryDistanceFactor(table, columns);
+  return table.rows
+    .map((row, index) => {
+      const x = toNumber(row[columns.x]);
+      const y = toNumber(row[columns.y]);
+      const z = columns.z ? toNumber(row[columns.z]) : 0;
+      if (x === null || y === null || z === null) {
+        return null;
+      }
+      const rawSymbol = columns.symbol ? String(row[columns.symbol] ?? "") : "";
+      const symbol = normalizeElementSymbol(rawSymbol || String(row.atom ?? row.element ?? row.symbol ?? ""));
+      const label = symbol ? `${index + 1} ${symbol}` : `Atom ${index + 1}`;
+      return {
+        row: index + 1,
+        label,
+        symbol: symbol || "X",
+        x,
+        y,
+        z,
+        xAng: x * factor,
+        yAng: y * factor,
+        zAng: z * factor
+      };
+    })
+    .filter((atom): atom is GeometryAtom => atom !== null)
+    .slice(0, 500);
+}
+
+function geometryDistanceFactor(table: TableDataset, columns: ReturnType<typeof getGeometryColumns>) {
+  const context = `${table.title} ${table.path} ${table.propertyKey} ${columns?.x ?? ""} ${columns?.y ?? ""} ${columns?.z ?? ""}`.toLowerCase();
+  return /_au|cartesian au|bohr|a\.u\./.test(context) ? BOHR_TO_ANGSTROM : 1;
+}
+
+function geometryUnitLabel(table: TableDataset) {
+  const columns = getGeometryColumns(table);
+  return geometryDistanceFactor(table, columns) === BOHR_TO_ANGSTROM ? "Bohr / a.u." : "Angstrom";
+}
+
+function inferGeometryBonds(atoms: GeometryAtom[]): GeometryBond[] {
+  const bonds: GeometryBond[] = [];
+  for (let i = 0; i < atoms.length; i += 1) {
+    for (let j = i + 1; j < atoms.length; j += 1) {
+      const from = atoms[i];
+      const to = atoms[j];
+      const distanceAng = distanceBetweenAtoms(from, to);
+      const expectedAng = covalentRadius(from.symbol) + covalentRadius(to.symbol);
+      const ratio = expectedAng > 0 ? distanceAng / expectedAng : Number.POSITIVE_INFINITY;
+      if (distanceAng > 0.25 && distanceAng < 3.2 && ratio <= 1.28) {
+        bonds.push({ from, to, distanceAng, expectedAng, ratio });
+      }
+    }
+  }
+  return bonds.sort((a, b) => a.from.row - b.from.row || a.to.row - b.to.row);
+}
+
+function distanceBetweenAtoms(from: GeometryAtom, to: GeometryAtom) {
+  const dx = from.xAng - to.xAng;
+  const dy = from.yAng - to.yAng;
+  const dz = from.zAng - to.zAng;
+  return Math.sqrt(dx * dx + dy * dy + dz * dz);
+}
+
+function covalentRadius(symbol: string) {
+  return COVALENT_RADII_ANGSTROM[normalizeElementSymbol(symbol)] ?? 0.85;
+}
+
+function normalizeElementSymbol(value: string) {
+  const match = value.trim().match(/[A-Za-z]{1,2}/);
+  if (!match) {
+    return "";
+  }
+  const raw = match[0].toLowerCase();
+  return raw.charAt(0).toUpperCase() + raw.slice(1);
+}
+
+function summarizeComposition(atoms: GeometryAtom[]) {
+  const counts = new Map<string, number>();
+  for (const atom of atoms) {
+    if (atom.symbol && atom.symbol !== "X") {
+      counts.set(atom.symbol, (counts.get(atom.symbol) ?? 0) + 1);
+    }
+  }
+  return Array.from(counts.entries())
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([symbol, count]) => `${symbol}${count}`)
+    .join(" ");
+}
+
+function coordinateRanges(atoms: GeometryAtom[]) {
+  if (!atoms.length) {
+    return "N/A";
+  }
+  const extents = (axis: "xAng" | "yAng" | "zAng") => {
+    const values = atoms.map((atom) => atom[axis]);
+    return Math.max(...values) - Math.min(...values);
+  };
+  return `${extents("xAng").toFixed(2)} x ${extents("yAng").toFixed(2)} x ${extents("zAng").toFixed(2)} A`;
+}
+
+function bondLabel(bond: GeometryBond) {
+  return `${bond.from.row} ${bond.from.symbol} - ${bond.to.row} ${bond.to.symbol}`;
+}
+
 function isPopulationTable(table: TableDataset) {
   const context = `${table.title} ${table.path} ${table.propertyKey}`.toLowerCase();
   const hasPopulationContext = /population|mulliken|loewdin|nbo|npa|mayer|hirshfeld|mbis|chelpg|charge|bond/.test(context);
@@ -2737,25 +2872,6 @@ function findExactColumn(columns: string[], needles: string[]) {
 
 function normalizeColumn(column: string) {
   return column.toLowerCase().replace(/[^a-z0-9]+/g, "");
-}
-
-function elementClass(symbol: string) {
-  const clean = symbol.replace(/[^A-Za-z]/g, "").slice(0, 2).toLowerCase();
-  return clean || "x";
-}
-
-function elementRadius(symbol: string) {
-  const clean = elementClass(symbol);
-  if (clean === "h") {
-    return 5;
-  }
-  if (clean === "br" || clean === "i") {
-    return 10;
-  }
-  if (clean === "s" || clean === "p" || clean === "cl") {
-    return 8;
-  }
-  return 7;
 }
 
 function atomLikeLabel(label: string) {
