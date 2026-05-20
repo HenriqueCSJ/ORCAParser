@@ -46,6 +46,27 @@ async function main() {
   await page.locator('button[title="scf"]').click();
   checks.dataCardsAfterFilter = await page.locator(".property-card").count();
   await page.locator('button[title="scf"]').click();
+  const jsonDownload = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Export selected JSON", exact: true }).click();
+  checks.jsonDownloadName = (await jsonDownload).suggestedFilename();
+
+  await page.getByRole("button", { name: "tables", exact: true }).click();
+  await page.locator(".table-workbench").waitFor({ state: "visible", timeout: 10000 });
+  checks.tableDatasetCount = await page.locator(".dataset-card").count();
+  checks.richTableRows = await page.locator(".rich-table tbody tr").count();
+  const tableDownload = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Export visible rows", exact: true }).click();
+  checks.tableDownloadName = (await tableDownload).suggestedFilename();
+
+  await page.getByRole("button", { name: "plots", exact: true }).click();
+  await page.locator(".plots-workbench").waitFor({ state: "visible", timeout: 10000 });
+  checks.chartCount = await page.locator(".chart-svg").count();
+  checks.scalarBars = await page.locator(".scalar-bar-row").count();
+  checks.plotReadouts = await page.locator(".plot-readout").count();
+
+  await page.getByRole("button", { name: "raw", exact: true }).click();
+  await page.locator(".raw-data-panel").waitFor({ state: "visible", timeout: 10000 });
+  checks.rawChars = (await page.locator(".raw-data-panel").innerText()).length;
 
   await page.getByRole("button", { name: "provenance", exact: true }).click();
   await page.locator(".text-panel").waitFor({ state: "visible", timeout: 10000 });
@@ -81,11 +102,17 @@ async function main() {
   if (checks.dataInspector !== "Scf") {
     process.exit(5);
   }
-  if (checks.provenanceChars < 20 || checks.snapshotChars < 20) {
+  if (checks.tableDatasetCount < 1 || checks.richTableRows < 1 || checks.chartCount < 1 || checks.scalarBars < 1 || checks.rawChars < 100) {
     process.exit(6);
   }
-  if (!finalState.message.includes("Parsed 1 of 1")) {
+  if (checks.jsonDownloadName !== "orca-workbench-selected-properties.json" || !checks.tableDownloadName.endsWith(".csv")) {
     process.exit(7);
+  }
+  if (checks.provenanceChars < 20 || checks.snapshotChars < 20) {
+    process.exit(8);
+  }
+  if (!finalState.message.includes("Parsed 1 of 1")) {
+    process.exit(9);
   }
 }
 

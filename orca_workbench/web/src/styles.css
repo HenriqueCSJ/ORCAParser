@@ -16,6 +16,7 @@ body {
   margin: 0;
   min-width: 1020px;
   min-height: 100vh;
+  overflow: hidden;
 }
 
 button,
@@ -33,7 +34,8 @@ button {
 .app-shell {
   display: grid;
   grid-template-columns: 360px minmax(0, 1fr);
-  min-height: 100vh;
+  height: 100vh;
+  min-height: 0;
 }
 
 .sidebar {
@@ -235,9 +237,10 @@ textarea {
 
 .workspace {
   display: grid;
-  grid-template-rows: auto auto minmax(220px, 1fr) minmax(260px, 0.95fr);
+  grid-template-rows: auto auto minmax(120px, 0.36fr) minmax(460px, 1.64fr);
   gap: 12px;
   min-width: 0;
+  height: 100vh;
   padding: 18px;
   overflow: hidden;
 }
@@ -464,12 +467,60 @@ tr:hover,
 
 .data-view-header {
   display: flex;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
   padding-top: 12px;
   color: #65747d;
   font-size: 0.84rem;
   font-weight: 700;
+}
+
+.data-view-header div:first-child {
+  display: grid;
+  gap: 2px;
+}
+
+.data-view-header strong {
+  color: #2e3e45;
+}
+
+.data-export-actions,
+.workbench-mode-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.data-export-actions button,
+.mode-pill,
+.table-tools button {
+  min-height: 32px;
+  padding: 6px 10px;
+  border-radius: 7px;
+  background: #eef2f4;
+  color: #33424a;
+  font-weight: 800;
+}
+
+.data-export-actions button:hover,
+.mode-pill:hover,
+.table-tools button:hover {
+  background: #dfe8eb;
+}
+
+.data-export-actions button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.mode-pill {
+  text-transform: capitalize;
+}
+
+.mode-pill.active {
+  background: #126c7a;
+  color: #ffffff;
 }
 
 .data-layout {
@@ -635,6 +686,288 @@ tr:hover,
 .compact-json {
   max-height: 320px;
   font-size: 0.82rem;
+}
+
+.raw-data-panel {
+  margin-top: 0;
+}
+
+.table-workbench {
+  display: grid;
+  grid-template-columns: minmax(220px, 300px) minmax(0, 1fr);
+  gap: 12px;
+  flex: 1;
+  min-height: 0;
+}
+
+.dataset-sidebar {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-height: 0;
+  overflow: auto;
+}
+
+.dataset-card {
+  display: grid;
+  gap: 5px;
+  padding: 10px;
+  border: 1px solid #d9e2e5;
+  border-radius: 8px;
+  background: #fbfcfc;
+  color: #203039;
+  text-align: left;
+}
+
+.dataset-card.active,
+.dataset-card:hover {
+  border-color: #184d7a;
+  background: #eef5fb;
+}
+
+.dataset-card span {
+  color: #184d7a;
+  font-size: 0.8rem;
+  font-weight: 800;
+}
+
+.dataset-card small {
+  color: #63717a;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.table-inspector,
+.plot-card {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid #dfe7ea;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.table-inspector {
+  display: flex;
+  flex-direction: column;
+}
+
+.table-tools,
+.plot-card-header {
+  display: grid;
+  grid-template-columns: minmax(190px, 1fr) minmax(160px, 240px) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+  border-bottom: 1px solid #e8eef0;
+}
+
+.table-tools h3,
+.plot-card-header h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.table-tools input,
+.plot-card-header select,
+.axis-controls select {
+  min-height: 32px;
+  min-width: 0;
+  border: 1px solid #cfd8dc;
+  border-radius: 7px;
+  padding: 5px 8px;
+  background: #ffffff;
+}
+
+.rich-table-wrap {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.rich-table {
+  min-width: 760px;
+  font-size: 0.84rem;
+}
+
+.rich-table th,
+.rich-table td {
+  padding: 8px 10px;
+}
+
+.rich-table td {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plots-workbench {
+  display: grid;
+  grid-template-rows: minmax(220px, 0.78fr) minmax(340px, 1.22fr);
+  gap: 12px;
+  flex: 1;
+  min-height: 0;
+}
+
+.plot-card {
+  display: flex;
+  flex-direction: column;
+}
+
+.plot-card-header {
+  grid-template-columns: minmax(190px, 1fr) auto;
+}
+
+.plot-card-header > span {
+  color: #63717a;
+  font-weight: 800;
+}
+
+.chart-wrap {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  overflow: auto;
+}
+
+.chart-svg {
+  width: 100%;
+  min-width: 620px;
+  height: auto;
+  border: 1px solid #edf2f4;
+  border-radius: 8px;
+  background: #fbfcfc;
+}
+
+.scalar-bar-list {
+  display: grid;
+  gap: 7px;
+  padding: 10px;
+  border: 1px solid #edf2f4;
+  border-radius: 8px;
+  background: #fbfcfc;
+}
+
+.scalar-bar-row {
+  display: grid;
+  grid-template-columns: minmax(140px, 230px) minmax(160px, 1fr) minmax(86px, auto);
+  align-items: center;
+  gap: 10px;
+  min-height: 30px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  background: transparent;
+  color: #24343c;
+  text-align: left;
+}
+
+.scalar-bar-row:hover {
+  background: #edf8f9;
+}
+
+.scalar-label {
+  overflow: hidden;
+  color: #53636c;
+  font-size: 0.8rem;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scalar-track {
+  position: relative;
+  display: block;
+  height: 14px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #e7eef0;
+}
+
+.scalar-bar {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #126c7a;
+}
+
+.scalar-bar-row.negative .scalar-bar {
+  background: #8c5572;
+}
+
+.scalar-bar-row strong {
+  color: #16242b;
+  font-size: 0.84rem;
+  text-align: right;
+}
+
+.axis-line {
+  stroke: #8fa0a8;
+  stroke-width: 1;
+}
+
+.bar-mark {
+  fill: #126c7a;
+  opacity: 0.86;
+}
+
+.bar-mark:hover,
+.point-mark:hover {
+  opacity: 1;
+}
+
+.line-mark {
+  stroke: #184d7a;
+  stroke-width: 2;
+  opacity: 0.72;
+}
+
+.point-mark {
+  fill: #126c7a;
+  stroke: #ffffff;
+  stroke-width: 1.5;
+}
+
+.chart-label,
+.chart-value,
+.axis-label {
+  fill: #3a4a52;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.chart-value {
+  fill: #16242b;
+}
+
+.plot-readout {
+  min-height: 32px;
+  padding: 8px 10px;
+  border-radius: 7px;
+  background: #eef5f6;
+  color: #274047;
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
+.axis-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.axis-controls label {
+  display: grid;
+  grid-template-columns: auto minmax(120px, 220px);
+  align-items: center;
+  gap: 7px;
+  color: #53636c;
+  font-size: 0.84rem;
+  font-weight: 800;
 }
 
 .empty-state {

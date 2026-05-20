@@ -187,20 +187,38 @@ orca_workbench
 
 After a build, open `http://127.0.0.1:8765`.
 
-ORCA Workbench is a parser-backed scientific dashboard. It lets you open local
-ORCA `.out` / `.log` files or folders with native file dialogs, automatically
-parses the selected outputs, discovers the property blocks actually present,
-selects those parsed properties for viewing by default, and then lets you
-unselect/reselect properties as a visualization filter. JSON/CSV/Markdown/HDF5
-exports remain available, but the default workflow is now data-first:
-open outputs -> parse everything discoverable -> inspect and filter the
-scientific data surface.
+ORCA Workbench is a parser-backed scientific workbench and data visualizer. It
+lets you open local ORCA `.out` / `.log` files or folders with native file
+dialogs, automatically parses the selected outputs, discovers the property
+blocks actually present, selects those parsed properties for viewing by default,
+and then lets you unselect/reselect properties as a visualization filter.
+
+The Data view is organized as a visual workspace:
+
+- `Overview`: property cards plus digestible field grids and nested tables.
+- `Tables`: discovered table-like datasets with filtering and CSV export.
+- `Plots`: interactive numeric field bars and table plots with axis controls.
+- `Raw`: the selected structured payload for audit/debug work.
+
+Global JSON/CSV/Markdown/HDF5 exports remain available through the parser
+backend, while the Data view also provides immediate client-side exports for
+selected JSON, all discovered tables, and the active filtered table. The default
+workflow is now data-first: open outputs -> parse everything discoverable ->
+inspect, visualize, filter, and export the scientific data surface.
 
 The workbench is intentionally a wrapper around the existing parser. It does
 not reimplement population, NBO, spectra, TDDFT, CASSCF, NEVPT2, or any other
 scientific parser logic. Parser options exposed by modules, such as the CASSCF
 orbital-window control, are discovered from the same plugin metadata used by
 the CLI.
+
+The browser-level smoke test exercises the real GUI, including automatic
+parsing, property filtering, the Data tabs, plots, and JSON/CSV downloads:
+
+```bash
+cd orca_workbench/web
+npm run test:ui
+```
 
 The older standard-library Tk prototype remains available as a fallback:
 

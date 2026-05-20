@@ -31,6 +31,23 @@ const defaultExportOptions: ExportOptions = {
   detail_scope: "auto"
 };
 
+type DataWorkbenchView = "overview" | "tables" | "plots" | "raw";
+
+type TableDataset = {
+  id: string;
+  title: string;
+  propertyKey: string;
+  path: string;
+  rows: Record<string, unknown>[];
+  columns: string[];
+};
+
+type NumericPoint = {
+  label: string;
+  path: string;
+  value: number;
+};
+
 function App() {
   const [health, setHealth] = useState("Starting");
   const [pathText, setPathText] = useState("");
@@ -574,54 +591,367 @@ function DataExplorer({
   focusedProperty: string;
   onFocusProperty: (key: string) => void;
 }) {
+  const [workbenchView, setWorkbenchView] = useState<DataWorkbenchView>("overview");
+  const [activeTableId, setActiveTableId] = useState("");
+
+  const visibleKeys = properties?.property_keys.filter((key) => selectedProperties.includes(key)) ?? [];
+  const activeKey = visibleKeys.includes(focusedProperty) ? focusedProperty : visibleKeys[0] ?? "";
+  const activeValue = properties && activeKey ? properties.properties[activeKey] : null;
+  const selectedData = properties ? selectedPropertyObject(properties, visibleKeys) : {};
+  const tables = properties ? collectTableDatasets(properties, visibleKeys) : [];
+  const activeTable = tables.find((table) => table.id === activeTableId) ?? tables[0] ?? null;
+  const numericPoints = collectNumericPoints(activeValue, activeKey).slice(0, 20);
+
+  useEffect(() => {
+    if (tables.length === 0) {
+      if (activeTableId) {
+        setActiveTableId("");
+      }
+      return;
+    }
+    if (!tables.some((table) => table.id === activeTableId)) {
+      setActiveTableId(tables[0].id);
+    }
+  }, [activeTableId, tables]);
+
   if (!properties) {
     return <div className="empty-state">Loading parsed data...</div>;
   }
-  const visibleKeys = properties.property_keys.filter((key) => selectedProperties.includes(key));
   if (visibleKeys.length === 0) {
     return <div className="empty-state">No parsed properties are selected.</div>;
   }
-  const activeKey = visibleKeys.includes(focusedProperty) ? focusedProperty : visibleKeys[0];
-  const activeValue = properties.properties[activeKey];
 
   return (
     <div className="data-view">
       <div className="data-view-header">
-        <span>{visibleKeys.length} visible property block(s)</span>
-        <span>{properties.property_keys.length} parsed property block(s)</span>
+        <div>
+          <strong>{visibleKeys.length} visible property block(s)</strong>
+          <span>{tables.length} table dataset(s), {properties.property_keys.length} parsed block(s)</span>
+        </div>
+        <div className="data-export-actions">
+          <button type="button" onClick={() => downloadJson("orca-workbench-selected-properties.json", selectedData)}>
+            Export selected JSON
+          </button>
+          <button type="button" onClick={() => downloadTablesCsv(tables)}>
+            Export tables CSV
+          </button>
+          <button type="button" onClick={() => activeTable && downloadCsv(`${safeFileName(activeTable.title)}.csv`, activeTable.rows, activeTable.columns)} disabled={!activeTable}>
+            Export active table
+          </button>
+        </div>
       </div>
-      <div className="data-layout">
-        <div className="property-list" aria-label="Parsed property blocks">
-          {visibleKeys.map((key) => {
-            const value = properties.properties[key];
-            return (
-              <button
-                type="button"
-                key={key}
-                className={key === activeKey ? "property-card active" : "property-card"}
-                onClick={() => onFocusProperty(key)}
-              >
-                <strong>{formatPropertyTitle(key)}</strong>
-                <span>{describeValue(value)}</span>
-                <small>{previewValue(value)}</small>
-              </button>
-            );
-          })}
-        </div>
-        <div className="property-inspector">
-          <div className="property-inspector-header">
-            <div>
-              <p className="eyebrow">Focused property</p>
-              <h3>{formatPropertyTitle(activeKey)}</h3>
-            </div>
-            <span>{describeValue(activeValue)}</span>
+      <div className="workbench-mode-row">
+        {(["overview", "tables", "plots", "raw"] as const).map((mode) => (
+          <button
+            type="button"
+            key={mode}
+            className={workbenchView === mode ? "mode-pill active" : "mode-pill"}
+            onClick={() => setWorkbenchView(mode)}
+          >
+            {mode}
+          </button>
+        ))}
+      </div>
+      {workbenchView === "overview" && (
+        <div className="data-layout">
+          <div className="property-list" aria-label="Parsed property blocks">
+            {visibleKeys.map((key) => {
+              const value = properties.properties[key];
+              return (
+                <button
+                  type="button"
+                  key={key}
+                  className={key === activeKey ? "property-card active" : "property-card"}
+                  onClick={() => onFocusProperty(key)}
+                >
+                  <strong>{formatPropertyTitle(key)}</strong>
+                  <span>{describeValue(value)}</span>
+                  <small>{previewValue(value)}</small>
+                </button>
+              );
+            })}
           </div>
-          {renderValueSummary(activeValue)}
-          <details className="json-details">
-            <summary>Raw selected block</summary>
-            <pre className="text-panel compact-json">{JSON.stringify(activeValue, null, 2)}</pre>
-          </details>
+          <div className="property-inspector">
+            <div className="property-inspector-header">
+              <div>
+                <p className="eyebrow">Focused property</p>
+                <h3>{formatPropertyTitle(activeKey)}</h3>
+              </div>
+              <span>{describeValue(activeValue)}</span>
+            </div>
+            {renderValueSummary(activeValue)}
+            <details className="json-details">
+              <summary>Raw selected block</summary>
+              <pre className="text-panel compact-json">{JSON.stringify(activeValue, null, 2)}</pre>
+            </details>
+          </div>
         </div>
+      )}
+      {workbenchView === "tables" && (
+        <TablesWorkbench
+          tables={tables}
+          activeTableId={activeTable?.id ?? ""}
+          onActiveTable={setActiveTableId}
+        />
+      )}
+      {workbenchView === "plots" && (
+        <PlotsWorkbench
+          properties={properties}
+          visibleKeys={visibleKeys}
+          activeKey={activeKey}
+          onFocusProperty={onFocusProperty}
+          activePropertyTitle={formatPropertyTitle(activeKey)}
+          numericPoints={numericPoints}
+          tables={tables}
+          activeTableId={activeTable?.id ?? ""}
+          onActiveTable={setActiveTableId}
+        />
+      )}
+      {workbenchView === "raw" && (
+        <pre className="text-panel raw-data-panel">{JSON.stringify(selectedData, null, 2)}</pre>
+      )}
+    </div>
+  );
+}
+
+function TablesWorkbench({
+  tables,
+  activeTableId,
+  onActiveTable
+}: {
+  tables: TableDataset[];
+  activeTableId: string;
+  onActiveTable: (id: string) => void;
+}) {
+  const [filter, setFilter] = useState("");
+  const activeTable = tables.find((table) => table.id === activeTableId) ?? tables[0] ?? null;
+  if (!activeTable) {
+    return <div className="empty-state">No table-like datasets were found in the selected properties.</div>;
+  }
+  const rows = filterRows(activeTable.rows, filter);
+  return (
+    <div className="table-workbench">
+      <aside className="dataset-sidebar">
+        {tables.map((table) => (
+          <button
+            type="button"
+            key={table.id}
+            className={table.id === activeTable.id ? "dataset-card active" : "dataset-card"}
+            onClick={() => onActiveTable(table.id)}
+          >
+            <strong>{table.title}</strong>
+            <span>{table.rows.length} rows</span>
+            <small>{table.path}</small>
+          </button>
+        ))}
+      </aside>
+      <section className="table-inspector">
+        <div className="table-tools">
+          <div>
+            <p className="eyebrow">Table explorer</p>
+            <h3>{activeTable.title}</h3>
+          </div>
+          <input
+            value={filter}
+            onChange={(event) => setFilter(event.target.value)}
+            placeholder="Filter rows"
+          />
+          <button type="button" onClick={() => downloadCsv(`${safeFileName(activeTable.title)}.csv`, rows, activeTable.columns)}>
+            Export visible rows
+          </button>
+        </div>
+        <div className="rich-table-wrap">
+          <table className="rich-table">
+            <thead>
+              <tr>
+                {activeTable.columns.map((column) => <th key={column}>{column}</th>)}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.slice(0, 250).map((row, index) => (
+                <tr key={`${activeTable.id}-${index}`}>
+                  {activeTable.columns.map((column) => <td key={column}>{shortValue(row[column])}</td>)}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <p className="quiet-text">Showing {Math.min(rows.length, 250)} of {rows.length} filtered row(s). Export includes filtered rows.</p>
+      </section>
+    </div>
+  );
+}
+
+function PlotsWorkbench({
+  properties,
+  visibleKeys,
+  activeKey,
+  onFocusProperty,
+  activePropertyTitle,
+  numericPoints,
+  tables,
+  activeTableId,
+  onActiveTable
+}: {
+  properties: PropertiesResponse;
+  visibleKeys: string[];
+  activeKey: string;
+  onFocusProperty: (key: string) => void;
+  activePropertyTitle: string;
+  numericPoints: NumericPoint[];
+  tables: TableDataset[];
+  activeTableId: string;
+  onActiveTable: (id: string) => void;
+}) {
+  const activeTable = tables.find((table) => table.id === activeTableId) ?? tables[0] ?? null;
+  return (
+    <div className="plots-workbench">
+      <section className="plot-card">
+        <div className="plot-card-header">
+          <div>
+            <p className="eyebrow">Numeric fields</p>
+            <h3>{activePropertyTitle}</h3>
+          </div>
+          <select value={activeKey} onChange={(event) => onFocusProperty(event.target.value)}>
+            {visibleKeys.map((key) => {
+              const count = collectNumericPoints(properties.properties[key], key).length;
+              return <option key={key} value={key}>{formatPropertyTitle(key)} ({count})</option>;
+            })}
+          </select>
+        </div>
+        <ScalarBarChart points={numericPoints} />
+      </section>
+      <section className="plot-card">
+        <div className="plot-card-header">
+          <div>
+            <p className="eyebrow">Table plot</p>
+            <h3>{activeTable?.title ?? "No table selected"}</h3>
+          </div>
+          <select
+            value={activeTable?.id ?? ""}
+            onChange={(event) => onActiveTable(event.target.value)}
+            disabled={!tables.length}
+          >
+            {tables.map((table) => <option key={table.id} value={table.id}>{table.title}</option>)}
+          </select>
+        </div>
+        {activeTable ? <TableScatterPlot table={activeTable} /> : <div className="empty-state small">No table-like data available.</div>}
+      </section>
+    </div>
+  );
+}
+
+function ScalarBarChart({ points }: { points: NumericPoint[] }) {
+  const [hovered, setHovered] = useState<NumericPoint | null>(null);
+  if (!points.length) {
+    return <div className="empty-state small">No scalar numeric fields are available for this property.</div>;
+  }
+  const maxAbs = Math.max(...points.map((point) => Math.abs(point.value)), 1);
+
+  return (
+    <div className="chart-wrap">
+      <div className="scalar-bar-list" role="img" aria-label="Numeric field bar chart">
+        {points.map((point) => (
+          <button
+            type="button"
+            className={point.value < 0 ? "scalar-bar-row negative" : "scalar-bar-row"}
+            key={point.path}
+            onMouseEnter={() => setHovered(point)}
+            onMouseLeave={() => setHovered(null)}
+          >
+            <span className="scalar-label">{point.label}</span>
+            <span className="scalar-track">
+              <span className="scalar-bar" style={{ width: `${Math.max(3, (Math.abs(point.value) / maxAbs) * 100)}%` }} />
+            </span>
+            <strong>{shortValue(point.value)}</strong>
+          </button>
+        ))}
+      </div>
+      <div className="plot-readout">
+        {hovered ? `${hovered.path}: ${shortValue(hovered.value)}` : "Hover a bar to inspect the exact parsed field."}
+      </div>
+    </div>
+  );
+}
+
+function TableScatterPlot({ table }: { table: TableDataset }) {
+  const numericColumns = table.columns.filter((column) => table.rows.some((row) => toNumber(row[column]) !== null));
+  const [xColumn, setXColumn] = useState("__index");
+  const [yColumn, setYColumn] = useState(numericColumns[0] ?? "");
+  const [hovered, setHovered] = useState<{ x: number; y: number; row: number } | null>(null);
+
+  useEffect(() => {
+    if (!numericColumns.includes(yColumn)) {
+      setYColumn(numericColumns[0] ?? "");
+    }
+  }, [numericColumns, yColumn]);
+
+  if (!numericColumns.length || !yColumn) {
+    return <div className="empty-state small">This table has no numeric columns to plot.</div>;
+  }
+  const points = table.rows
+    .map((row, index) => ({
+      x: xColumn === "__index" ? index + 1 : toNumber(row[xColumn]),
+      y: toNumber(row[yColumn]),
+      row: index + 1
+    }))
+    .filter((point): point is { x: number; y: number; row: number } => point.x !== null && point.y !== null)
+    .slice(0, 500);
+  if (!points.length) {
+    return <div className="empty-state small">The selected axes did not produce numeric points.</div>;
+  }
+  const width = 760;
+  const height = 320;
+  const pad = { left: 60, right: 24, top: 24, bottom: 46 };
+  const xMin = Math.min(...points.map((point) => point.x));
+  const xMax = Math.max(...points.map((point) => point.x));
+  const yMin = Math.min(...points.map((point) => point.y));
+  const yMax = Math.max(...points.map((point) => point.y));
+  const xSpan = xMax - xMin || 1;
+  const ySpan = yMax - yMin || 1;
+  const xScale = (value: number) => pad.left + ((value - xMin) / xSpan) * (width - pad.left - pad.right);
+  const yScale = (value: number) => height - pad.bottom - ((value - yMin) / ySpan) * (height - pad.top - pad.bottom);
+  const linePoints = points.map((point) => `${xScale(point.x)},${yScale(point.y)}`).join(" ");
+
+  return (
+    <div className="chart-wrap">
+      <div className="axis-controls">
+        <label>
+          <span>X</span>
+          <select value={xColumn} onChange={(event) => setXColumn(event.target.value)}>
+            <option value="__index">row index</option>
+            {numericColumns.map((column) => <option key={column} value={column}>{column}</option>)}
+          </select>
+        </label>
+        <label>
+          <span>Y</span>
+          <select value={yColumn} onChange={(event) => setYColumn(event.target.value)}>
+            {numericColumns.map((column) => <option key={column} value={column}>{column}</option>)}
+          </select>
+        </label>
+      </div>
+      <svg className="chart-svg" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Interactive table plot">
+        <line x1={pad.left} y1={height - pad.bottom} x2={width - pad.right} y2={height - pad.bottom} className="axis-line" />
+        <line x1={pad.left} y1={pad.top} x2={pad.left} y2={height - pad.bottom} className="axis-line" />
+        <polyline points={linePoints} fill="none" className="line-mark" />
+        {points.map((point) => (
+          <circle
+            key={`${point.row}-${point.x}-${point.y}`}
+            cx={xScale(point.x)}
+            cy={yScale(point.y)}
+            r={4}
+            className="point-mark"
+            onMouseEnter={() => setHovered(point)}
+            onMouseLeave={() => setHovered(null)}
+          />
+        ))}
+        <text x={width / 2} y={height - 10} className="axis-label">{xColumn === "__index" ? "row index" : xColumn}</text>
+        <text x={12} y={20} className="axis-label">{yColumn}</text>
+      </svg>
+      <div className="plot-readout">
+        {hovered
+          ? `Row ${hovered.row}: x=${shortValue(hovered.x)}, y=${shortValue(hovered.y)}`
+          : `Showing ${points.length} point(s). Hover a point to inspect it.`}
       </div>
     </div>
   );
@@ -709,6 +1039,180 @@ function collectColumns(rows: Record<string, unknown>[]) {
     }
   }
   return columns.length ? columns : Object.keys(rows[0] ?? {}).slice(0, 7);
+}
+
+function selectedPropertyObject(properties: PropertiesResponse, visibleKeys: string[]) {
+  return Object.fromEntries(
+    visibleKeys
+      .filter((key) => key in properties.properties)
+      .map((key) => [key, properties.properties[key]])
+  );
+}
+
+function collectTableDatasets(properties: PropertiesResponse, visibleKeys: string[]) {
+  const tables: TableDataset[] = [];
+  for (const key of visibleKeys) {
+    collectTableDatasetsFromValue(properties.properties[key], key, formatPropertyTitle(key), key, tables, 0);
+  }
+  return tables.slice(0, 60);
+}
+
+function collectTableDatasetsFromValue(
+  value: unknown,
+  propertyKey: string,
+  title: string,
+  path: string,
+  tables: TableDataset[],
+  depth: number
+) {
+  if (depth > 4 || tables.length >= 60) {
+    return;
+  }
+  if (Array.isArray(value)) {
+    const rows = value.filter((item) => isPlainObject(item)) as Record<string, unknown>[];
+    if (rows.length > 0) {
+      const columns = collectColumns(rows);
+      if (columns.length > 0) {
+        tables.push({
+          id: `${propertyKey}:${path}:${tables.length}`,
+          title,
+          propertyKey,
+          path,
+          rows,
+          columns
+        });
+      }
+    }
+    return;
+  }
+  if (!isPlainObject(value)) {
+    return;
+  }
+  for (const [key, nested] of Object.entries(value)) {
+    if (Array.isArray(nested) || isPlainObject(nested)) {
+      collectTableDatasetsFromValue(
+        nested,
+        propertyKey,
+        `${title} / ${formatPropertyTitle(key)}`,
+        `${path}.${key}`,
+        tables,
+        depth + 1
+      );
+    }
+  }
+}
+
+function collectNumericPoints(value: unknown, path: string, points: NumericPoint[] = [], depth = 0) {
+  if (points.length >= 80 || depth > 5) {
+    return points;
+  }
+  const numeric = toNumber(value);
+  if (numeric !== null) {
+    points.push({
+      label: compactPathLabel(path),
+      path,
+      value: numeric
+    });
+    return points;
+  }
+  if (Array.isArray(value)) {
+    value.slice(0, 20).forEach((item, index) => {
+      if (!isComplexValue(item)) {
+        collectNumericPoints(item, `${path}[${index}]`, points, depth + 1);
+      }
+    });
+    return points;
+  }
+  if (isPlainObject(value)) {
+    for (const [key, nested] of Object.entries(value)) {
+      if (Array.isArray(nested)) {
+        continue;
+      }
+      collectNumericPoints(nested, `${path}.${key}`, points, depth + 1);
+    }
+  }
+  return points;
+}
+
+function compactPathLabel(path: string) {
+  const pieces = path.split(".");
+  return formatPropertyTitle(pieces[pieces.length - 1] ?? path);
+}
+
+function filterRows(rows: Record<string, unknown>[], filter: string) {
+  const query = filter.trim().toLowerCase();
+  if (!query) {
+    return rows;
+  }
+  return rows.filter((row) =>
+    Object.values(row).some((value) => shortValue(value).toLowerCase().includes(query))
+  );
+}
+
+function toNumber(value: unknown) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string" && value.trim() !== "") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function downloadJson(filename: string, value: unknown) {
+  downloadFile(filename, "application/json", JSON.stringify(value, null, 2));
+}
+
+function downloadTablesCsv(tables: TableDataset[]) {
+  if (tables.length === 0) {
+    return;
+  }
+  const content = tables
+    .map((table) => [
+      `# ${table.title}`,
+      rowsToCsv(table.rows, table.columns)
+    ].join("\n"))
+    .join("\n\n");
+  downloadFile("orca-workbench-selected-tables.csv", "text/csv", content);
+}
+
+function downloadCsv(filename: string, rows: Record<string, unknown>[], columns: string[]) {
+  downloadFile(filename, "text/csv", rowsToCsv(rows, columns));
+}
+
+function rowsToCsv(rows: Record<string, unknown>[], columns: string[]) {
+  const header = columns.map(csvEscape).join(",");
+  const body = rows.map((row) => columns.map((column) => csvEscape(row[column])).join(","));
+  return [header, ...body].join("\n");
+}
+
+function csvEscape(value: unknown) {
+  const text = shortValue(value);
+  if (/[",\n\r]/.test(text)) {
+    return `"${text.replace(/"/g, '""')}"`;
+  }
+  return text;
+}
+
+function downloadFile(filename: string, mimeType: string, content: string) {
+  const blob = new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function safeFileName(name: string) {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80) || "orca-workbench-table";
 }
 
 function formatPropertyTitle(key: string) {
