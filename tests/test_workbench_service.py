@@ -18,6 +18,8 @@ def test_discover_orca_outputs_skips_auxiliary_and_cache_dirs(tmp_path):
     keep_log.write_text("not parsed in this test", encoding="utf-8")
     auxiliary = nested / "calc_atom83.out"
     auxiliary.write_text("helper", encoding="utf-8")
+    diagnostic = nested / "calc_diag.log"
+    diagnostic.write_text("helper", encoding="utf-8")
     cache = tmp_path / ".pytest_tmp"
     cache.mkdir()
     cached = cache / "stale.out"
@@ -27,6 +29,7 @@ def test_discover_orca_outputs_skips_auxiliary_and_cache_dirs(tmp_path):
 
     assert {path.name for path in discovered} == {"calc.out", "other.log"}
     assert all(path != auxiliary for path in discovered)
+    assert all(path != diagnostic for path in discovered)
     assert all(path != cached for path in discovered)
 
 

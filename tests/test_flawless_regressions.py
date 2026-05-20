@@ -113,7 +113,16 @@ def test_auxiliary_atom_outputs_are_rejected(tmp_path: Path) -> None:
     aux_path.write_text("stub helper file\n", encoding="utf-8")
 
     assert is_auxiliary_orca_file(aux_path) is True
-    with pytest.raises(ValueError, match="Auxiliary ORCA atom/ECP files"):
+    with pytest.raises(ValueError, match="Auxiliary ORCA helper/diagnostic files"):
+        ORCAParser(aux_path).parse()
+
+
+def test_auxiliary_diagnostic_logs_are_rejected(tmp_path: Path) -> None:
+    aux_path = tmp_path / "NC_diag.log"
+    aux_path.write_text("diagnostic helper file\n", encoding="utf-8")
+
+    assert is_auxiliary_orca_file(aux_path) is True
+    with pytest.raises(ValueError, match="Auxiliary ORCA helper/diagnostic files"):
         ORCAParser(aux_path).parse()
 
 

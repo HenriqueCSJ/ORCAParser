@@ -68,12 +68,16 @@ async function main() {
     await page.locator(".orbitals-workspace").waitFor({ state: "visible", timeout: 10000 });
     checks.orbitalCharts = await page.locator(".orbital-svg").count();
     checks.orbitalScalarBars = await page.locator(".scalar-bar-row").count();
+    await page.locator(".range-control input").fill("8");
+    checks.orbitalWindowReadout = await page.locator(".plot-readout").first().innerText();
     await page.screenshot({ path: path.join(screenshotDir, "workbench-redesign-orbitals.png"), fullPage: false });
   }
 
   if (checks.domainTexts.some((text) => text.includes("Geometry"))) {
     await page.locator(".domain-button").filter({ hasText: "Geometry" }).click();
     await page.locator(".coordinate-svg").waitFor({ state: "visible", timeout: 10000 });
+    await page.getByRole("button", { name: "XZ", exact: true }).click();
+    checks.geometryProjection = await page.locator(".segmented.active").innerText();
     checks.coordinateCharts = await page.locator(".coordinate-svg").count();
     checks.atomDots = await page.locator(".atom-dot").count();
     await page.screenshot({ path: path.join(screenshotDir, "workbench-redesign-geometry.png"), fullPage: false });
@@ -84,6 +88,13 @@ async function main() {
     await page.locator(".population-row").first().waitFor({ state: "visible", timeout: 10000 });
     checks.populationRows = await page.locator(".population-row").count();
     await page.screenshot({ path: path.join(screenshotDir, "workbench-redesign-populations.png"), fullPage: false });
+  }
+
+  if (checks.domainTexts.some((text) => text.includes("Densities"))) {
+    await page.locator(".domain-button").filter({ hasText: "Densities" }).click();
+    await page.locator(".domain-workspace").waitFor({ state: "visible", timeout: 10000 });
+    checks.densityPropertyCards = await page.locator(".property-card").count();
+    await page.screenshot({ path: path.join(screenshotDir, "workbench-redesign-densities.png"), fullPage: false });
   }
 
   if (checks.domainTexts.some((text) => text.includes("Excited states"))) {
@@ -98,6 +109,13 @@ async function main() {
   await page.locator(".tables-workspace").waitFor({ state: "visible", timeout: 10000 });
   checks.tableDatasetCount = await page.locator(".dataset-card").count();
   checks.richTableRows = await page.locator(".rich-table tbody tr").count();
+  if (checks.tableDatasetCount > 1) {
+    await page.locator(".dataset-card").nth(1).click();
+    checks.secondDatasetTitle = await page.locator(".table-canvas h3").innerText();
+  }
+  await page.getByPlaceholder("Filter rows").fill("Br");
+  checks.filteredTableRows = await page.locator(".rich-table tbody tr").count();
+  await page.getByPlaceholder("Filter rows").fill("");
   const tableDownload = page.waitForEvent("download");
   await page.getByRole("button", { name: "Export visible rows", exact: true }).click();
   checks.tableDownloadName = (await tableDownload).suggestedFilename();
@@ -113,6 +131,24 @@ async function main() {
   await page.locator(".domain-button").filter({ hasText: "Provenance" }).click();
   await page.locator(".text-panel").waitFor({ state: "visible", timeout: 10000 });
   checks.provenanceChars = (await page.locator(".text-panel").innerText()).length;
+
+  await page.locator(".domain-button").filter({ hasText: "Spectra" }).click();
+  await page.getByRole("button", { name: "Clear", exact: true }).click();
+  await page.waitForFunction(
+    () => document.querySelector(".inspector-panel .section-head span")?.textContent?.trim().startsWith("0/"),
+    null,
+    { timeout: 10000 }
+  );
+  checks.activeAfterClear = await page.locator(".domain-button.active strong").innerText();
+  checks.counterAfterClear = await page.locator(".inspector-panel .section-head span").innerText();
+  await page.getByRole("button", { name: "Select all", exact: true }).click();
+  await page.waitForFunction(
+    () => document.querySelector(".inspector-panel .section-head span")?.textContent?.trim().match(/^[1-9][0-9]*\/[1-9][0-9]*/),
+    null,
+    { timeout: 10000 }
+  );
+  checks.counterAfterSelectAll = await page.locator(".inspector-panel .section-head span").innerText();
+  await page.locator(".domain-button").filter({ hasText: "Provenance" }).click();
 
   const finalState = await page.evaluate(() => ({
     message: document.querySelector(".message-bar")?.textContent?.trim() ?? "",
@@ -140,17 +176,32 @@ async function main() {
   if (checks.hasSpectraPanel && checks.spectrumCharts < 1) {
     process.exit(6);
   }
-  if (checks.coordinateCharts !== undefined && (checks.coordinateCharts < 1 || checks.atomDots < 3)) {
+  if (checks.orbitalWindowReadout !== undefined && !checks.orbitalWindowReadout.includes("102")) {
+    process.exit(60);
+  }
+  if (checks.coordinateCharts !== undefined && (checks.coordinateCharts < 1 || checks.atomDots < 3 || checks.geometryProjection !== "XZ")) {
     process.exit(61);
   }
   if (checks.populationRows !== undefined && checks.populationRows < 3) {
     process.exit(62);
+  }
+  if (checks.densityPropertyCards !== undefined && checks.densityPropertyCards < 1) {
+    process.exit(64);
   }
   if (checks.stateCharts !== undefined && (checks.stateCharts < 1 || checks.stateDots < 1)) {
     process.exit(63);
   }
   if (checks.summaryFields < 4 || checks.tableDatasetCount < 1 || checks.richTableRows < 1 || checks.rawChars < 100) {
     process.exit(7);
+  }
+  if (
+    !checks.secondDatasetTitle ||
+    checks.filteredTableRows < 1 ||
+    checks.activeAfterClear !== "Overview" ||
+    !checks.counterAfterClear?.startsWith("0/") ||
+    !checks.counterAfterSelectAll?.startsWith("16/")
+  ) {
+    process.exit(71);
   }
   if (!checks.tableDownloadName.endsWith(".csv") || checks.jsonDownloadName !== "orca-workbench-selected-properties.json") {
     process.exit(8);

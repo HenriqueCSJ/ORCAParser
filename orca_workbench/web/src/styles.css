@@ -539,6 +539,7 @@ textarea {
 .overview-workspace,
 .plot-workspace,
 .orbitals-workspace,
+.domain-visual-workspace,
 .domain-workspace,
 .tables-workspace,
 .raw-workspace,
@@ -797,6 +798,11 @@ textarea {
 }
 
 .axis-title {
+  font-size: 13px;
+}
+
+.frontier-label {
+  fill: #9a4d00;
   font-size: 13px;
 }
 

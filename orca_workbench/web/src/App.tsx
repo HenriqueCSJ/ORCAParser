@@ -39,8 +39,13 @@ type WorkspaceView =
   | "geometry"
   | "optimization"
   | "populations"
+  | "density"
   | "excited"
   | "multireference"
+  | "coupled"
+  | "epr"
+  | "conformers"
+  | "scan"
   | "tables"
   | "provenance"
   | "raw"
@@ -202,6 +207,13 @@ function App() {
     [selectedJob, properties, visibleKeys, tables]
   );
   const activeDomain = domains.find((domain) => domain.id === activeView) ?? domains[0];
+
+  useEffect(() => {
+    if (domains.length && !domains.some((domain) => domain.id === activeView)) {
+      setActiveView(domains[0].id);
+    }
+  }, [activeView, domains]);
+
   const parsedCount = batch?.jobs.filter((job) => job.status === "parsed").length ?? 0;
   const failedCount = batch?.jobs.filter((job) => job.status === "failed").length ?? 0;
   const warningCount = batch?.jobs.reduce((total, job) => total + (job.warnings?.length ?? 0), 0) ?? 0;
@@ -591,6 +603,9 @@ function WorkspaceContent({
   if (activeView === "populations") {
     return <PopulationWorkspace tables={tables} properties={properties} visibleKeys={visibleKeys} />;
   }
+  if (activeView === "density") {
+    return <DomainWorkspace view="density" properties={properties} visibleKeys={visibleKeys} focusedProperty={focusedProperty} onFocusProperty={onFocusProperty} tables={tables} />;
+  }
   if (activeView === "excited") {
     return <ExcitedStatesWorkspace tables={tables} properties={properties} visibleKeys={visibleKeys} />;
   }
@@ -599,6 +614,18 @@ function WorkspaceContent({
   }
   if (activeView === "multireference") {
     return <MultiReferenceWorkspace tables={tables} properties={properties} visibleKeys={visibleKeys} />;
+  }
+  if (activeView === "coupled") {
+    return <DomainWorkspace view="coupled" properties={properties} visibleKeys={visibleKeys} focusedProperty={focusedProperty} onFocusProperty={onFocusProperty} tables={tables} />;
+  }
+  if (activeView === "epr") {
+    return <DomainWorkspace view="epr" properties={properties} visibleKeys={visibleKeys} focusedProperty={focusedProperty} onFocusProperty={onFocusProperty} tables={tables} />;
+  }
+  if (activeView === "conformers") {
+    return <DomainWorkspace view="conformers" properties={properties} visibleKeys={visibleKeys} focusedProperty={focusedProperty} onFocusProperty={onFocusProperty} tables={tables} />;
+  }
+  if (activeView === "scan") {
+    return <DomainWorkspace view="scan" properties={properties} visibleKeys={visibleKeys} focusedProperty={focusedProperty} onFocusProperty={onFocusProperty} tables={tables} />;
   }
   if (activeView === "tables") {
     return <TablesWorkspace tables={tables} />;
@@ -1029,6 +1056,7 @@ function OrbitalLadder({ orbitals, windowSize }: { orbitals: OrbitalPoint[]; win
   const minEnergy = Math.min(...energies);
   const maxEnergy = Math.max(...energies);
   const span = maxEnergy - minEnergy || 1;
+  const lumoIndex = homoIndex === null ? null : Math.min(homoIndex + 1, sorted.length - 1);
   const width = 1040;
   const height = 520;
   const pad = { left: 88, right: 44, top: 34, bottom: 44 };
@@ -1038,10 +1066,18 @@ function OrbitalLadder({ orbitals, windowSize }: { orbitals: OrbitalPoint[]; win
       <svg className="orbital-svg" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Orbital energy ladder">
         <rect x="0" y="0" width={width} height={height} className="chart-bg" />
         <line x1={pad.left} y1={pad.top} x2={pad.left} y2={height - pad.bottom} className="axis-line" />
-        {visible.map((orbital) => {
+        {visible.map((orbital, localIndex) => {
           const y = yScale(orbital.energy);
           const occupied = (orbital.occupation ?? 0) > 0.5;
-          const frontier = homoIndex !== null && orbital.index === sorted[homoIndex]?.index;
+          const isHomo = homoIndex !== null && orbital.index === sorted[homoIndex]?.index;
+          const isLumo = lumoIndex !== null && orbital.index === sorted[lumoIndex]?.index;
+          const frontier = isHomo || isLumo;
+          const shouldLabel =
+            frontier ||
+            localIndex === 0 ||
+            localIndex === visible.length - 1 ||
+            (visible.length <= 18 && localIndex % 2 === 0);
+          const label = isHomo ? `HOMO ${orbital.label}` : isLumo ? `LUMO ${orbital.label}` : orbital.label;
           return (
             <g key={orbital.label} onMouseEnter={() => setHovered(orbital)} onMouseLeave={() => setHovered(null)}>
               <line
@@ -1051,9 +1087,11 @@ function OrbitalLadder({ orbitals, windowSize }: { orbitals: OrbitalPoint[]; win
                 y2={y}
                 className={`orbital-level ${occupied ? "occupied" : "virtual"} ${frontier ? "frontier" : ""}`}
               />
-              <text x={occupied ? 220 : 865} y={y + 4} textAnchor={occupied ? "end" : "start"} className="axis-label">
-                {orbital.label}
-              </text>
+              {shouldLabel && (
+                <text x={occupied ? 220 : 865} y={y + 4} textAnchor={occupied ? "end" : "start"} className={frontier ? "axis-label frontier-label" : "axis-label"}>
+                  {label}
+                </text>
+              )}
             </g>
           );
         })}
@@ -1148,11 +1186,15 @@ function CoordinateProjection({ table }: { table: TableDataset }) {
   const maxY = Math.max(...yValues);
   const spanX = maxX - minX || 1;
   const spanY = maxY - minY || 1;
+  const domainXMin = minX - spanX * 0.08;
+  const domainYMin = minY - spanY * 0.1;
+  const domainXSpan = spanX * 1.16 || 1;
+  const domainYSpan = spanY * 1.2 || 1;
   const width = 1040;
   const height = 520;
-  const pad = { left: 70, right: 30, top: 34, bottom: 58 };
-  const xScale = (value: number) => pad.left + ((value - minX) / spanX) * (width - pad.left - pad.right);
-  const yScale = (value: number) => height - pad.bottom - ((value - minY) / spanY) * (height - pad.top - pad.bottom);
+  const pad = { left: 76, right: 54, top: 46, bottom: 68 };
+  const xScale = (value: number) => pad.left + ((value - domainXMin) / domainXSpan) * (width - pad.left - pad.right);
+  const yScale = (value: number) => height - pad.bottom - ((value - domainYMin) / domainYSpan) * (height - pad.top - pad.bottom);
   return (
     <div className="primary-chart">
       <div className="axis-controls">
@@ -1245,7 +1287,10 @@ function PopulationBarChart({ table }: { table: TableDataset }) {
       if (value === null) {
         return null;
       }
-      const label = columns.label ? String(row[columns.label] ?? `Row ${index + 1}`) : `Row ${index + 1}`;
+      const rawLabel = columns.label ? String(row[columns.label] ?? `Row ${index + 1}`) : `Row ${index + 1}`;
+      const label = atomLikeLabel(rawLabel)
+        ? `${index + 1} ${rawLabel}`
+        : rawLabel;
       return { label, value, row: index + 1 };
     })
     .filter((point): point is { label: string; value: number; row: number } => point !== null)
@@ -1406,6 +1451,7 @@ function StateEnergyChart({ table }: { table: TableDataset }) {
   const xStep = (width - pad.left - pad.right) / Math.max(states.length, 1);
   const yScale = (value: number) => height - pad.bottom - ((value - minEnergy) / span) * (height - pad.top - pad.bottom);
   const maxOsc = Math.max(...states.map((state) => state.oscillator ?? 0), 0);
+  const tickEvery = Math.max(1, Math.ceil(states.length / 16));
   return (
     <div className="primary-chart">
       <svg className="state-svg" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Excited state energy ladder">
@@ -1420,7 +1466,9 @@ function StateEnergyChart({ table }: { table: TableDataset }) {
             <g key={`${state.row}-${state.label}`} onMouseEnter={() => setHovered(state)} onMouseLeave={() => setHovered(null)}>
               <line x1={x - 14} x2={x + 14} y1={y} y2={y} className="state-level" />
               <circle cx={x} cy={y} r={radius} className="state-dot" />
-              {index < 24 && <text x={x} y={height - 32} textAnchor="middle" className="axis-label">{index + 1}</text>}
+              {(states.length <= 18 || index % tickEvery === 0 || index === states.length - 1) && (
+                <text x={x} y={height - 32} textAnchor="middle" className="axis-label">{index + 1}</text>
+              )}
             </g>
           );
         })}
@@ -1762,7 +1810,6 @@ function ScalarBarChart({ points }: { points: NumericPoint[] }) {
 }
 
 function PropertyDataPane({ title, value }: { title: string; value: unknown }) {
-  const numericPoints = collectNumericPoints(value, title);
   return (
     <section className="property-pane">
       <div className="canvas-toolbar">
@@ -1772,7 +1819,6 @@ function PropertyDataPane({ title, value }: { title: string; value: unknown }) {
         </div>
         <span>{describeValue(value)}</span>
       </div>
-      {numericPoints.length > 2 && <ScalarBarChart points={numericPoints.slice(0, 40)} />}
       {renderValueSummary(value)}
       <details className="json-details">
         <summary>Show structured JSON</summary>
@@ -1933,8 +1979,13 @@ function buildDomainItems(
   const spectraCount = tables.filter(isSpectraTable).length + countMatches(["spectra", "spectrum", "absorption", "cd"]);
   const orbitalCount = tables.filter(isOrbitalTable).length + countMatches(["orbital", "mo", "frontier"]);
   const populationCount = countMatches(["population", "mulliken", "loewdin", "mayer", "hirshfeld", "mbis", "chelpg", "nbo", "npa"]);
+  const densityCount = countMatches(["density_analysis"]);
   const excitedCount = countMatches(["tddft", "cis", "excited", "eom", "steom", "rocis", "states"]);
   const multirefCount = countMatches(["casscf", "nevpt2", "qd", "soc"]);
+  const coupledCount = countMatches(["coupled_cluster"]);
+  const eprCount = countMatches(["epr"]);
+  const conformerCount = countMatches(["goat"]);
+  const scanCount = countMatches(["surface_scan"]);
   const geometryCount = countMatches(["geometry", "final_snapshot", "coordinates"]) + tables.filter((table) => table.path.toLowerCase().includes("geometry")).length;
   const optimizationCount = countMatches(["geom_opt", "optimization", "trajectory", "job_series"]);
   const parsed = properties?.property_keys.length ?? 0;
@@ -1943,9 +1994,14 @@ function buildDomainItems(
     { id: "orbitals", label: "Orbitals", hint: "Energies, gaps, frontier windows", count: orbitalCount || Number(Boolean(job?.summary?.homo_lumo_gap_eV)), available: orbitalCount > 0 || Boolean(job?.summary?.homo_lumo_gap_eV), tone: "cyan" },
     { id: "geometry", label: "Geometry", hint: "Coordinates and structural data", count: geometryCount, available: geometryCount > 0, tone: "green" },
     { id: "optimization", label: "Optimization", hint: "Cycles, convergence, trajectories", count: optimizationCount || Number(Boolean(job?.summary?.opt_cycles)), available: optimizationCount > 0 || Boolean(job?.summary?.opt_cycles), tone: "amber" },
+    { id: "conformers", label: "Conformers", hint: "GOAT ensembles and minima", count: conformerCount, available: conformerCount > 0, tone: "green" },
+    { id: "scan", label: "Surface scans", hint: "Relaxed scans and coordinate series", count: scanCount, available: scanCount > 0, tone: "amber" },
     { id: "populations", label: "Populations", hint: "Charges, spin density, bond orders", count: populationCount, available: populationCount > 0, tone: "rose" },
+    { id: "density", label: "Densities", hint: "SCF, MP2, relaxed/unrelaxed analyses", count: densityCount, available: densityCount > 0, tone: "cyan" },
     { id: "excited", label: "Excited states", hint: "TDDFT, CIS, EOM, STEOM states", count: excitedCount, available: excitedCount > 0, tone: "violet" },
-    { id: "multireference", label: "CASSCF / NEVPT2", hint: "Roots, configurations, corrections", count: multirefCount, available: multirefCount > 0, tone: "blue" }
+    { id: "multireference", label: "CASSCF / NEVPT2", hint: "Roots, configurations, corrections", count: multirefCount, available: multirefCount > 0, tone: "blue" },
+    { id: "coupled", label: "Coupled cluster", hint: "CC diagnostics, F12, EOM/STEOM", count: coupledCount, available: coupledCount > 0, tone: "blue" },
+    { id: "epr", label: "EPR", hint: "g tensors, ZFS, hyperfine, EFG", count: eprCount, available: eprCount > 0, tone: "violet" }
   ];
   const scientificDomains = scientificCandidates.filter((domain) => domain.available);
   const utilityCandidates: DomainItem[] = [
@@ -1970,9 +2026,14 @@ function keyMatchesView(key: string, view: WorkspaceView) {
     orbitals: ["orbital", "mo", "frontier"],
     geometry: ["geometry", "final_snapshot", "coordinates"],
     optimization: ["geom_opt", "optimization", "trajectory", "job_series"],
+    conformers: ["goat"],
+    scan: ["surface_scan"],
     populations: ["population", "mulliken", "loewdin", "mayer", "hirshfeld", "mbis", "chelpg", "nbo", "npa"],
+    density: ["density_analysis"],
     excited: ["tddft", "cis", "excited", "eom", "steom", "rocis", "states"],
     multireference: ["casscf", "nevpt2", "qd", "soc"],
+    coupled: ["coupled_cluster"],
+    epr: ["epr"],
     tables: [],
     provenance: [],
     raw: [],
@@ -2126,18 +2187,23 @@ function getPopulationColumns(table: TableDataset) {
 
 function isExcitedStateTable(table: TableDataset) {
   const context = `${table.title} ${table.path} ${table.propertyKey}`.toLowerCase();
-  const hasStateContext = /state|root|tddft|cis|excited|eom|steom|casscf|nevpt2|transition/.test(context);
+  const hasStateContext = /state|root|tddft|cis|excited|eom|steom|rocis|nevpt2|transition/.test(context);
   return hasStateContext && Boolean(getStateColumns(table));
 }
 
 function getStateColumns(table: TableDataset) {
   const energy = findExactColumn(table.columns, ["energy_ev", "de_ev", "de_ev_", "excitation_energy_ev", "energy"]) ?? findColumn(table.columns, ["energyev", "deev"]);
+  const state = findExactColumn(table.columns, ["state", "state_index", "energy_rank", "order_index"]);
+  const root = findExactColumn(table.columns, ["root", "orca_root", "root_index"]);
   if (!energy) {
     return null;
   }
+  if (!state && !root) {
+    return null;
+  }
   return {
-    state: findExactColumn(table.columns, ["state", "state_index", "energy_rank"]),
-    root: findExactColumn(table.columns, ["root", "orca_root", "root_index"]),
+    state,
+    root,
     energy,
     oscillator: findColumn(table.columns, ["fosc", "oscillator", "intensity"])
   };
@@ -2266,6 +2332,10 @@ function elementRadius(symbol: string) {
     return 8;
   }
   return 7;
+}
+
+function atomLikeLabel(label: string) {
+  return /^[A-Z][a-z]?$/.test(label.trim());
 }
 
 function compactPathLabel(path: string) {

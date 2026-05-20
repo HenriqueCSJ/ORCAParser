@@ -41,6 +41,7 @@ def test_workbench_server_sample_files_endpoint():
     assert "files" in response.json()
     assert len(response.json()["files"]) <= 3
     assert all(file["name"].endswith((".out", ".log")) for file in response.json()["files"])
+    assert all("_diag." not in file["name"].lower() for file in response.json()["files"])
 
 
 def test_workbench_server_native_open_files_endpoint(monkeypatch, tmp_path):
