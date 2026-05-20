@@ -64,6 +64,7 @@ async function main() {
     await page.getByLabel("Normalize").selectOption("max");
     await page.getByLabel("Shape").selectOption("lorentzian");
     await page.getByLabel("FWHM").fill("20");
+    await page.getByLabel("From").fill("");
     await page.getByLabel("NTO transitions").check();
     await page.locator(".spectrum-transition-row input").first().fill("0.05");
     checks.spectrumCurves = await page.locator(".spectrum-curve.primary").count();
@@ -79,6 +80,24 @@ async function main() {
     checks.spectrumReadout = await page.locator(".plot-readout").first().innerText();
     await page.locator(".plot-workspace").evaluate((element) => { element.scrollTop = 0; });
     await page.screenshot({ path: path.join(screenshotDir, "workbench-redesign-spectra.png"), fullPage: false });
+    await page.setViewportSize({ width: 1366, height: 900 });
+    checks.spectrumResponsive = await page.evaluate(() => {
+      const control = document.querySelector(".spectrum-control-grid");
+      const toggle = document.querySelector(".spectrum-toggle-row");
+      const analysis = document.querySelector(".spectrum-analysis-grid");
+      const chart = document.querySelector(".spectrum-chart");
+      const svg = document.querySelector(".spectrum-svg");
+      return {
+        controlOverflow: control ? control.scrollWidth - control.clientWidth : 999,
+        toggleOverflow: toggle ? toggle.scrollWidth - toggle.clientWidth : 999,
+        svgOverflow: svg ? svg.scrollWidth - svg.clientWidth : 999,
+        analysisColumns: analysis ? getComputedStyle(analysis).gridTemplateColumns : "",
+        chartHeight: chart?.getBoundingClientRect().height ?? 0,
+        documentOverflow: document.documentElement.scrollWidth - window.innerWidth
+      };
+    });
+    await page.screenshot({ path: path.join(screenshotDir, "workbench-redesign-spectra-compact.png"), fullPage: false });
+    await page.setViewportSize({ width: 1680, height: 1120 });
   }
 
   if (checks.domainTexts.some((text) => text.includes("Orbitals"))) {
@@ -145,6 +164,7 @@ async function main() {
   await page.locator(".domain-button").filter({ hasText: "Raw data" }).click();
   await page.locator(".raw-data-panel").first().waitFor({ state: "visible", timeout: 10000 });
   checks.rawChars = (await page.locator(".raw-data-panel").first().innerText()).length;
+  checks.rawPreviewNotes = await page.locator(".json-preview-note").count();
   const jsonDownload = page.waitForEvent("download");
   await page.getByRole("button", { name: "Export JSON", exact: true }).click();
   checks.jsonDownloadName = (await jsonDownload).suggestedFilename();
@@ -204,7 +224,11 @@ async function main() {
       checks.spectrumPeakRows < 1 ||
       checks.spectrumFirstAssignment === "no assignment" ||
       checks.spectrumSvgDownloadName !== "orca-spectrum-workbench.svg" ||
-      checks.spectrumPngDownloadName !== "orca-spectrum-workbench.png"
+      checks.spectrumPngDownloadName !== "orca-spectrum-workbench.png" ||
+      checks.spectrumResponsive.controlOverflow > 2 ||
+      checks.spectrumResponsive.toggleOverflow > 2 ||
+      checks.spectrumResponsive.svgOverflow > 2 ||
+      checks.spectrumResponsive.chartHeight < 520
     )
   ) {
     process.exit(6);
@@ -227,7 +251,7 @@ async function main() {
   if (checks.stateCharts !== undefined && (checks.stateCharts < 1 || checks.stateDots < 1)) {
     process.exit(63);
   }
-  if (checks.summaryFields < 4 || checks.tableDatasetCount < 1 || checks.richTableRows < 1 || checks.rawChars < 100) {
+  if (checks.summaryFields < 4 || checks.tableDatasetCount < 1 || checks.richTableRows < 1 || checks.rawChars < 100 || checks.rawChars > 300000 || checks.rawPreviewNotes < 1) {
     process.exit(7);
   }
   if (

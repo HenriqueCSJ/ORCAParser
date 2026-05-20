@@ -106,6 +106,12 @@ type SpectrumCurvePoint = {
   y: number;
 };
 
+type SpectrumAnnotationEntry = {
+  root: number | null;
+  energyEv: number | null;
+  text: string;
+};
+
 type SpinChannel = "restricted" | "alpha" | "beta";
 
 type OrbitalPoint = {
@@ -1062,10 +1068,6 @@ function SpectrumWorkbenchPlot({
     setFwhm(SPECTRUM_UNITS[axisUnit].defaultFwhm);
   }, [axisUnit]);
 
-  if (!columns) {
-    return <div className="empty-state">This table does not contain spectrum axes.</div>;
-  }
-
   const transitions = useMemo(
     () => buildSpectrumTransitions(table, annotationMaps),
     [table, annotationMaps]
@@ -1090,19 +1092,23 @@ function SpectrumWorkbenchPlot({
     setRangeMax(roundSpectrumValue(domain.max, axisUnit));
   }, [axisUnit, domain.min, domain.max, table.id]);
 
+  if (!columns) {
+    return <div className="empty-state">This table does not contain spectrum axes.</div>;
+  }
+
   if (!transitions.length) {
     return <div className="empty-state">No numeric spectrum rows are available.</div>;
   }
 
-  const xMin = Math.min(rangeMin ?? domain.min, rangeMax ?? domain.max);
-  const xMax = Math.max(rangeMin ?? domain.min, rangeMax ?? domain.max);
+  const xMin = Math.min(finiteOr(rangeMin, domain.min), finiteOr(rangeMax, domain.max));
+  const xMax = Math.max(finiteOr(rangeMin, domain.min), finiteOr(rangeMax, domain.max));
   const inRange = (point: SpectrumPoint) => point.x >= xMin && point.x <= xMax;
   const primaryVisible = shifted.filter(inRange);
   const compareVisible = shiftedCompare.filter(inRange);
-  const safeFwhm = Math.max(fwhm, 1e-6);
+  const safeFwhm = Math.max(finiteOr(fwhm, SPECTRUM_UNITS[axisUnit].defaultFwhm), 1e-6);
   const curve = showEnvelope ? buildConvolutedCurve(primaryVisible, xMin, xMax, safeFwhm, lineShape, 720) : [];
-  const compareCurve = compareVisible.length ? buildConvolutedCurve(compareVisible, xMin, xMax, safeFwhm, lineShape, 720) : [];
-  const peaks = estimateSpectrumPeaks(curve, primaryVisible);
+  const compareCurve = showEnvelope && compareVisible.length ? buildConvolutedCurve(compareVisible, xMin, xMax, safeFwhm, lineShape, 720) : [];
+  const peaks = showEnvelope ? estimateSpectrumPeaks(curve, primaryVisible, safeFwhm, lineShape) : [];
   const editorRows = primaryVisible
     .slice()
     .sort((a, b) => Math.abs(b.scaledIntensity) - Math.abs(a.scaledIntensity))
@@ -1147,11 +1153,11 @@ function SpectrumWorkbenchPlot({
         </label>
         <label>
           From
-          <input type="number" value={rangeMin ?? ""} step="0.1" onChange={(event) => setRangeMin(Number(event.target.value))} />
+          <input type="number" value={rangeMin ?? ""} step="0.1" onChange={(event) => setRangeMin(parseOptionalNumberInput(event.target.value))} />
         </label>
         <label>
           To
-          <input type="number" value={rangeMax ?? ""} step="0.1" onChange={(event) => setRangeMax(Number(event.target.value))} />
+          <input type="number" value={rangeMax ?? ""} step="0.1" onChange={(event) => setRangeMax(parseOptionalNumberInput(event.target.value))} />
         </label>
         <label>
           Normalize
@@ -1163,7 +1169,7 @@ function SpectrumWorkbenchPlot({
         </label>
         <label>
           Shift all
-          <input type="number" value={globalShiftEv} step="0.01" onChange={(event) => setGlobalShiftEv(Number(event.target.value))} />
+          <input type="number" value={globalShiftEv} step="0.01" onChange={(event) => setGlobalShiftEv(parseFiniteNumberInput(event.target.value, 0))} />
           <small>eV</small>
         </label>
         <label>
@@ -1176,7 +1182,7 @@ function SpectrumWorkbenchPlot({
         </label>
         <label>
           FWHM
-          <input type="number" value={fwhm} min="0.0001" step={axisUnit === "eV" ? "0.01" : "1"} onChange={(event) => setFwhm(Number(event.target.value))} />
+          <input type="number" value={fwhm} min="0.0001" step={axisUnit === "eV" ? "0.01" : "1"} onChange={(event) => setFwhm(parseFiniteNumberInput(event.target.value, SPECTRUM_UNITS[axisUnit].defaultFwhm))} />
           <small>{axisLabel}</small>
         </label>
         <label>
@@ -1290,7 +1296,10 @@ function SpectrumWorkbenchPlot({
                   type="number"
                   step="0.01"
                   value={transitionShifts[point.key] ?? 0}
-                  onChange={(event) => setTransitionShifts({ ...transitionShifts, [point.key]: Number(event.target.value) })}
+                  onChange={(event) => setTransitionShifts((current) => ({
+                    ...current,
+                    [point.key]: parseFiniteNumberInput(event.target.value, 0)
+                  }))}
                 />
                 <em>{showCanonical && point.canonical ? point.canonical : showNto && point.nto ? point.nto : "no assignment"}</em>
               </div>
@@ -1300,17 +1309,17 @@ function SpectrumWorkbenchPlot({
         <section className="spectrum-peak-panel">
           <div className="panel-headline">
             <div>
-              <p className="eyebrow">Convolution / deconvolution</p>
-              <h3>{peaks.length} resolved envelope peak(s)</h3>
+              <p className="eyebrow">Envelope resolution</p>
+              <h3>{peaks.length} resolved peak candidate(s)</h3>
             </div>
-            <span className="quiet-text">Peak centers are estimated from local maxima in the broadened curve.</span>
+            <span className="quiet-text">Local maxima plus component shares from the current line shape; not a fitted spectrum model.</span>
           </div>
           <div className="peak-list">
             {peaks.map((peak, index) => (
               <div className="peak-row" key={`${peak.x}-${index}`}>
                 <strong>{peak.x.toFixed(displayDecimals)} {axisLabel}</strong>
                 <span>{shortValue(peak.y)}</span>
-                <em>{peak.nearest?.label ?? "unassigned"}</em>
+                <em>{peak.contributors.length ? peak.contributors.map((item) => `${item.label} ${Math.round(item.fraction * 100)}%`).join("; ") : peak.nearest?.label ?? "unassigned"}</em>
                 <small>{peak.nearest ? `${Math.abs(peak.x - peak.nearest.x).toFixed(displayDecimals)} ${axisLabel}` : ""}</small>
               </div>
             ))}
@@ -1338,10 +1347,16 @@ function buildSpectrumTransitions(
         return null;
       }
       const root = spectrumRoot(row);
-      const wavelengthNm = toNumber(row.wavelength_nm) ?? EV_NM_PRODUCT / energyEv;
+      const wavelengthNm = spectrumWavelengthNm(row, columns, energyEv);
       const label = root ? `State ${root}` : `Row ${index + 1}`;
-      const canonical = root ? annotations.canonicalByRoot.get(root) ?? "" : findNearestEnergyAnnotation(annotations.canonicalByEnergy, energyEv);
-      const nto = root ? annotations.ntoByRoot.get(root) ?? "" : findNearestEnergyAnnotation(annotations.ntoByEnergy, energyEv);
+      const rowCanonical = formatCanonicalAnnotation(row);
+      const rowNto = formatNtoAnnotation(row);
+      const canonical = rowCanonical ||
+        findBestSpectrumAnnotation(root ? annotations.canonicalByRoot.get(root) ?? [] : [], energyEv) ||
+        findNearestEnergyAnnotation(annotations.canonicalByEnergy, energyEv);
+      const nto = rowNto ||
+        findBestSpectrumAnnotation(root ? annotations.ntoByRoot.get(root) ?? [] : [], energyEv) ||
+        findNearestEnergyAnnotation(annotations.ntoByEnergy, energyEv);
       return {
         key: `${table.id}:${index + 1}`,
         row: index + 1,
@@ -1359,22 +1374,40 @@ function buildSpectrumTransitions(
 }
 
 function spectrumEnergyEv(row: Record<string, unknown>, columns: NonNullable<ReturnType<typeof getSpectraColumns>>) {
-  const explicitEnergy = columns.energy ? toNumber(row[columns.energy]) : null;
-  if (explicitEnergy !== null) {
-    return explicitEnergy;
+  if (columns.energy) {
+    const explicitEnergy = toNumber(row[columns.energy]);
+    if (explicitEnergy !== null) {
+      return spectrumColumnEnergyToEv(explicitEnergy, columns.energy);
+    }
   }
   const x = toNumber(row[columns.x]);
   if (x === null || x <= 0) {
     return null;
   }
-  const normalized = normalizeColumn(columns.x);
+  return spectrumColumnEnergyToEv(x, columns.x);
+}
+
+function spectrumColumnEnergyToEv(value: number, column: string) {
+  const normalized = normalizeColumn(column);
   if (/wavelength|lambda|nm/.test(normalized)) {
-    return EV_NM_PRODUCT / x;
+    return EV_NM_PRODUCT / value;
   }
   if (/cm1|wavenumber/.test(normalized)) {
-    return x / EV_TO_CM1;
+    return value / EV_TO_CM1;
   }
-  return x;
+  if (/hartree|eh|au/.test(normalized)) {
+    return value * HARTREE_TO_EV;
+  }
+  return value;
+}
+
+function spectrumWavelengthNm(
+  row: Record<string, unknown>,
+  columns: NonNullable<ReturnType<typeof getSpectraColumns>>,
+  energyEv: number
+) {
+  const wavelength = columns.wavelength ? toNumber(row[columns.wavelength]) : null;
+  return wavelength !== null && wavelength > 0 ? wavelength : EV_NM_PRODUCT / energyEv;
 }
 
 function spectrumRoot(row: Record<string, unknown>) {
@@ -1387,23 +1420,23 @@ function spectrumRoot(row: Record<string, unknown>) {
 }
 
 function buildSpectrumAnnotationMaps(tables: TableDataset[]) {
-  const canonicalByRoot = new Map<number, string>();
-  const ntoByRoot = new Map<number, string>();
-  const canonicalByEnergy: { energyEv: number; text: string }[] = [];
-  const ntoByEnergy: { energyEv: number; text: string }[] = [];
+  const canonicalByRoot = new Map<number, SpectrumAnnotationEntry[]>();
+  const ntoByRoot = new Map<number, SpectrumAnnotationEntry[]>();
+  const canonicalByEnergy: SpectrumAnnotationEntry[] = [];
+  const ntoByEnergy: SpectrumAnnotationEntry[] = [];
   for (const table of tables) {
     const context = `${table.title} ${table.path} ${table.propertyKey}`.toLowerCase();
     for (const row of table.rows) {
       const root = spectrumRoot(row);
-      const energyEv = toNumber(row.energy_eV) ?? toNumber(row.energy_ev);
+      const energyEv = rowEnergyEv(row);
       if (!/nto/.test(context)) {
         const canonical = formatCanonicalAnnotation(row);
         if (canonical) {
           if (root) {
-            canonicalByRoot.set(root, canonical);
+            pushSpectrumAnnotation(canonicalByRoot, root, { root, energyEv, text: canonical });
           }
           if (energyEv !== null) {
-            canonicalByEnergy.push({ energyEv, text: canonical });
+            canonicalByEnergy.push({ root: root ?? null, energyEv, text: canonical });
           }
         }
       }
@@ -1411,10 +1444,10 @@ function buildSpectrumAnnotationMaps(tables: TableDataset[]) {
       if (nto) {
         const ntoRoot = root ?? toNumber(row.energy_matched_state);
         if (ntoRoot) {
-          ntoByRoot.set(ntoRoot, nto);
+          pushSpectrumAnnotation(ntoByRoot, ntoRoot, { root: ntoRoot, energyEv, text: nto });
         }
         if (energyEv !== null) {
-          ntoByEnergy.push({ energyEv, text: nto });
+          ntoByEnergy.push({ root: ntoRoot ?? null, energyEv, text: nto });
         }
       }
     }
@@ -1422,11 +1455,40 @@ function buildSpectrumAnnotationMaps(tables: TableDataset[]) {
   return { canonicalByRoot, ntoByRoot, canonicalByEnergy, ntoByEnergy };
 }
 
-function findNearestEnergyAnnotation(rows: { energyEv: number; text: string }[], energyEv: number) {
+function pushSpectrumAnnotation(
+  target: Map<number, SpectrumAnnotationEntry[]>,
+  root: number,
+  entry: SpectrumAnnotationEntry
+) {
+  const current = target.get(root) ?? [];
+  current.push(entry);
+  target.set(root, current);
+}
+
+function rowEnergyEv(row: Record<string, unknown>) {
+  const energyEv = toNumber(row.energy_eV) ?? toNumber(row.energy_ev) ?? toNumber(row.excitation_energy_eV);
+  if (energyEv !== null) {
+    return energyEv;
+  }
+  const energyCm1 = toNumber(row.energy_cm_1) ?? toNumber(row.energy_cm1) ?? toNumber(row.wavenumber_cm_1);
+  return energyCm1 !== null ? energyCm1 / EV_TO_CM1 : null;
+}
+
+function findBestSpectrumAnnotation(rows: SpectrumAnnotationEntry[], energyEv: number) {
+  if (rows.length === 1) {
+    return rows[0].text;
+  }
+  return findNearestEnergyAnnotation(rows, energyEv, 0.05);
+}
+
+function findNearestEnergyAnnotation(rows: SpectrumAnnotationEntry[], energyEv: number, toleranceEv = 0.01) {
   let best: { delta: number; text: string } | null = null;
   for (const row of rows) {
+    if (row.energyEv === null) {
+      continue;
+    }
     const delta = Math.abs(row.energyEv - energyEv);
-    if (delta <= 0.01 && (!best || delta < best.delta)) {
+    if (delta <= toleranceEv && (!best || delta < best.delta)) {
       best = { delta, text: row.text };
     }
   }
@@ -1576,13 +1638,23 @@ function lineShapeKernel(delta: number, fwhm: number, lineShape: SpectrumLineSha
   return 0.5 * gaussian + 0.5 * lorentzian;
 }
 
-function estimateSpectrumPeaks(curve: SpectrumCurvePoint[], transitions: SpectrumPoint[]) {
+function estimateSpectrumPeaks(
+  curve: SpectrumCurvePoint[],
+  transitions: SpectrumPoint[],
+  fwhm: number,
+  lineShape: SpectrumLineShape
+) {
   if (curve.length < 3) {
     return [];
   }
   const maxAbs = Math.max(...curve.map((point) => Math.abs(point.y)), 0);
   const threshold = maxAbs * 0.05;
-  const peaks: { x: number; y: number; nearest: SpectrumPoint | null }[] = [];
+  const peaks: {
+    x: number;
+    y: number;
+    nearest: SpectrumPoint | null;
+    contributors: { label: string; fraction: number; value: number }[];
+  }[] = [];
   for (let index = 1; index < curve.length - 1; index += 1) {
     const prev = Math.abs(curve[index - 1].y);
     const current = Math.abs(curve[index].y);
@@ -1595,8 +1667,19 @@ function estimateSpectrumPeaks(curve: SpectrumCurvePoint[], transitions: Spectru
         }
         return Math.abs(transition.x - x) < Math.abs(best.x - x) ? transition : best;
       }, null);
+      const rawContributors = transitions
+        .map((transition) => ({
+          label: transition.label,
+          value: transition.scaledIntensity * lineShapeKernel(x - transition.x, fwhm, lineShape)
+        }))
+        .filter((item) => Math.abs(item.value) > 0);
+      const total = rawContributors.reduce((sum, item) => sum + Math.abs(item.value), 0) || 1;
+      const contributors = rawContributors
+        .map((item) => ({ ...item, fraction: Math.abs(item.value) / total }))
+        .sort((a, b) => Math.abs(b.value) - Math.abs(a.value))
+        .slice(0, 3);
       if (!peaks.some((peak) => Math.abs(peak.x - x) < Math.abs((curve[1].x - curve[0].x) * 8))) {
-        peaks.push({ x, y: curve[index].y, nearest });
+        peaks.push({ x, y: curve[index].y, nearest, contributors });
       }
     }
   }
@@ -2488,7 +2571,11 @@ function RawWorkspace({
   selectedKeys: string[];
   snapshots: SnapshotResponse | null;
 }) {
-  const selectedData = properties ? selectedPropertyObject(properties, selectedKeys) : {};
+  const selectedData = useMemo(
+    () => properties ? selectedPropertyObject(properties, selectedKeys) : {},
+    [properties, selectedKeys]
+  );
+  const snapshotData = snapshots?.snapshots ?? {};
   return (
     <div className="raw-workspace">
       <section>
@@ -2499,7 +2586,7 @@ function RawWorkspace({
           </div>
           <button type="button" onClick={() => downloadJson("orca-workbench-selected-properties.json", selectedData)}>Export JSON</button>
         </div>
-        <pre className="text-panel raw-data-panel">{JSON.stringify(selectedData, null, 2)}</pre>
+        <JsonPreviewBlock value={selectedData} className="text-panel raw-data-panel" />
       </section>
       <section>
         <div className="canvas-toolbar">
@@ -2508,7 +2595,7 @@ function RawWorkspace({
             <h3>Snapshots</h3>
           </div>
         </div>
-        <pre className="text-panel raw-data-panel">{JSON.stringify(snapshots?.snapshots ?? {}, null, 2)}</pre>
+        <JsonPreviewBlock value={snapshotData} className="text-panel raw-data-panel" />
       </section>
     </div>
   );
@@ -2600,9 +2687,31 @@ function PropertyDataPane({ title, value }: { title: string; value: unknown }) {
       {renderValueSummary(value)}
       <details className="json-details">
         <summary>Show structured JSON</summary>
-        <pre className="text-panel compact-json">{JSON.stringify(value, null, 2)}</pre>
+        <JsonPreviewBlock value={value} className="text-panel compact-json" maxChars={120000} />
       </details>
     </section>
+  );
+}
+
+function JsonPreviewBlock({
+  value,
+  className,
+  maxChars = 250000
+}: {
+  value: unknown;
+  className: string;
+  maxChars?: number;
+}) {
+  const preview = useMemo(() => buildJsonPreview(value, maxChars), [maxChars, value]);
+  return (
+    <>
+      {preview.truncated && (
+        <p className="quiet-text json-preview-note">
+          Preview clipped to {preview.text.length.toLocaleString()} of {preview.fullLength.toLocaleString()} characters. Use JSON export for the complete payload.
+        </p>
+      )}
+      <pre className={className}>{preview.text}</pre>
+    </>
   );
 }
 
@@ -3124,7 +3233,8 @@ function isSpectraTable(table: TableDataset) {
 }
 
 function getSpectraColumns(table: TableDataset) {
-  const x = findColumn(table.columns, ["wavelength", "lambda", "nm"]) ?? findColumn(table.columns, ["energy_ev", "energyev"]);
+  const wavelength = findColumn(table.columns, ["wavelength", "lambda", "nm"]);
+  const x = wavelength ?? findColumn(table.columns, ["energy_ev", "energyev", "energy_cm", "wavenumber", "cm-1"]);
   const y = findColumn(table.columns, ["fosc", "oscillator", "intensity", "rotatory"]) ?? findExactColumn(table.columns, ["r"]);
   if (!x || !y) {
     return null;
@@ -3132,7 +3242,8 @@ function getSpectraColumns(table: TableDataset) {
   return {
     x,
     y,
-    energy: findColumn(table.columns, ["energy_ev", "energy"])
+    wavelength,
+    energy: findColumn(table.columns, ["energy_ev", "energyev", "excitation_energy_ev", "de_ev", "energy_cm", "wavenumber", "cm-1", "energy"])
   };
 }
 
@@ -3458,6 +3569,23 @@ function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
 
+function finiteOr(value: number | null | undefined, fallback: number) {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+function parseOptionalNumberInput(value: string) {
+  if (value.trim() === "") {
+    return null;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function parseFiniteNumberInput(value: string, fallback: number) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
 function findColumn(columns: string[], needles: string[]) {
   const normalizedNeedles = needles.map((needle) => normalizeColumn(needle));
   return columns.find((column) => {
@@ -3511,6 +3639,18 @@ function toNumber(value: unknown) {
 
 function downloadJson(filename: string, value: unknown) {
   downloadFile(filename, "application/json", JSON.stringify(value, null, 2));
+}
+
+function buildJsonPreview(value: unknown, maxChars: number) {
+  const text = JSON.stringify(value, null, 2);
+  if (text.length <= maxChars) {
+    return { text, truncated: false, fullLength: text.length };
+  }
+  return {
+    text: `${text.slice(0, maxChars)}\n\n... truncated preview ...`,
+    truncated: true,
+    fullLength: text.length
+  };
 }
 
 function downloadTablesCsv(tables: TableDataset[]) {

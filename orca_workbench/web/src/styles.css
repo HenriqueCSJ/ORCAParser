@@ -836,7 +836,7 @@ textarea {
 
 .spectrum-control-grid {
   display: grid;
-  grid-template-columns: repeat(5, minmax(120px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(145px, 1fr));
   gap: 9px;
   padding: 12px;
   border: 1px solid var(--line);
@@ -918,6 +918,7 @@ textarea {
 }
 
 .spectrum-chart .spectrum-svg {
+  min-width: 0;
   min-height: 520px;
 }
 
@@ -982,6 +983,7 @@ textarea {
 
 .panel-headline {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
@@ -991,6 +993,11 @@ textarea {
 
 .panel-headline h3 {
   font-size: 0.95rem;
+}
+
+.panel-headline .quiet-text {
+  max-width: 320px;
+  margin: 0;
 }
 
 .spectrum-transition-list,
@@ -1572,6 +1579,14 @@ textarea {
   min-height: 360px;
 }
 
+.json-preview-note {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  border-radius: 9px;
+  color: #714300;
+  background: #fff7dc;
+}
+
 .compact-json {
   max-height: 340px;
   margin: 12px;
@@ -1777,5 +1792,25 @@ textarea {
   .run-counters {
     grid-column: 1 / -1;
     justify-content: flex-end;
+  }
+}
+
+@media (max-width: 1500px) {
+  .workbench-layout {
+    grid-template-columns: 286px minmax(0, 1fr) 300px;
+    gap: 10px;
+    padding-inline: 12px;
+  }
+
+  .spectrum-control-grid {
+    grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+  }
+
+  .spectrum-analysis-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .spectrum-transition-row {
+    grid-template-columns: minmax(70px, 0.75fr) minmax(82px, 0.9fr) minmax(62px, 0.65fr) 68px minmax(130px, 1.4fr);
   }
 }
