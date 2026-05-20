@@ -734,7 +734,7 @@ function WorkspaceContent({
     return <PopulationWorkspace tables={tables} properties={properties} visibleKeys={visibleKeys} />;
   }
   if (activeView === "density") {
-    return <DomainWorkspace view="density" properties={properties} visibleKeys={visibleKeys} focusedProperty={focusedProperty} onFocusProperty={onFocusProperty} tables={tables} />;
+    return <DensityWorkspace properties={properties} visibleKeys={visibleKeys} tables={tables} />;
   }
   if (activeView === "excited") {
     return <ExcitedStatesWorkspace tables={tables} properties={properties} visibleKeys={visibleKeys} />;
@@ -746,16 +746,16 @@ function WorkspaceContent({
     return <MultiReferenceWorkspace tables={tables} properties={properties} visibleKeys={visibleKeys} />;
   }
   if (activeView === "coupled") {
-    return <DomainWorkspace view="coupled" properties={properties} visibleKeys={visibleKeys} focusedProperty={focusedProperty} onFocusProperty={onFocusProperty} tables={tables} />;
+    return <CoupledClusterWorkspace properties={properties} visibleKeys={visibleKeys} tables={tables} />;
   }
   if (activeView === "epr") {
-    return <DomainWorkspace view="epr" properties={properties} visibleKeys={visibleKeys} focusedProperty={focusedProperty} onFocusProperty={onFocusProperty} tables={tables} />;
+    return <EprWorkspace properties={properties} visibleKeys={visibleKeys} tables={tables} />;
   }
   if (activeView === "conformers") {
-    return <DomainWorkspace view="conformers" properties={properties} visibleKeys={visibleKeys} focusedProperty={focusedProperty} onFocusProperty={onFocusProperty} tables={tables} />;
+    return <ConformerWorkspace properties={properties} visibleKeys={visibleKeys} tables={tables} />;
   }
   if (activeView === "scan") {
-    return <DomainWorkspace view="scan" properties={properties} visibleKeys={visibleKeys} focusedProperty={focusedProperty} onFocusProperty={onFocusProperty} tables={tables} />;
+    return <SurfaceScanWorkspace properties={properties} visibleKeys={visibleKeys} tables={tables} />;
   }
   if (activeView === "tables") {
     return <TablesWorkspace tables={tables} />;
@@ -1041,8 +1041,8 @@ function SpectraWorkspace({
           <p className="eyebrow">Interactive spectrum workbench</p>
           <h3>{activeTable.title}</h3>
         </div>
-        <select value={activeTable.id} onChange={(event) => setActiveId(event.target.value)}>
-          {spectraTables.map((table) => <option key={table.id} value={table.id}>{table.title}</option>)}
+        <select value={activeTable.id} title={activeTable.title} onChange={(event) => setActiveId(event.target.value)}>
+          {spectraTables.map((table) => <option key={table.id} value={table.id}>{compactTableTitle(table.title)}</option>)}
         </select>
       </div>
       <SpectrumWorkbenchPlot table={activeTable} spectrumTables={spectraTables} allTables={tables} />
@@ -1847,6 +1847,16 @@ function OrbitalLadder({ analysis, unit }: { analysis: ReturnType<typeof analyze
   const visibleGroups = analysis.channels.flatMap((channel) => channel.groups);
   const visibleOrbitals = visibleGroups.flatMap((group) => group.orbitals);
   const visibleRange = compactOrbitalRangeLabel(visibleOrbitals);
+  if (!visibleOrbitals.length) {
+    return (
+      <div className="primary-chart">
+        <div className="empty-state small">
+          No usable orbital energy rows were available for a frontier ladder. The raw orbital-like tables remain available in the table browser.
+        </div>
+        <div className="plot-readout">Showing 0 frontier orbital(s).</div>
+      </div>
+    );
+  }
   const energies = visibleOrbitals.map((orbital) => toDisplayEnergy(orbital.energy, unit));
   const minEnergy = Math.min(...energies);
   const maxEnergy = Math.max(...energies);
@@ -2050,8 +2060,8 @@ function GeometryWorkspace({
           <p className="eyebrow">Geometry coordinates</p>
           <h3>{activeTable.title}</h3>
         </div>
-        <select value={activeTable.id} onChange={(event) => setActiveId(event.target.value)}>
-          {geometryTables.map((table) => <option key={table.id} value={table.id}>{table.title}</option>)}
+        <select value={activeTable.id} title={activeTable.title} onChange={(event) => setActiveId(event.target.value)}>
+          {geometryTables.map((table) => <option key={table.id} value={table.id}>{compactTableTitle(table.title)}</option>)}
         </select>
       </div>
       <GeometrySummaryCards atoms={geometryAtoms} bonds={geometryBonds} table={activeTable} />
@@ -2160,8 +2170,8 @@ function PopulationWorkspace({
           <p className="eyebrow">Signed population bars</p>
           <h3>{activeTable.title}</h3>
         </div>
-        <select value={activeTable.id} onChange={(event) => setActiveId(event.target.value)}>
-          {populationTables.map((table) => <option key={table.id} value={table.id}>{table.title}</option>)}
+        <select value={activeTable.id} title={activeTable.title} onChange={(event) => setActiveId(event.target.value)}>
+          {populationTables.map((table) => <option key={table.id} value={table.id}>{compactTableTitle(table.title)}</option>)}
         </select>
       </div>
       <PopulationBarChart table={activeTable} />
@@ -2221,6 +2231,179 @@ function PopulationBarChart({ table }: { table: TableDataset }) {
   );
 }
 
+function DensityWorkspace({
+  properties,
+  visibleKeys,
+  tables
+}: {
+  properties: PropertiesResponse | null;
+  visibleKeys: string[];
+  tables: TableDataset[];
+}) {
+  const density = getDensityObject(properties);
+  const densityTables = tables.filter((table) => keyMatchesView(table.propertyKey, "density"));
+  if (!density) {
+    return (
+      <DomainEmpty
+        title="No density-analysis payload was detected"
+        body="The Workbench did not receive SCF/MP2 density provenance, dipoles, sidecar files, or population passes for this selection."
+        fallback={properties ? <DomainWorkspace view="density" properties={properties} visibleKeys={visibleKeys} focusedProperty="" onFocusProperty={() => undefined} tables={tables} /> : null}
+      />
+    );
+  }
+
+  const summary = getRecord(density.summary);
+  const dipoles = getArray(density.dipoles).filter(isPlainObject);
+  const analyses = buildDensityAnalysisRows(density);
+  const formations = getArray(density.mp2_density_formations).filter(isPlainObject);
+  const sidecars = getArray(density.sidecar_files).filter(isPlainObject);
+  const stages = summarizeStringList(getArray(summary.stages), analyses.map((row) => row.stage));
+  const densityKinds = summarizeStringList(getArray(summary.density_kinds), [
+    ...analyses.map((row) => row.density_kind),
+    ...dipoles.map((row) => row.density_kind)
+  ]);
+  const trustworthyTriples = summary.has_initial_and_final_triples === true;
+
+  return (
+    <div className="domain-visual-workspace density-workspace">
+      <section className="density-hero-panel">
+        <div className="panel-headline">
+          <div>
+            <p className="eyebrow">Density provenance</p>
+            <h3>SCF, MP2, relaxed/unrelaxed density products</h3>
+          </div>
+          <span className={trustworthyTriples ? "density-badge good" : "density-badge"}>
+            {trustworthyTriples ? "initial/final triples present" : "provenance parsed"}
+          </span>
+        </div>
+        <div className="density-metric-grid">
+          <article className="metric-card density-analysis-card">
+            <span>Population passes</span>
+            <strong>{shortValue(summary.analysis_count ?? analyses.length)}</strong>
+            <small>{stages || "stage not reported"}</small>
+          </article>
+          <article className="metric-card density-analysis-card">
+            <span>Density kinds</span>
+            <strong>{densityKinds || "N/A"}</strong>
+            <small>SCF/MP2 provenance kept separate</small>
+          </article>
+          <article className="metric-card density-analysis-card">
+            <span>Density dipoles</span>
+            <strong>{shortValue(summary.density_dipole_count ?? dipoles.length)}</strong>
+            <small>{dipoles.length ? "vector components available" : "no dipole block exposed"}</small>
+          </article>
+          <article className="metric-card density-analysis-card">
+            <span>MP2 formations</span>
+            <strong>{shortValue(summary.mp2_density_formation_count ?? formations.length)}</strong>
+            <small>{formations.length ? "natural occupations parsed" : "not detected"}</small>
+          </article>
+          <article className="metric-card density-analysis-card">
+            <span>Sidecar files</span>
+            <strong>{shortValue(summary.sidecar_file_count ?? sidecars.length)}</strong>
+            <small>{sidecars.length ? "binary density assets found" : "none reported"}</small>
+          </article>
+        </div>
+      </section>
+      <DensityDipolePanel dipoles={dipoles} />
+      <DensityAnalysisPassPanel analyses={analyses} />
+      <DensitySidecarPanel sidecars={sidecars} />
+      {densityTables[0] && <TablePreview table={densityTables[0]} maxRows={10} />}
+    </div>
+  );
+}
+
+function DensityDipolePanel({ dipoles }: { dipoles: Record<string, unknown>[] }) {
+  const rows = dipoles
+    .map((dipole, index) => ({
+      index,
+      label: densityDipoleLabel(dipole, index),
+      magnitude: firstNumber(dipole.magnitude_Debye, dipole["magnitude_debye"], dipole.magnitude),
+      vector: vectorObject(dipole.total_dipole_Debye ?? dipole.total_dipole_debye ?? dipole.total_dipole),
+      energy: firstNumber(dipole.energy_Eh, dipole.energy_eh)
+    }))
+    .filter((row) => row.magnitude !== null);
+  if (!rows.length) {
+    return null;
+  }
+  const maxMagnitude = Math.max(...rows.map((row) => row.magnitude ?? 0), 1);
+  return (
+    <section className="density-dipole-panel">
+      <div className="panel-headline compact">
+        <div>
+          <p className="eyebrow">Density dipoles</p>
+          <h3>Dipole magnitude and vector components</h3>
+        </div>
+      </div>
+      <div className="density-dipole-grid">
+        {rows.map((row) => (
+          <article className="density-dipole-card" key={`${row.index}-${row.label}`}>
+            <div>
+              <strong>{row.label}</strong>
+              <span>{formatNumber(row.magnitude, 4, " D")}</span>
+            </div>
+            <i style={{ width: `${Math.max(5, ((row.magnitude ?? 0) / maxMagnitude) * 100)}%` }} />
+            <small>
+              x {formatNullableNumber(row.vector.x, 4)} | y {formatNullableNumber(row.vector.y, 4)} | z {formatNullableNumber(row.vector.z, 4)}
+            </small>
+            {row.energy !== null && <em>{formatNumber(row.energy, 8, " Eh")}</em>}
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function DensityAnalysisPassPanel({ analyses }: { analyses: Record<string, unknown>[] }) {
+  if (!analyses.length) {
+    return null;
+  }
+  return (
+    <section className="density-pass-panel">
+      <div className="panel-headline compact">
+        <div>
+          <p className="eyebrow">Population-analysis passes</p>
+          <h3>{analyses.length} density-context block(s)</h3>
+        </div>
+      </div>
+      <div className="density-pass-list">
+        {analyses.slice(0, 24).map((row, index) => (
+          <article className="density-pass-row" key={`${index}-${shortValue(row.line_start)}`}>
+            <strong>{shortValue(row.stage)} / {shortValue(row.density_kind)}</strong>
+            <span>{shortValue(row.method)} {shortValue(row.level)}</span>
+            <code>{shortValue(row.input_electron_density_file)}</code>
+            <small>cycle {shortValue(row.optimization_cycle)} | lines {shortValue(row.line_start)}-{shortValue(row.line_end)}</small>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function DensitySidecarPanel({ sidecars }: { sidecars: Record<string, unknown>[] }) {
+  if (!sidecars.length) {
+    return null;
+  }
+  return (
+    <section className="density-sidecar-panel">
+      <div className="panel-headline compact">
+        <div>
+          <p className="eyebrow">Sidecar density files</p>
+          <h3>Files associated with the parsed output</h3>
+        </div>
+      </div>
+      <div className="density-sidecar-grid">
+        {sidecars.map((sidecar, index) => (
+          <article className="density-sidecar-card" key={`${index}-${shortValue(sidecar.file)}`}>
+            <strong>{formatPropertyTitle(String(sidecar.role ?? "density file"))}</strong>
+            <code>{shortValue(sidecar.file)}</code>
+            <span>{formatBytes(sidecar.size_bytes)}</span>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function ExcitedStatesWorkspace({
   tables,
   properties,
@@ -2256,8 +2439,8 @@ function ExcitedStatesWorkspace({
           <p className="eyebrow">State energy ladder</p>
           <h3>{activeTable.title}</h3>
         </div>
-        <select value={activeTable.id} onChange={(event) => setActiveId(event.target.value)}>
-          {stateTables.map((table) => <option key={table.id} value={table.id}>{table.title}</option>)}
+        <select value={activeTable.id} title={activeTable.title} onChange={(event) => setActiveId(event.target.value)}>
+          {stateTables.map((table) => <option key={table.id} value={table.id}>{compactTableTitle(table.title)}</option>)}
         </select>
       </div>
       <StateEnergyChart table={activeTable} />
@@ -2310,8 +2493,8 @@ function MultiReferenceWorkspace({
               <p className="eyebrow">CASSCF / NEVPT2 state ladder</p>
               <h3>{activeTable.title}</h3>
             </div>
-            <select value={activeTable.id} onChange={(event) => setActiveId(event.target.value)}>
-              {stateTables.map((table) => <option key={table.id} value={table.id}>{table.title}</option>)}
+            <select value={activeTable.id} title={activeTable.title} onChange={(event) => setActiveId(event.target.value)}>
+              {stateTables.map((table) => <option key={table.id} value={table.id}>{compactTableTitle(table.title)}</option>)}
             </select>
           </div>
           <StateEnergyChart table={activeTable} />
@@ -2827,6 +3010,656 @@ function CasscfPopulationPassPanel({ casscf }: { casscf: Record<string, unknown>
   );
 }
 
+function EprWorkspace({
+  properties,
+  visibleKeys,
+  tables
+}: {
+  properties: PropertiesResponse | null;
+  visibleKeys: string[];
+  tables: TableDataset[];
+}) {
+  const epr = getEprObject(properties);
+  const casscf = getCasscfObject(properties);
+  const relativistic = getRecord(casscf?.relativistic);
+  const qdptBlocks = getArray(relativistic.qdpt_blocks).filter(isPlainObject);
+  const gMatrices = qdptBlocks.flatMap((block) => getArray(block.g_matrices).filter(isPlainObject));
+  const dTensors = qdptBlocks.flatMap((block) => getArray(block.d_tensors).filter(isPlainObject));
+  const eprTables = tables.filter((table) => keyMatchesView(table.propertyKey, "epr"));
+
+  if (!epr && !gMatrices.length && !dTensors.length) {
+    return (
+      <DomainEmpty
+        title="No EPR tensor payload was detected"
+        body="The Workbench could not find g-tensors, ZFS tensors, hyperfine, EFG, or QDPT EPR data in the selected properties."
+        fallback={properties ? <DomainWorkspace view="epr" properties={properties} visibleKeys={visibleKeys} focusedProperty="" onFocusProperty={() => undefined} tables={tables} /> : null}
+      />
+    );
+  }
+
+  const zfs = getRecord(epr?.zero_field_splitting);
+  const gTensor = getRecord(epr?.g_tensor);
+  const firstG = getRecord(gMatrices[0]);
+  const firstGFactors = getRecord(firstG.g_factors);
+  const firstD = dTensors[0] ? getRecord(dTensors[0]) : {};
+  const fallbackGValues = eprPrincipalGValues(gTensor);
+  const gx = firstNumber(firstGFactors.x, fallbackGValues[0]);
+  const gy = firstNumber(firstGFactors.y, fallbackGValues[1]);
+  const gz = firstNumber(firstGFactors.z, fallbackGValues[2]);
+  const gIso = firstNumber(firstGFactors.iso, gIsoFromValues([gx, gy, gz]));
+  const gSpread = gSpreadFromValues([gx, gy, gz]);
+  const dValue = firstNumber(firstD["D_cm-1"], firstD.D_cm_1, zfs["D_cm-1"], zfs.D_cm_1);
+  const eOverD = firstNumber(firstD.E_over_D, zfs.E_over_D);
+  const hyperfine = getRecord(epr?.hyperfine);
+  const hyperfineNuclei = getArray(hyperfine.nuclei).filter(isPlainObject);
+
+  return (
+    <div className="domain-visual-workspace epr-workspace">
+      <section className="epr-hero-panel">
+        <div className="panel-headline">
+          <div>
+            <p className="eyebrow">EPR tensor workspace</p>
+            <h3>g matrix, zero-field splitting, orientation, and QDPT context</h3>
+          </div>
+          <span className="density-badge">{qdptBlocks.length ? `${qdptBlocks.length} QDPT block(s)` : "EPR section"}</span>
+        </div>
+        <div className="epr-metric-grid">
+          <article className="metric-card">
+            <span>g iso</span>
+            <strong>{formatNullableNumber(gIso, 7)}</strong>
+            <small>{gx !== null ? `gx ${formatNullableNumber(gx, 7)}` : "principal values not reported"}</small>
+          </article>
+          <article className="metric-card">
+            <span>g anisotropy</span>
+            <strong>{formatNullableNumber(gSpread, 7)}</strong>
+            <small>max(g) - min(g)</small>
+          </article>
+          <article className="metric-card">
+            <span>D</span>
+            <strong>{dValue !== null ? formatNumber(dValue, 6, " cm-1") : "N/A"}</strong>
+            <small>zero-field splitting</small>
+          </article>
+          <article className="metric-card">
+            <span>E/D</span>
+            <strong>{formatNullableNumber(eOverD, 6)}</strong>
+            <small>rhombicity ratio</small>
+          </article>
+          <article className="metric-card">
+            <span>Hyperfine nuclei</span>
+            <strong>{hyperfineNuclei.length || shortValue(hyperfine.nucleus_count)}</strong>
+            <small>{hyperfineNuclei.length ? "nucleus tensors parsed" : "not detected"}</small>
+          </article>
+        </div>
+      </section>
+      <EprTensorPanel title="Principal g factors" entries={[
+        ["gx", gx],
+        ["gy", gy],
+        ["gz", gz],
+        ["giso", gIso]
+      ]} />
+      <EprOrientationPanel orientation={getRecord(gTensor.orientation)} />
+      <EprGMatrixPanel gMatrices={gMatrices} />
+      <EprZfsPanel dTensors={dTensors.length ? dTensors : [zfs]} />
+      <EprHyperfinePanel nuclei={hyperfineNuclei} />
+      {eprTables[0] && <TablePreview table={eprTables[0]} maxRows={10} />}
+    </div>
+  );
+}
+
+function EprTensorPanel({ title, entries }: { title: string; entries: Array<[string, number | null]> }) {
+  const usable = entries.filter(([, value]) => value !== null);
+  if (!usable.length) {
+    return null;
+  }
+  const maxAbs = Math.max(...usable.map(([, value]) => Math.abs(value ?? 0)), 1);
+  return (
+    <section className="epr-panel">
+      <div className="panel-headline compact">
+        <div>
+          <p className="eyebrow">Tensor summary</p>
+          <h3>{title}</h3>
+        </div>
+      </div>
+      <div className="epr-factor-list">
+        {usable.map(([label, value]) => (
+          <div className="epr-factor-row" key={label}>
+            <span>{label}</span>
+            <i style={{ width: `${Math.max(4, (Math.abs(value ?? 0) / maxAbs) * 100)}%` }} />
+            <strong>{formatNullableNumber(value, 7)}</strong>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function EprOrientationPanel({ orientation }: { orientation: Record<string, unknown> }) {
+  const rows = ["X", "Y", "Z"]
+    .map((axis) => ({ axis, values: getArray(orientation[axis]).map(toNumber) }))
+    .filter((row) => row.values.some((value) => value !== null));
+  if (!rows.length) {
+    return null;
+  }
+  return (
+    <section className="epr-panel epr-orientation-panel">
+      <div className="panel-headline compact">
+        <div>
+          <p className="eyebrow">Orientation</p>
+          <h3>Principal-axis direction cosines</h3>
+        </div>
+      </div>
+      <div className="epr-matrix">
+        <span />
+        <strong>x</strong>
+        <strong>y</strong>
+        <strong>z</strong>
+        {rows.map((row) => (
+          <Fragment key={row.axis}>
+            <strong>{row.axis}</strong>
+            {[0, 1, 2].map((index) => <span key={`${row.axis}-${index}`}>{formatNullableNumber(row.values[index], 7)}</span>)}
+          </Fragment>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function EprGMatrixPanel({ gMatrices }: { gMatrices: Record<string, unknown>[] }) {
+  if (!gMatrices.length) {
+    return null;
+  }
+  return (
+    <section className="epr-panel">
+      <div className="panel-headline compact">
+        <div>
+          <p className="eyebrow">QDPT g matrices</p>
+          <h3>{gMatrices.length} parsed g-matrix contribution(s)</h3>
+        </div>
+      </div>
+      <div className="epr-card-grid">
+        {gMatrices.slice(0, 6).map((matrix, index) => {
+          const factors = getRecord(matrix.g_factors);
+          const shifts = getRecord(matrix.g_shifts);
+          return (
+            <article className="epr-card" key={`${index}-${shortValue(matrix.title)}`}>
+              <strong>{shortValue(matrix.title)}</strong>
+              <span>iso {formatNullableNumber(toNumber(factors.iso), 7)}</span>
+              <small>
+                x {formatNullableNumber(toNumber(factors.x), 7)} | y {formatNullableNumber(toNumber(factors.y), 7)} | z {formatNullableNumber(toNumber(factors.z), 7)}
+              </small>
+              {toNumber(shifts.iso) !== null && <em>shift iso {formatNullableNumber(toNumber(shifts.iso), 7)}</em>}
+            </article>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function EprZfsPanel({ dTensors }: { dTensors: Record<string, unknown>[] }) {
+  const rows = dTensors.filter((tensor) => Object.keys(tensor).length);
+  if (!rows.length) {
+    return null;
+  }
+  return (
+    <section className="epr-panel">
+      <div className="panel-headline compact">
+        <div>
+          <p className="eyebrow">Zero-field splitting</p>
+          <h3>D tensor contributions</h3>
+        </div>
+      </div>
+      <div className="epr-card-grid">
+        {rows.slice(0, 8).map((tensor, index) => (
+          <article className="epr-card" key={`${index}-${shortValue(tensor.title)}`}>
+            <strong>{shortValue(tensor.title ?? `ZFS contribution ${index + 1}`)}</strong>
+            <span>D {formatNullableNumber(firstNumber(tensor["D_cm-1"], tensor.D_cm_1), 6)} cm-1</span>
+            <small>E/D {formatNullableNumber(toNumber(tensor.E_over_D), 6)}</small>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function EprHyperfinePanel({ nuclei }: { nuclei: Record<string, unknown>[] }) {
+  if (!nuclei.length) {
+    return null;
+  }
+  return (
+    <section className="epr-panel">
+      <div className="panel-headline compact">
+        <div>
+          <p className="eyebrow">Hyperfine / EFG</p>
+          <h3>Largest parsed nuclei</h3>
+        </div>
+      </div>
+      <div className="epr-card-grid">
+        {nuclei.slice(0, 10).map((nucleus, index) => (
+          <article className="epr-card" key={`${index}-${shortValue(nucleus.atom_index)}`}>
+            <strong>{shortValue(nucleus.element)} {shortValue(nucleus.atom_index)}</strong>
+            <span>{shortValue(nucleus.isotope ? `isotope ${nucleus.isotope}` : nucleus.nucleus)}</span>
+            <small>{previewValue(nucleus)}</small>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function ConformerWorkspace({
+  properties,
+  visibleKeys,
+  tables
+}: {
+  properties: PropertiesResponse | null;
+  visibleKeys: string[];
+  tables: TableDataset[];
+}) {
+  const goat = getGoatObject(properties);
+  const conformerTables = tables.filter((table) => keyMatchesView(table.propertyKey, "conformers"));
+  if (!goat) {
+    return (
+      <DomainEmpty
+        title="No GOAT conformer payload was detected"
+        body="The Workbench could not find a GOAT ensemble, conformer energies, populations, or thermochemistry summary."
+        fallback={properties ? <DomainWorkspace view="conformers" properties={properties} visibleKeys={visibleKeys} focusedProperty="" onFocusProperty={() => undefined} tables={tables} /> : null}
+      />
+    );
+  }
+  const ensemble = getArray(goat.ensemble).filter(isPlainObject);
+  return (
+    <div className="domain-visual-workspace conformer-workspace">
+      <section className="goat-hero-panel">
+        <div className="panel-headline">
+          <div>
+            <p className="eyebrow">GOAT conformer ensemble</p>
+            <h3>Energy window, populations, and conformational thermochemistry</h3>
+          </div>
+          <span className={goat.global_minimum_found === true ? "density-badge good" : "density-badge"}>
+            {goat.global_minimum_found === true ? "global minimum found" : "ensemble parsed"}
+          </span>
+        </div>
+        <div className="density-metric-grid">
+          <article className="metric-card">
+            <span>Conformers</span>
+            <strong>{shortValue(goat.n_conformers ?? ensemble.length)}</strong>
+            <small>{shortValue(goat.conformers_below_energy_window)} below window</small>
+          </article>
+          <article className="metric-card">
+            <span>Energy window</span>
+            <strong>{formatNumber(goat.conformer_energy_window_kcal_mol, 2, " kcal/mol")}</strong>
+            <small>max parsed {formatNumber(goat.max_relative_energy_kcal_mol, 3, " kcal/mol")}</small>
+          </article>
+          <article className="metric-card">
+            <span>Top population</span>
+            <strong>{formatNumber(goat.top_population_percent, 2, "%")}</strong>
+            <small>conformer {shortValue(goat.global_minimum_conformer)}</small>
+          </article>
+          <article className="metric-card">
+            <span>Sconf</span>
+            <strong>{formatNumber(goat.sconf_cal_molK, 2, " cal/mol K")}</strong>
+            <small>Gconf {formatNumber(goat.gconf_kcal_mol, 2, " kcal/mol")}</small>
+          </article>
+          <article className="metric-card">
+            <span>Sidecar XYZ</span>
+            <strong>{shortValue(goat.final_ensemble_xyz_file)}</strong>
+            <small>minimum {shortValue(goat.global_minimum_xyz_file)}</small>
+          </article>
+        </div>
+      </section>
+      <ConformerDistributionChart ensemble={ensemble} />
+      {conformerTables[0] && <TablePreview table={conformerTables[0]} maxRows={12} />}
+    </div>
+  );
+}
+
+function ConformerDistributionChart({ ensemble }: { ensemble: Record<string, unknown>[] }) {
+  const points = ensemble
+    .map((row) => ({
+      conformer: toNumber(row.conformer),
+      energy: toNumber(row.relative_energy_kcal_mol),
+      percent: toNumber(row.percent_total),
+      cumulative: toNumber(row.percent_cumulative)
+    }))
+    .filter((row): row is { conformer: number; energy: number; percent: number; cumulative: number | null } =>
+      row.conformer !== null && row.energy !== null && row.percent !== null
+    );
+  if (!points.length) {
+    return <div className="empty-state small">No conformer population rows were parsed.</div>;
+  }
+  const visible = points.slice(0, 240);
+  const width = 1040;
+  const height = 360;
+  const pad = { left: 68, right: 42, top: 30, bottom: 54 };
+  const xMax = Math.max(...visible.map((point) => point.energy), 1);
+  const yMax = Math.max(...visible.map((point) => point.percent), 1);
+  const xScale = (value: number) => pad.left + (value / xMax) * (width - pad.left - pad.right);
+  const yScale = (value: number) => height - pad.bottom - (value / yMax) * (height - pad.top - pad.bottom);
+  return (
+    <section className="primary-chart goat-chart">
+      <div className="panel-headline compact">
+        <div>
+          <p className="eyebrow">Population distribution</p>
+          <h3>{visible.length} lowest conformer(s) shown</h3>
+        </div>
+        <span className="quiet-text">x = relative energy; bar height = percent population</span>
+      </div>
+      <svg viewBox={`0 0 ${width} ${height}`} className="goat-svg" role="img" aria-label="GOAT conformer population distribution">
+        <rect className="chart-bg" width={width} height={height} />
+        {[0, 0.25, 0.5, 0.75, 1].map((fraction) => {
+          const y = pad.top + fraction * (height - pad.top - pad.bottom);
+          return <line className="grid-line" key={fraction} x1={pad.left} x2={width - pad.right} y1={y} y2={y} />;
+        })}
+        <line className="axis-line" x1={pad.left} x2={width - pad.right} y1={height - pad.bottom} y2={height - pad.bottom} />
+        <line className="axis-line" x1={pad.left} x2={pad.left} y1={pad.top} y2={height - pad.bottom} />
+        {visible.map((point) => (
+          <line
+            className="goat-population-stick"
+            key={point.conformer}
+            x1={xScale(point.energy)}
+            x2={xScale(point.energy)}
+            y1={height - pad.bottom}
+            y2={yScale(point.percent)}
+          />
+        ))}
+        <text className="axis-title" x={width / 2} y={height - 16} textAnchor="middle">Relative energy (kcal/mol)</text>
+        <text className="axis-title" x={18} y={24}>Population %</text>
+      </svg>
+      <div className="plot-readout">
+        Showing {visible.length} of {points.length} conformer(s); highest visible population is {formatNumber(yMax, 2, "%")}.
+      </div>
+    </section>
+  );
+}
+
+function SurfaceScanWorkspace({
+  properties,
+  visibleKeys,
+  tables
+}: {
+  properties: PropertiesResponse | null;
+  visibleKeys: string[];
+  tables: TableDataset[];
+}) {
+  const scan = getSurfaceScanObject(properties);
+  const scanTables = tables.filter((table) => keyMatchesView(table.propertyKey, "scan"));
+  if (!scan) {
+    return (
+      <DomainEmpty
+        title="No surface-scan payload was detected"
+        body="The Workbench could not find scan parameters, constrained optimization steps, or surface sidecar files."
+        fallback={properties ? <DomainWorkspace view="scan" properties={properties} visibleKeys={visibleKeys} focusedProperty="" onFocusProperty={() => undefined} tables={tables} /> : null}
+      />
+    );
+  }
+  const parameters = getArray(scan.parameters).filter(isPlainObject);
+  const steps = getArray(scan.steps).filter(isPlainObject);
+  const sidecars = getRecord(scan.sidecar_files);
+  return (
+    <div className="domain-visual-workspace scan-workspace">
+      <section className="scan-hero-panel">
+        <div className="panel-headline">
+          <div>
+            <p className="eyebrow">Surface scan</p>
+            <h3>Coordinate scan profile and generated trajectory files</h3>
+          </div>
+          <span className="density-badge">{shortValue(scan.mode)} scan</span>
+        </div>
+        <div className="density-metric-grid">
+          <article className="metric-card">
+            <span>Parameters</span>
+            <strong>{shortValue(scan.n_parameters ?? parameters.length)}</strong>
+            <small>{parameters.map((row) => shortValue(row.label)).filter(Boolean).join(", ") || "labels not parsed"}</small>
+          </article>
+          <article className="metric-card">
+            <span>Steps</span>
+            <strong>{shortValue(scan.n_constrained_optimizations ?? steps.length)}</strong>
+            <small>{shortValue(scan.simultaneous_scan ?? "single coordinate")}</small>
+          </article>
+          <article className="metric-card">
+            <span>Energy span</span>
+            <strong>{formatNumber(scan.actual_energy_span_kcal_mol, 4, " kcal/mol")}</strong>
+            <small>actual surface</small>
+          </article>
+          <article className="metric-card">
+            <span>SCF span</span>
+            <strong>{formatNumber(scan.scf_energy_span_kcal_mol, 4, " kcal/mol")}</strong>
+            <small>SCF sidecar surface</small>
+          </article>
+        </div>
+      </section>
+      <SurfaceScanChart steps={steps} />
+      <section className="density-sidecar-panel">
+        <div className="panel-headline compact">
+          <div>
+            <p className="eyebrow">Scan sidecars</p>
+            <h3>Surface and trajectory files</h3>
+          </div>
+        </div>
+        <div className="density-sidecar-grid">
+          {Object.entries(sidecars).slice(0, 8).map(([key, value]) => (
+            <article className="density-sidecar-card" key={key}>
+              <strong>{formatPropertyTitle(key)}</strong>
+              <code>{shortValue(value)}</code>
+            </article>
+          ))}
+        </div>
+      </section>
+      {scanTables[0] && <TablePreview table={scanTables[0]} maxRows={12} />}
+    </div>
+  );
+}
+
+function SurfaceScanChart({ steps }: { steps: Record<string, unknown>[] }) {
+  const points = steps
+    .map((step, index) => {
+      const coords = getArray(step.coordinate_values).map(toNumber).filter((value): value is number => value !== null);
+      return {
+        step: toNumber(step.step) ?? index + 1,
+        coord: coords[0] ?? index + 1,
+        energy: firstNumber(step.relative_actual_energy_kcal_mol, step.relative_scf_energy_kcal_mol)
+      };
+    })
+    .filter((point): point is { step: number; coord: number; energy: number } => point.energy !== null);
+  if (points.length < 2) {
+    return <div className="empty-state small">No ordered scan points were parsed.</div>;
+  }
+  const width = 1040;
+  const height = 360;
+  const pad = { left: 68, right: 42, top: 30, bottom: 54 };
+  const xMin = Math.min(...points.map((point) => point.coord));
+  const xMax = Math.max(...points.map((point) => point.coord));
+  const yMin = Math.min(...points.map((point) => point.energy), 0);
+  const yMax = Math.max(...points.map((point) => point.energy), 1);
+  const xSpan = xMax - xMin || 1;
+  const ySpan = yMax - yMin || 1;
+  const xScale = (value: number) => pad.left + ((value - xMin) / xSpan) * (width - pad.left - pad.right);
+  const yScale = (value: number) => height - pad.bottom - ((value - yMin) / ySpan) * (height - pad.top - pad.bottom);
+  const pathPoints = points.map((point) => `${xScale(point.coord)},${yScale(point.energy)}`).join(" ");
+  return (
+    <section className="primary-chart scan-chart">
+      <div className="panel-headline compact">
+        <div>
+          <p className="eyebrow">Relaxed scan profile</p>
+          <h3>Relative energy along scanned coordinate</h3>
+        </div>
+      </div>
+      <svg viewBox={`0 0 ${width} ${height}`} className="scan-svg" role="img" aria-label="Surface scan energy profile">
+        <rect className="chart-bg" width={width} height={height} />
+        {[0, 0.25, 0.5, 0.75, 1].map((fraction) => {
+          const y = pad.top + fraction * (height - pad.top - pad.bottom);
+          return <line className="grid-line" key={fraction} x1={pad.left} x2={width - pad.right} y1={y} y2={y} />;
+        })}
+        <polyline className="scan-profile-line" points={pathPoints} />
+        {points.map((point) => <circle key={point.step} className="scan-point" cx={xScale(point.coord)} cy={yScale(point.energy)} r={4.2} />)}
+        <text className="axis-title" x={width / 2} y={height - 16} textAnchor="middle">Scanned coordinate</text>
+        <text className="axis-title" x={18} y={24}>Relative energy (kcal/mol)</text>
+      </svg>
+      <div className="plot-readout">
+        {points.length} scan point(s), {formatNumber(yMax - yMin, 4, " kcal/mol")} relative-energy span.
+      </div>
+    </section>
+  );
+}
+
+function CoupledClusterWorkspace({
+  properties,
+  visibleKeys,
+  tables
+}: {
+  properties: PropertiesResponse | null;
+  visibleKeys: string[];
+  tables: TableDataset[];
+}) {
+  const coupled = getCoupledObject(properties);
+  const ccTables = tables.filter((table) => keyMatchesView(table.propertyKey, "coupled"));
+  if (!coupled) {
+    return (
+      <DomainEmpty
+        title="No coupled-cluster payload was detected"
+        body="The Workbench could not find CC iterations, energies, diagnostics, amplitudes, F12, triples, or natural occupations."
+        fallback={properties ? <DomainWorkspace view="coupled" properties={properties} visibleKeys={visibleKeys} focusedProperty="" onFocusProperty={() => undefined} tables={tables} /> : null}
+      />
+    );
+  }
+  const summary = getRecord(coupled.summary);
+  const wavefunction = getRecord(coupled.wavefunction);
+  const iterations = getArray(getRecord(coupled.iterations).rows).filter(isPlainObject);
+  const triples = getRecord(coupled.triples_correction);
+  const f12 = getRecord(coupled.f12_correction);
+  const amplitudes = getArray(coupled.largest_amplitudes).filter(isPlainObject);
+  return (
+    <div className="domain-visual-workspace coupled-workspace">
+      <section className="cc-hero-panel">
+        <div className="panel-headline">
+          <div>
+            <p className="eyebrow">Coupled cluster</p>
+            <h3>Iterations, diagnostics, corrections, and amplitudes</h3>
+          </div>
+          <span className={summary.cc_converged === true ? "density-badge good" : "density-badge"}>
+            {summary.cc_converged === true ? "CC converged" : "CC parsed"}
+          </span>
+        </div>
+        <div className="density-metric-grid">
+          <article className="metric-card">
+            <span>Treatment</span>
+            <strong>{shortValue(summary.correlation_treatment ?? wavefunction.correlation_treatment)}</strong>
+            <small>{shortValue(wavefunction.reference_wavefunction)}</small>
+          </article>
+          <article className="metric-card">
+            <span>Final energy</span>
+            <strong>{formatNumber(summary.total_energy_after_f12_Eh ?? summary.total_energy_Eh, 8, " Eh")}</strong>
+            <small>{summary.has_f12_correction ? "F12-corrected" : "reported total"}</small>
+          </article>
+          <article className="metric-card">
+            <span>T1 diagnostic</span>
+            <strong>{formatNullableNumber(summary.t1_diagnostic, 6)}</strong>
+            <small>singles norm {formatNullableNumber(summary.singles_norm, 6)}</small>
+          </article>
+          <article className="metric-card">
+            <span>Iterations</span>
+            <strong>{shortValue(summary.cc_iterations ?? iterations.length)}</strong>
+            <small>{summary.cc_converged === true ? "converged" : "status unknown"}</small>
+          </article>
+          <article className="metric-card">
+            <span>Triples / F12</span>
+            <strong>{formatNullableNumber(firstNumber(summary.triples_correction_Eh, triples.triples_correction_Eh), 8)}</strong>
+            <small>F12 sum {formatNullableNumber(f12.sum_correction_Eh, 8)} Eh</small>
+          </article>
+        </div>
+      </section>
+      <CoupledIterationChart iterations={iterations} />
+      <CoupledAmplitudePanel amplitudes={amplitudes} />
+      {ccTables[0] && <TablePreview table={ccTables[0]} maxRows={12} />}
+    </div>
+  );
+}
+
+function CoupledIterationChart({ iterations }: { iterations: Record<string, unknown>[] }) {
+  const points = iterations
+    .map((row, index) => ({
+      iteration: toNumber(row.iteration) ?? index,
+      energy: toNumber(row.total_energy_Eh),
+      residual: toNumber(row.residual)
+    }))
+    .filter((point): point is { iteration: number; energy: number; residual: number | null } => point.energy !== null);
+  if (points.length < 2) {
+    return null;
+  }
+  const finalEnergy = points[points.length - 1].energy;
+  const rel = points.map((point) => ({ ...point, relMilliEh: (point.energy - finalEnergy) * 1000 }));
+  const width = 1040;
+  const height = 360;
+  const pad = { left: 68, right: 42, top: 30, bottom: 54 };
+  const xMin = Math.min(...rel.map((point) => point.iteration));
+  const xMax = Math.max(...rel.map((point) => point.iteration));
+  const yMin = Math.min(...rel.map((point) => point.relMilliEh));
+  const yMax = Math.max(...rel.map((point) => point.relMilliEh), 1);
+  const xSpan = xMax - xMin || 1;
+  const ySpan = yMax - yMin || 1;
+  const xScale = (value: number) => pad.left + ((value - xMin) / xSpan) * (width - pad.left - pad.right);
+  const yScale = (value: number) => height - pad.bottom - ((value - yMin) / ySpan) * (height - pad.top - pad.bottom);
+  const linePoints = rel.map((point) => `${xScale(point.iteration)},${yScale(point.relMilliEh)}`).join(" ");
+  return (
+    <section className="primary-chart cc-chart">
+      <div className="panel-headline compact">
+        <div>
+          <p className="eyebrow">CC convergence</p>
+          <h3>Relative total energy by iteration</h3>
+        </div>
+      </div>
+      <svg viewBox={`0 0 ${width} ${height}`} className="cc-svg" role="img" aria-label="Coupled-cluster convergence profile">
+        <rect className="chart-bg" width={width} height={height} />
+        {[0, 0.25, 0.5, 0.75, 1].map((fraction) => {
+          const y = pad.top + fraction * (height - pad.top - pad.bottom);
+          return <line className="grid-line" key={fraction} x1={pad.left} x2={width - pad.right} y1={y} y2={y} />;
+        })}
+        <polyline className="cc-profile-line" points={linePoints} />
+        {rel.map((point) => <circle key={point.iteration} className="cc-point" cx={xScale(point.iteration)} cy={yScale(point.relMilliEh)} r={4} />)}
+        <text className="axis-title" x={width / 2} y={height - 16} textAnchor="middle">Iteration</text>
+        <text className="axis-title" x={18} y={24}>Relative energy (mEh)</text>
+      </svg>
+      <div className="plot-readout">
+        Final iteration {shortValue(rel[rel.length - 1].iteration)}; final residual {formatNullableNumber(rel[rel.length - 1].residual, 8)}.
+      </div>
+    </section>
+  );
+}
+
+function CoupledAmplitudePanel({ amplitudes }: { amplitudes: Record<string, unknown>[] }) {
+  const rows = amplitudes
+    .map((row, index) => ({
+      label: getArray(row.tokens).map(String).join(" ") || `Amplitude ${index + 1}`,
+      amplitude: toNumber(row.amplitude)
+    }))
+    .filter((row): row is { label: string; amplitude: number } => row.amplitude !== null)
+    .slice(0, 12);
+  if (!rows.length) {
+    return null;
+  }
+  const maxAbs = Math.max(...rows.map((row) => Math.abs(row.amplitude)), 1);
+  return (
+    <section className="epr-panel cc-amplitude-panel">
+      <div className="panel-headline compact">
+        <div>
+          <p className="eyebrow">Largest amplitudes</p>
+          <h3>Dominant excitation amplitudes</h3>
+        </div>
+      </div>
+      <div className="epr-factor-list">
+        {rows.map((row) => (
+          <div className="epr-factor-row cc-amplitude-row" key={row.label}>
+            <span>{row.label}</span>
+            <i style={{ width: `${Math.max(4, (Math.abs(row.amplitude) / maxAbs) * 100)}%` }} />
+            <strong>{formatNullableNumber(row.amplitude, 6)}</strong>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 type CasscfActiveOrbital = {
   index: number;
   energyEh: number | null;
@@ -3071,6 +3904,31 @@ function getCasscfObject(properties: PropertiesResponse | null) {
   return isPlainObject(casscf) ? casscf : null;
 }
 
+function getDensityObject(properties: PropertiesResponse | null) {
+  const density = properties?.properties.density_analysis;
+  return isPlainObject(density) ? density : null;
+}
+
+function getEprObject(properties: PropertiesResponse | null) {
+  const epr = properties?.properties.epr;
+  return isPlainObject(epr) ? epr : null;
+}
+
+function getGoatObject(properties: PropertiesResponse | null) {
+  const goat = properties?.properties.goat;
+  return isPlainObject(goat) ? goat : null;
+}
+
+function getSurfaceScanObject(properties: PropertiesResponse | null) {
+  const scan = properties?.properties.surface_scan;
+  return isPlainObject(scan) ? scan : null;
+}
+
+function getCoupledObject(properties: PropertiesResponse | null) {
+  const coupled = properties?.properties.coupled_cluster;
+  return isPlainObject(coupled) ? coupled : null;
+}
+
 function getRecord(value: unknown): Record<string, unknown> {
   return isPlainObject(value) ? value : {};
 }
@@ -3087,6 +3945,72 @@ function firstNumber(...values: unknown[]): number | null {
     }
   }
   return null;
+}
+
+function buildDensityAnalysisRows(density: Record<string, unknown>) {
+  const direct = getArray(density.analyses).filter(isPlainObject);
+  if (direct.length) {
+    return direct;
+  }
+  const byStage = getRecord(density.by_stage);
+  const rows: Record<string, unknown>[] = [];
+  for (const [stage, nested] of Object.entries(byStage)) {
+    const densityMap = getRecord(nested);
+    for (const [densityKind, record] of Object.entries(densityMap)) {
+      if (isPlainObject(record)) {
+        rows.push({ stage, density_kind: densityKind, ...record });
+      }
+    }
+  }
+  return rows;
+}
+
+function densityDipoleLabel(dipole: Record<string, unknown>, index: number) {
+  const stage = shortValue(dipole.stage);
+  const method = shortValue(dipole.method);
+  const kind = shortValue(dipole.density_kind);
+  const parts = [stage !== "N/A" ? stage : "", method !== "N/A" ? method : "", kind !== "N/A" ? kind : ""].filter(Boolean);
+  return parts.length ? parts.join(" / ") : `Dipole ${index + 1}`;
+}
+
+function vectorObject(value: unknown) {
+  const record = getRecord(value);
+  return {
+    x: firstNumber(record.x, record.X, record.dx, record.DX),
+    y: firstNumber(record.y, record.Y, record.dy, record.DY),
+    z: firstNumber(record.z, record.Z, record.dz, record.DZ)
+  };
+}
+
+function summarizeStringList(primary: unknown[], fallback: unknown[]) {
+  const values = [...primary, ...fallback]
+    .map((value) => String(value ?? "").trim())
+    .filter(Boolean)
+    .filter((value) => value.toLowerCase() !== "undefined" && value.toLowerCase() !== "null");
+  return Array.from(new Set(values)).slice(0, 6).join(", ");
+}
+
+function eprPrincipalGValues(gTensor: Record<string, unknown>): Array<number | null> {
+  const breakdown = getRecord(gTensor.breakdown);
+  const total = getRecord(breakdown.Total ?? breakdown["Total"] ?? breakdown["Total-1c"] ?? breakdown["Total-2c"]);
+  const values = getArray(total.values).map(toNumber);
+  if (values.some((value) => value !== null)) {
+    return [values[0] ?? null, values[1] ?? null, values[2] ?? null];
+  }
+  const matrix = getRecord(gTensor.g_matrix);
+  const rows = getArray(matrix.matrix);
+  const diagonal = rows.map((row, index) => getArray(row)[index]).map(toNumber);
+  return [diagonal[0] ?? null, diagonal[1] ?? null, diagonal[2] ?? null];
+}
+
+function gIsoFromValues(values: Array<number | null>) {
+  const numeric = values.filter((value): value is number => value !== null);
+  return numeric.length ? numeric.reduce((sum, value) => sum + value, 0) / numeric.length : null;
+}
+
+function gSpreadFromValues(values: Array<number | null>) {
+  const numeric = values.filter((value): value is number => value !== null);
+  return numeric.length > 1 ? Math.max(...numeric) - Math.min(...numeric) : null;
 }
 
 function casscfOccupationImportance(occupation: number | null) {
@@ -3439,8 +4363,8 @@ function OptimizationWorkspace({
           <p className="eyebrow">Optimization trajectory</p>
           <h3>{activeTable.title}</h3>
         </div>
-        <select value={activeTable.id} onChange={(event) => setActiveId(event.target.value)}>
-          {seriesTables.map((table) => <option key={table.id} value={table.id}>{table.title}</option>)}
+        <select value={activeTable.id} title={activeTable.title} onChange={(event) => setActiveId(event.target.value)}>
+          {seriesTables.map((table) => <option key={table.id} value={table.id}>{compactTableTitle(table.title)}</option>)}
         </select>
       </div>
       <OptimizationTrajectory table={activeTable} />
@@ -4765,6 +5689,15 @@ function truncateText(text: string, maxLength: number) {
   return text.length > maxLength ? `${text.slice(0, Math.max(0, maxLength - 1))}...` : text;
 }
 
+function compactTableTitle(title: string) {
+  const pieces = title.split(" / ").map((piece) => piece.trim()).filter(Boolean);
+  if (pieces.length <= 2) {
+    return truncateText(title, 56);
+  }
+  const compact = pieces.slice(-2).join(" / ");
+  return truncateText(compact, 56);
+}
+
 function compactPathLabel(path: string) {
   const pieces = path.split(".");
   return formatPropertyTitle(pieces[pieces.length - 1] ?? path);
@@ -4981,6 +5914,29 @@ function formatNumber(value: unknown, digits: number, suffix: string) {
     return "";
   }
   return `${value}${suffix}`;
+}
+
+function formatNullableNumber(value: unknown, digits: number) {
+  const numeric = toNumber(value);
+  return numeric === null ? "N/A" : numeric.toFixed(digits);
+}
+
+function formatBytes(value: unknown) {
+  const bytes = toNumber(value);
+  if (bytes === null) {
+    return "size unknown";
+  }
+  if (bytes < 1024) {
+    return `${bytes.toFixed(0)} B`;
+  }
+  const units = ["KB", "MB", "GB"];
+  let scaled = bytes / 1024;
+  let unitIndex = 0;
+  while (scaled >= 1024 && unitIndex < units.length - 1) {
+    scaled /= 1024;
+    unitIndex += 1;
+  }
+  return `${scaled.toFixed(scaled >= 10 ? 1 : 2)} ${units[unitIndex]}`;
 }
 
 export default App;

@@ -88,10 +88,14 @@ async function main() {
       const analysis = document.querySelector(".spectrum-analysis-grid");
       const chart = document.querySelector(".spectrum-chart");
       const svg = document.querySelector(".spectrum-svg");
+      const workspace = document.querySelector(".plot-workspace");
+      const workbench = document.querySelector(".spectrum-workbench");
       return {
         controlOverflow: control ? control.scrollWidth - control.clientWidth : 999,
         toggleOverflow: toggle ? toggle.scrollWidth - toggle.clientWidth : 999,
         svgOverflow: svg ? svg.scrollWidth - svg.clientWidth : 999,
+        workspaceOverflow: workspace ? workspace.scrollWidth - workspace.clientWidth : 999,
+        workbenchOverflow: workbench ? workbench.scrollWidth - workbench.clientWidth : 999,
         analysisColumns: analysis ? getComputedStyle(analysis).gridTemplateColumns : "",
         chartHeight: chart?.getBoundingClientRect().height ?? 0,
         documentOverflow: document.documentElement.scrollWidth - window.innerWidth
@@ -105,6 +109,7 @@ async function main() {
     await page.locator(".domain-button").filter({ hasText: "Orbitals" }).click();
     await page.locator(".orbitals-workspace").waitFor({ state: "visible", timeout: 10000 });
     checks.orbitalCharts = await page.locator(".orbital-svg").count();
+    checks.orbitalEmptyStates = await page.locator(".orbitals-workspace .empty-state").count();
     checks.orbitalScalarBars = await page.locator(".scalar-bar-row").count();
     const windowInput = page.getByRole("spinbutton", { name: "Window" });
     checks.orbitalWindowDefault = await windowInput.inputValue();
@@ -113,30 +118,35 @@ async function main() {
     checks.orbitalWindowValue = await windowInput.inputValue();
     checks.orbitalMinimalReadout = await page.locator(".plot-readout").first().innerText();
     await windowInput.fill("30");
-    checks.orbitalDenseLabelMinGap = await page.locator(".orbital-svg").evaluate((svg) => {
-      const byX = new Map();
-      svg.querySelectorAll(".orbital-label-text").forEach((label) => {
-        const x = Math.round(Number(label.getAttribute("x") || "0"));
-        const y = Number(label.getAttribute("y") || "0");
-        const current = byX.get(x) || [];
-        current.push(y);
-        byX.set(x, current);
-      });
-      let minGap = Infinity;
-      for (const ys of byX.values()) {
-        ys.sort((a, b) => a - b);
-        for (let index = 1; index < ys.length; index += 1) {
-          minGap = Math.min(minGap, ys[index] - ys[index - 1]);
+    if (checks.orbitalCharts > 0) {
+      checks.orbitalDenseLabelMinGap = await page.locator(".orbital-svg").evaluate((svg) => {
+        const byX = new Map();
+        svg.querySelectorAll(".orbital-label-text").forEach((label) => {
+          const x = Math.round(Number(label.getAttribute("x") || "0"));
+          const y = Number(label.getAttribute("y") || "0");
+          const current = byX.get(x) || [];
+          current.push(y);
+          byX.set(x, current);
+        });
+        let minGap = Infinity;
+        for (const ys of byX.values()) {
+          ys.sort((a, b) => a - b);
+          for (let index = 1; index < ys.length; index += 1) {
+            minGap = Math.min(minGap, ys[index] - ys[index - 1]);
+          }
         }
-      }
-      return Number.isFinite(minGap) ? minGap : 999;
-    });
-    await page.getByRole("combobox", { name: "Units" }).selectOption("hartree");
-    checks.orbitalMetricCards = await page.locator(".metric-card").count();
+        return Number.isFinite(minGap) ? minGap : 999;
+      });
+      await page.getByRole("combobox", { name: "Units" }).selectOption("hartree");
+      const orbitalSvgDownload = page.waitForEvent("download");
+      await page.getByRole("button", { name: "Export SVG", exact: true }).click();
+      checks.orbitalSvgDownloadName = (await orbitalSvgDownload).suggestedFilename();
+    } else {
+      checks.orbitalDenseLabelMinGap = 999;
+      checks.orbitalSvgDownloadName = "";
+    }
+    checks.orbitalMetricCards = await page.locator(".orbitals-workspace .metric-card").count();
     checks.orbitalWindowReadout = await page.locator(".plot-readout").first().innerText();
-    const orbitalSvgDownload = page.waitForEvent("download");
-    await page.getByRole("button", { name: "Export SVG", exact: true }).click();
-    checks.orbitalSvgDownloadName = (await orbitalSvgDownload).suggestedFilename();
     await page.screenshot({ path: path.join(screenshotDir, "workbench-redesign-orbitals.png"), fullPage: false });
   }
 
@@ -157,16 +167,25 @@ async function main() {
 
   if (checks.domainTexts.some((text) => text.includes("Densities"))) {
     await page.locator(".domain-button").filter({ hasText: "Densities" }).click();
-    await page.locator(".domain-workspace").waitFor({ state: "visible", timeout: 10000 });
+    await page.locator(".density-workspace").waitFor({ state: "visible", timeout: 10000 });
     checks.densityPropertyCards = await page.locator(".property-card").count();
+    checks.densityAnalysisCards = await page.locator(".density-analysis-card").count();
+    checks.densityDipoleCards = await page.locator(".density-dipole-card").count();
+    checks.densityPassRows = await page.locator(".density-pass-row").count();
+    checks.densitySidecarCards = await page.locator(".density-sidecar-card").count();
     await page.screenshot({ path: path.join(screenshotDir, "workbench-redesign-densities.png"), fullPage: false });
   }
 
   if (checks.domainTexts.some((text) => text.includes("Excited states"))) {
     await page.locator(".domain-button").filter({ hasText: "Excited states" }).click();
-    await page.locator(".state-svg").waitFor({ state: "visible", timeout: 10000 });
+    await page.waitForFunction(
+      () => document.querySelector(".state-svg") || document.querySelector(".domain-empty"),
+      null,
+      { timeout: 10000 }
+    );
     checks.stateCharts = await page.locator(".state-svg").count();
     checks.stateDots = await page.locator(".state-dot").count();
+    checks.stateFallbacks = await page.locator(".domain-empty").count();
     await page.screenshot({ path: path.join(screenshotDir, "workbench-redesign-excited.png"), fullPage: false });
   }
 
@@ -190,6 +209,43 @@ async function main() {
     await page.screenshot({ path: path.join(screenshotDir, "workbench-casscf-active-space.png"), fullPage: false });
     await page.locator(".casscf-nevpt2-panel").scrollIntoViewIfNeeded().catch(() => undefined);
     await page.screenshot({ path: path.join(screenshotDir, "workbench-casscf-nevpt2-panel.png"), fullPage: false });
+  }
+
+  if (checks.domainTexts.some((text) => text.includes("EPR"))) {
+    await page.locator(".domain-button").filter({ hasText: "EPR" }).click();
+    await page.locator(".epr-workspace").waitFor({ state: "visible", timeout: 10000 });
+    checks.eprMetricCards = await page.locator(".epr-metric-grid .metric-card").count();
+    checks.eprPanels = await page.locator(".epr-panel").count();
+    checks.eprMatrixCells = await page.locator(".epr-matrix span, .epr-matrix strong").count();
+    checks.eprCards = await page.locator(".epr-card").count();
+    await page.screenshot({ path: path.join(screenshotDir, "workbench-redesign-epr.png"), fullPage: false });
+  }
+
+  if (checks.domainTexts.some((text) => text.includes("Conformers"))) {
+    await page.locator(".domain-button").filter({ hasText: "Conformers" }).click();
+    await page.locator(".conformer-workspace").waitFor({ state: "visible", timeout: 10000 });
+    checks.conformerMetricCards = await page.locator(".conformer-workspace .metric-card").count();
+    checks.conformerCharts = await page.locator(".goat-svg").count();
+    checks.conformerRows = await page.locator(".mini-table tbody tr").count();
+    await page.screenshot({ path: path.join(screenshotDir, "workbench-redesign-conformers.png"), fullPage: false });
+  }
+
+  if (checks.domainTexts.some((text) => text.includes("Surface scans"))) {
+    await page.locator(".domain-button").filter({ hasText: "Surface scans" }).click();
+    await page.locator(".scan-workspace").waitFor({ state: "visible", timeout: 10000 });
+    checks.scanMetricCards = await page.locator(".scan-workspace .metric-card").count();
+    checks.scanCharts = await page.locator(".scan-svg").count();
+    checks.scanSidecars = await page.locator(".scan-workspace .density-sidecar-card").count();
+    await page.screenshot({ path: path.join(screenshotDir, "workbench-redesign-scan.png"), fullPage: false });
+  }
+
+  if (checks.domainTexts.some((text) => text.includes("Coupled cluster"))) {
+    await page.locator(".domain-button").filter({ hasText: "Coupled cluster" }).click();
+    await page.locator(".coupled-workspace").waitFor({ state: "visible", timeout: 10000 });
+    checks.ccMetricCards = await page.locator(".coupled-workspace .metric-card").count();
+    checks.ccCharts = await page.locator(".cc-svg").count();
+    checks.ccAmplitudeRows = await page.locator(".cc-amplitude-row").count();
+    await page.screenshot({ path: path.join(screenshotDir, "workbench-redesign-coupled.png"), fullPage: false });
   }
 
   await page.locator(".domain-button").filter({ hasText: "Tables" }).click();
@@ -280,6 +336,13 @@ async function main() {
     process.exit(55);
   }
   if (
+    checks.isCasscfSample &&
+    checks.eprMetricCards !== undefined &&
+    (checks.eprMetricCards < 4 || checks.eprPanels < 2 || checks.eprMatrixCells < 8)
+  ) {
+    process.exit(56);
+  }
+  if (
     checks.hasSpectraPanel &&
     (
       checks.spectrumCharts < 1 ||
@@ -293,6 +356,8 @@ async function main() {
       checks.spectrumResponsive.controlOverflow > 2 ||
       checks.spectrumResponsive.toggleOverflow > 2 ||
       checks.spectrumResponsive.svgOverflow > 2 ||
+      checks.spectrumResponsive.workspaceOverflow > 2 ||
+      checks.spectrumResponsive.workbenchOverflow > 2 ||
       checks.spectrumResponsive.chartHeight < 520
     )
   ) {
@@ -304,11 +369,27 @@ async function main() {
       checks.orbitalWindowDefault !== "7" ||
       checks.orbitalWindowMin !== "1" ||
       checks.orbitalWindowValue !== "1" ||
+      !checks.orbitalWindowReadout.includes("frontier orbital")
+    )
+  ) {
+    process.exit(60);
+  }
+  if (
+    checks.orbitalCharts > 0 &&
+    (
       !checks.orbitalMinimalReadout.includes("Showing 2 frontier orbital") ||
       checks.orbitalDenseLabelMinGap < 18 ||
-      !checks.orbitalWindowReadout.includes("frontier orbital") ||
       checks.orbitalMetricCards < 5 ||
       checks.orbitalSvgDownloadName !== "orca-frontier-orbitals.svg"
+    )
+  ) {
+    process.exit(60);
+  }
+  if (
+    checks.orbitalCharts === 0 &&
+    (
+      checks.orbitalEmptyStates < 1 ||
+      !checks.orbitalWindowReadout.includes("Showing 0 frontier orbital")
     )
   ) {
     process.exit(60);
@@ -319,10 +400,25 @@ async function main() {
   if (checks.populationRows !== undefined && checks.populationRows < 3) {
     process.exit(62);
   }
-  if (checks.densityPropertyCards !== undefined && checks.densityPropertyCards < 1) {
+  if (
+    checks.densityAnalysisCards !== undefined &&
+    (checks.densityAnalysisCards < 4 || (checks.densityDipoleCards ?? 0) + (checks.densityPassRows ?? 0) + (checks.densitySidecarCards ?? 0) < 1)
+  ) {
     process.exit(64);
   }
-  if (checks.stateCharts !== undefined && (checks.stateCharts < 1 || checks.stateDots < 1)) {
+  if (checks.conformerMetricCards !== undefined && (checks.conformerMetricCards < 4 || checks.conformerCharts < 1)) {
+    process.exit(65);
+  }
+  if (checks.scanMetricCards !== undefined && (checks.scanMetricCards < 4 || checks.scanCharts < 1 || checks.scanSidecars < 1)) {
+    process.exit(66);
+  }
+  if (checks.ccMetricCards !== undefined && (checks.ccMetricCards < 4 || checks.ccCharts < 1 || checks.ccAmplitudeRows < 1)) {
+    process.exit(67);
+  }
+  if (checks.stateCharts !== undefined && checks.stateCharts < 1 && checks.stateFallbacks < 1) {
+    process.exit(63);
+  }
+  if (checks.stateCharts > 0 && checks.stateDots < 1) {
     process.exit(63);
   }
   if (checks.summaryFields < 4 || checks.tableDatasetCount < 1 || checks.richTableRows < 1 || checks.rawChars < 100 || checks.rawChars > 300000 || checks.rawPreviewNotes < 1) {
