@@ -788,6 +788,127 @@ textarea {
   gap: 10px;
 }
 
+.multireference-workspace,
+.casscf-active-space {
+  display: grid;
+  gap: 14px;
+}
+
+.casscf-active-space {
+  padding: 14px;
+  border: 1px solid #c7d9f0;
+  border-radius: 14px;
+  background: linear-gradient(180deg, #fbfdff 0%, #f4f8ff 100%);
+}
+
+.casscf-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.active-space-card {
+  border-color: #bfd4f4;
+  background: #ffffff;
+}
+
+.casscf-active-chart {
+  min-height: 0;
+}
+
+.casscf-active-svg {
+  width: 100%;
+  min-width: 760px;
+  min-height: 350px;
+  border: 1px solid #d7e3f4;
+  border-radius: 12px;
+  background: #fbfdff;
+}
+
+.active-orbital-band {
+  fill: #fff7ed;
+  stroke: #f59e0b;
+  stroke-width: 1;
+  stroke-dasharray: 5 5;
+}
+
+.casscf-active-level {
+  stroke: #64748b;
+  stroke-width: 3;
+  stroke-linecap: round;
+}
+
+.casscf-active-level.active {
+  stroke: var(--amber);
+  stroke-width: 6;
+}
+
+.casscf-occ-bar {
+  fill: #93c5fd;
+}
+
+.casscf-occ-bar.active {
+  fill: #f59e0b;
+}
+
+.casscf-active-list,
+.casscf-config-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.casscf-active-list {
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+}
+
+.casscf-active-row,
+.casscf-config-card {
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #ffffff;
+}
+
+.casscf-active-row {
+  display: grid;
+  grid-template-columns: auto auto auto;
+  gap: 4px 10px;
+  align-items: baseline;
+}
+
+.casscf-active-row small {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.casscf-active-row em {
+  color: #334155;
+  font-style: normal;
+}
+
+.casscf-config-grid {
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+}
+
+.casscf-config-card {
+  display: grid;
+  gap: 5px;
+}
+
+.casscf-config-card code {
+  color: #7c2d12;
+  font-size: 1.05rem;
+  font-weight: 900;
+}
+
+.casscf-config-card span {
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 900;
+}
+
 .metric-card {
   display: grid;
   gap: 5px;

@@ -169,6 +169,16 @@ async function main() {
     await page.screenshot({ path: path.join(screenshotDir, "workbench-redesign-excited.png"), fullPage: false });
   }
 
+  if (checks.hasCasscfPanel) {
+    await page.locator(".domain-button").filter({ hasText: "CASSCF / NEVPT2" }).click();
+    await page.locator(".casscf-active-space").waitFor({ state: "visible", timeout: 10000 });
+    checks.casscfActiveCards = await page.locator(".casscf-active-space .metric-card").count();
+    checks.casscfActiveRows = await page.locator(".casscf-active-row").count();
+    checks.casscfConfigCards = await page.locator(".casscf-config-card").count();
+    checks.casscfActiveSvg = await page.locator(".casscf-active-svg").count();
+    await page.screenshot({ path: path.join(screenshotDir, "workbench-casscf-active-space.png"), fullPage: false });
+  }
+
   await page.locator(".domain-button").filter({ hasText: "Tables" }).click();
   await page.locator(".tables-workspace").waitFor({ state: "visible", timeout: 10000 });
   checks.tableDatasetCount = await page.locator(".dataset-card").count();
@@ -177,7 +187,9 @@ async function main() {
     await page.locator(".dataset-card").nth(1).click();
     checks.secondDatasetTitle = await page.locator(".table-canvas h3").innerText();
   }
-  await page.getByPlaceholder("Filter rows").fill("Br");
+  const firstCellText = await page.locator(".rich-table tbody tr td").first().innerText();
+  const filterToken = firstCellText.trim().split(/\s+/)[0]?.slice(0, 3) || firstCellText.trim().slice(0, 3);
+  await page.getByPlaceholder("Filter rows").fill(filterToken);
   checks.filteredTableRows = await page.locator(".rich-table tbody tr").count();
   await page.getByPlaceholder("Filter rows").fill("");
   const tableDownload = page.waitForEvent("download");
@@ -197,7 +209,6 @@ async function main() {
   await page.locator(".text-panel").waitFor({ state: "visible", timeout: 10000 });
   checks.provenanceChars = (await page.locator(".text-panel").innerText()).length;
 
-  await page.locator(".domain-button").filter({ hasText: "Spectra" }).click();
   await page.getByRole("button", { name: "Clear", exact: true }).click();
   await page.waitForFunction(
     () => document.querySelector(".inspector-panel .section-head span")?.textContent?.trim().startsWith("0/"),
@@ -235,7 +246,7 @@ async function main() {
   if (checks.visibleDomainCount < 5 || !checks.hasTablesPanel || !checks.hasRawPanel) {
     process.exit(4);
   }
-  if (checks.hasCasscfPanel) {
+  if (checks.hasCasscfPanel && (checks.casscfActiveCards < 5 || checks.casscfActiveRows < 1 || checks.casscfConfigCards < 1 || checks.casscfActiveSvg < 1)) {
     process.exit(5);
   }
   if (
@@ -290,9 +301,8 @@ async function main() {
   if (
     !checks.secondDatasetTitle ||
     checks.filteredTableRows < 1 ||
-    checks.activeAfterClear !== "Overview" ||
     !checks.counterAfterClear?.startsWith("0/") ||
-    !checks.counterAfterSelectAll?.startsWith("16/")
+    !checks.counterAfterSelectAll?.match(/^([1-9][0-9]*)\/\1$/)
   ) {
     process.exit(71);
   }

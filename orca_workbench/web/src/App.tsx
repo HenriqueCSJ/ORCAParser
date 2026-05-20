@@ -2276,6 +2276,8 @@ function MultiReferenceWorkspace({
   visibleKeys: string[];
 }) {
   const stateTables = tables.filter((table) => isMultiReferenceTable(table) && isExcitedStateTable(table));
+  const casscf = getCasscfObject(properties);
+  const activeOrbitals = useMemo(() => buildCasscfActiveOrbitals(casscf), [casscf]);
   const [activeId, setActiveId] = useState("");
   const activeTable = stateTables.find((table) => table.id === activeId) ?? stateTables[0] ?? null;
 
@@ -2285,7 +2287,7 @@ function MultiReferenceWorkspace({
     }
   }, [activeId, stateTables]);
 
-  if (!activeTable) {
+  if (!activeTable && !casscf) {
     return (
       <DomainEmpty
         title="No multireference state table was detected"
@@ -2295,20 +2297,307 @@ function MultiReferenceWorkspace({
     );
   }
   return (
-    <div className="domain-visual-workspace">
-      <div className="canvas-toolbar">
-        <div>
-          <p className="eyebrow">CASSCF / NEVPT2 state ladder</p>
-          <h3>{activeTable.title}</h3>
-        </div>
-        <select value={activeTable.id} onChange={(event) => setActiveId(event.target.value)}>
-          {stateTables.map((table) => <option key={table.id} value={table.id}>{table.title}</option>)}
-        </select>
-      </div>
-      <StateEnergyChart table={activeTable} />
-      <TablePreview table={activeTable} maxRows={10} />
+    <div className="domain-visual-workspace multireference-workspace">
+      {casscf && <CasscfActiveSpacePanel casscf={casscf} activeOrbitals={activeOrbitals} />}
+      {activeTable ? (
+        <>
+          <div className="canvas-toolbar">
+            <div>
+              <p className="eyebrow">CASSCF / NEVPT2 state ladder</p>
+              <h3>{activeTable.title}</h3>
+            </div>
+            <select value={activeTable.id} onChange={(event) => setActiveId(event.target.value)}>
+              {stateTables.map((table) => <option key={table.id} value={table.id}>{table.title}</option>)}
+            </select>
+          </div>
+          <StateEnergyChart table={activeTable} />
+          <TablePreview table={activeTable} maxRows={10} />
+        </>
+      ) : (
+        <DomainEmpty
+          title="No CASSCF state ladder table was detected"
+          body="Active-space metadata was parsed and is shown above; the selected properties do not expose a root/state energy table."
+        />
+      )}
     </div>
   );
+}
+
+function CasscfActiveSpacePanel({
+  casscf,
+  activeOrbitals
+}: {
+  casscf: Record<string, unknown>;
+  activeOrbitals: CasscfActiveOrbital[];
+}) {
+  const summary = getRecord(casscf.summary);
+  const activeRange = getRecord(summary.active_orbital_range);
+  const input = getRecord(casscf.input);
+  const inputSettings = getRecord(input.settings);
+  const convergence = getRecord(casscf.convergence);
+  const nevpt2 = getRecord(casscf.nevpt2);
+  const qdNevpt2 = getRecord(nevpt2.qd_nevpt2);
+  const stateBlocks = getArray(casscf.state_blocks);
+  const multiplicities = getArray(summary.multiplicities).map(String).join(", ");
+  const nel = toNumber(summary.active_electrons) ?? toNumber(input.nel) ?? toNumber(inputSettings.nel);
+  const norb = toNumber(summary.active_orbitals) ?? toNumber(input.norb) ?? toNumber(inputSettings.norb);
+  const rangeFirst = toNumber(activeRange.first_index);
+  const rangeLast = toNumber(activeRange.last_index);
+  const rangeLabel = rangeFirst !== null && rangeLast !== null
+    ? `${rangeFirst}-${rangeLast}`
+    : "unknown";
+  const final = getRecord(convergence.final);
+  const converged = summary.converged;
+  const dominantRows = buildCasscfDominantConfigurations(casscf).slice(0, 8);
+
+  return (
+    <section className="casscf-active-space">
+      <div className="panel-headline">
+        <div>
+          <p className="eyebrow">CASSCF active space</p>
+          <h3>{nel !== null && norb !== null ? `CAS(${nel}, ${norb})` : "Active-space summary"}</h3>
+        </div>
+        <span className="quiet-text">Dedicated CASSCF view: active range, occupations, dominant configurations, and PT2 context.</span>
+      </div>
+      <div className="casscf-summary-grid">
+        <article className="metric-card active-space-card">
+          <span>Active orbitals</span>
+          <strong>{rangeLabel}</strong>
+          <small>{norb !== null ? `${norb} orbital(s)` : "from CASSCF summary"}</small>
+        </article>
+        <article className="metric-card active-space-card">
+          <span>Active electrons</span>
+          <strong>{nel ?? "N/A"}</strong>
+          <small>{nel !== null && norb !== null ? `CAS(${nel}, ${norb})` : "not reported"}</small>
+        </article>
+        <article className="metric-card active-space-card">
+          <span>State blocks</span>
+          <strong>{stateBlocks.length || shortValue(summary.state_block_count)}</strong>
+          <small>{multiplicities ? `multiplicity ${multiplicities}` : "multiplicities unknown"}</small>
+        </article>
+        <article className="metric-card active-space-card">
+          <span>Convergence</span>
+          <strong>{converged === true ? "Converged" : converged === false ? "Not converged" : "Unknown"}</strong>
+          <small>{formatNumber(summary.final_gradient_norm ?? final.gradient_norm, 4, " grad")}</small>
+        </article>
+        <article className="metric-card active-space-card">
+          <span>PT2</span>
+          <strong>{summary.pt2_method ? String(summary.pt2_method) : getArray(nevpt2.state_results).length ? "NEVPT2" : "N/A"}</strong>
+          <small>{getArray(qdNevpt2.state_results).length ? "QD-NEVPT2 present" : "No QD correction detected"}</small>
+        </article>
+      </div>
+      {activeOrbitals.length ? (
+        <CasscfActiveOrbitalChart orbitals={activeOrbitals} rangeFirst={rangeFirst} rangeLast={rangeLast} />
+      ) : (
+        <div className="empty-state small">No active-orbital energies or occupations were exposed in the selected properties.</div>
+      )}
+      {dominantRows.length > 0 && (
+        <section className="casscf-config-strip">
+          <div className="panel-headline compact">
+            <div>
+              <p className="eyebrow">Dominant active-space configurations</p>
+              <h3>Root occupations</h3>
+            </div>
+          </div>
+          <div className="casscf-config-grid">
+            {dominantRows.map((row) => (
+              <article key={`${row.multiplicity}-${row.root}-${row.state}`} className="casscf-config-card">
+                <strong>{row.label}</strong>
+                <code>{row.occupation}</code>
+                <span>{row.weight !== null ? `${(row.weight * 100).toFixed(1)}%` : "weight unknown"}</span>
+              </article>
+            ))}
+          </div>
+        </section>
+      )}
+    </section>
+  );
+}
+
+type CasscfActiveOrbital = {
+  index: number;
+  energyEh: number | null;
+  occupation: number | null;
+  active: boolean;
+  composition: string;
+};
+
+function CasscfActiveOrbitalChart({
+  orbitals,
+  rangeFirst,
+  rangeLast
+}: {
+  orbitals: CasscfActiveOrbital[];
+  rangeFirst: number | null;
+  rangeLast: number | null;
+}) {
+  const visible = orbitals.slice(0, 32);
+  const energies = visible.map((orbital) => orbital.energyEh).filter((value): value is number => value !== null);
+  const rawMinEnergy = energies.length ? Math.min(...energies) : 0;
+  const rawMaxEnergy = energies.length ? Math.max(...energies) : 1;
+  const padding = Math.max((rawMaxEnergy - rawMinEnergy) * 0.12, 0.02);
+  const minEnergy = rawMinEnergy - padding;
+  const maxEnergy = rawMaxEnergy + padding;
+  const span = maxEnergy - minEnergy || 1;
+  const width = 1040;
+  const height = 350;
+  const pad = { left: 70, right: 36, top: 34, bottom: 66 };
+  const xStep = (width - pad.left - pad.right) / Math.max(visible.length, 1);
+  const yScale = (value: number | null) => {
+    const energy = value ?? minEnergy;
+    return height - pad.bottom - ((energy - minEnergy) / span) * (height - pad.top - pad.bottom);
+  };
+  const activeStart = visible.findIndex((orbital) => orbital.active);
+  const activeEnd = visible.reduce((current, orbital, index) => orbital.active ? index : current, -1);
+  const activeBandX = activeStart >= 0 ? pad.left + activeStart * xStep : null;
+  const activeBandWidth = activeStart >= 0 && activeEnd >= activeStart ? (activeEnd - activeStart + 1) * xStep : 0;
+  const ticks = Array.from({ length: 5 }, (_, index) => minEnergy + (index / 4) * span);
+
+  return (
+    <div className="primary-chart casscf-active-chart">
+      <svg className="casscf-active-svg" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="CASSCF active orbital occupations">
+        <rect x="0" y="0" width={width} height={height} className="chart-bg" />
+        {activeBandX !== null && (
+          <rect x={activeBandX} y={pad.top - 8} width={activeBandWidth} height={height - pad.top - pad.bottom + 16} className="active-orbital-band" />
+        )}
+        <line x1={pad.left} y1={height - pad.bottom} x2={width - pad.right} y2={height - pad.bottom} className="axis-line" />
+        <line x1={pad.left} y1={pad.top} x2={pad.left} y2={height - pad.bottom} className="axis-line" />
+        {ticks.map((tick) => {
+          const y = yScale(tick);
+          return (
+            <g key={tick}>
+              <line x1={pad.left} x2={width - pad.right} y1={y} y2={y} className="grid-line" />
+              <text x={pad.left - 10} y={y + 4} textAnchor="end" className="axis-label">{tick.toFixed(2)}</text>
+            </g>
+          );
+        })}
+        {visible.map((orbital, index) => {
+          const x = pad.left + index * xStep + xStep / 2;
+          const y = yScale(orbital.energyEh);
+          const occ = orbital.occupation ?? 0;
+          const barHeight = Math.max(2, Math.min(1, occ / 2) * 46);
+          return (
+            <g key={orbital.index}>
+              <line x1={x - Math.min(18, xStep * 0.35)} x2={x + Math.min(18, xStep * 0.35)} y1={y} y2={y} className={orbital.active ? "casscf-active-level active" : "casscf-active-level"} />
+              <rect x={x - 5} y={height - pad.bottom - barHeight} width={10} height={barHeight} rx={4} className={orbital.active ? "casscf-occ-bar active" : "casscf-occ-bar"} />
+              {(visible.length <= 16 || orbital.active || index % 3 === 0) && (
+                <text x={x} y={height - 36} textAnchor="middle" className={orbital.active ? "axis-label frontier-label" : "axis-label"}>{orbital.index}</text>
+              )}
+              {orbital.active && (
+                <text x={x} y={y - 10} textAnchor="middle" className="axis-label frontier-label">{orbital.occupation !== null ? orbital.occupation.toFixed(2) : ""}</text>
+              )}
+            </g>
+          );
+        })}
+        <text x={width / 2} y={height - 10} textAnchor="middle" className="axis-title">MO index; active range {rangeFirst ?? "?"}-{rangeLast ?? "?"}</text>
+        <text x={16} y={24} className="axis-title">E / Eh</text>
+      </svg>
+      <div className="casscf-active-list">
+        {visible.filter((orbital) => orbital.active).map((orbital) => (
+          <div key={orbital.index} className="casscf-active-row">
+            <strong>MO {orbital.index}</strong>
+            <span>occ {orbital.occupation !== null ? orbital.occupation.toFixed(4) : "N/A"}</span>
+            <em>{orbital.energyEh !== null ? `${orbital.energyEh.toFixed(5)} Eh` : "energy N/A"}</em>
+            <small>{orbital.composition || "composition not printed"}</small>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function getCasscfObject(properties: PropertiesResponse | null) {
+  const casscf = properties?.properties.casscf;
+  return isPlainObject(casscf) ? casscf : null;
+}
+
+function getRecord(value: unknown): Record<string, unknown> {
+  return isPlainObject(value) ? value : {};
+}
+
+function getArray(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function buildCasscfActiveOrbitals(casscf: Record<string, unknown> | null): CasscfActiveOrbital[] {
+  if (!casscf) {
+    return [];
+  }
+  const summary = getRecord(casscf.summary);
+  const activeRange = getRecord(summary.active_orbital_range);
+  const rangeFirst = toNumber(activeRange.first_index);
+  const rangeLast = toNumber(activeRange.last_index);
+  const activeMoBlock = getRecord(casscf.loewdin_reduced_active_mos);
+  const activeRows = getArray(activeMoBlock.orbitals).filter(isPlainObject);
+  const orbitalRows = activeRows.length
+    ? activeRows
+    : getArray(casscf.orbital_energies).filter(isPlainObject);
+  const rows = orbitalRows
+    .map((row): CasscfActiveOrbital | null => {
+      const index = toNumber(row.index ?? row.orbital ?? row.mo);
+      if (index === null) {
+        return null;
+      }
+      const energyEh = toNumber(row.energy_Eh) ??
+        toNumber(row.energy_eh) ??
+        (toNumber(row.energy_eV) !== null ? toNumber(row.energy_eV)! / HARTREE_TO_EV : null);
+      const active = rangeFirst !== null && rangeLast !== null && index >= rangeFirst && index <= rangeLast;
+      return {
+        index,
+        energyEh,
+        occupation: toNumber(row.occupation),
+        active,
+        composition: formatCasscfOrbitalComposition(row)
+      };
+    })
+    .filter((row): row is CasscfActiveOrbital => row !== null)
+    .sort((a, b) => a.index - b.index);
+
+  if (rangeFirst === null || rangeLast === null) {
+    return rows.slice(0, 32);
+  }
+  const margin = activeRows.length ? 0 : 4;
+  const focused = rows.filter((row) => row.index >= rangeFirst - margin && row.index <= rangeLast + margin);
+  return focused.length ? focused : rows.slice(0, 32);
+}
+
+function formatCasscfOrbitalComposition(row: Record<string, unknown>) {
+  const contributions = getArray(row.contributions).filter(isPlainObject);
+  return contributions
+    .slice()
+    .sort((a, b) => (toNumber(b.percent) ?? 0) - (toNumber(a.percent) ?? 0))
+    .slice(0, 3)
+    .map((item) => {
+      const element = String(item.element ?? "").trim();
+      const atom = item.atom_index !== undefined ? String(item.atom_index) : "";
+      const ao = String(item.ao_label ?? "").trim();
+      const percent = toNumber(item.percent);
+      const orbital = [element && `${element}${atom}`, ao].filter(Boolean).join(" ");
+      return percent !== null ? `${orbital} ${percent.toFixed(1)}%` : orbital;
+    })
+    .filter(Boolean)
+    .join("; ");
+}
+
+function buildCasscfDominantConfigurations(casscf: Record<string, unknown>) {
+  const assignments = getArray(casscf.state_assignments).filter(isPlainObject);
+  const states = assignments.length ? assignments : getArray(casscf.states).filter(isPlainObject);
+  return states.map((state, index) => {
+    const dominant = getRecord(state.dominant_configuration);
+    const configurations = getArray(state.configurations).filter(isPlainObject);
+    const config = Object.keys(dominant).length ? dominant : getRecord(configurations[0]);
+    const root = toNumber(state.root);
+    const multiplicity = toNumber(state.multiplicity);
+    const stateIndex = toNumber(state.state);
+    return {
+      root,
+      multiplicity,
+      state: stateIndex ?? index,
+      label: `${multiplicity !== null ? `M${multiplicity} ` : ""}${root !== null ? `root ${root}` : `state ${stateIndex ?? index}`}`,
+      occupation: String(config.occupation_string ?? "unknown"),
+      weight: toNumber(config.weight)
+    };
+  });
 }
 
 function StateEnergyChart({ table }: { table: TableDataset }) {
