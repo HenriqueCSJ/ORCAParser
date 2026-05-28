@@ -24,6 +24,9 @@ Notes
   * `%tddft` / `%cis` excited-state geometry optimizations are reported as
     excited-state optimization jobs, including target-state and root-follow
     metadata (`IRoot`, `IRootMult`, `FOLLOWIROOT`, FIR controls).
+  * TDDFT/CIS optimization-step spectra are kept separate from final
+    single-point spectra and exported as cycle-by-cycle state/root trajectory
+    diagnostics when ORCA prints them.
   * TDDFT/NTO output preserves ORCA root numbering exactly. When ORCA prints
     roots out of energy order, markdown and CSV add an explicit ``E-rank``
     field instead of silently renumbering the states. TDDFT summaries report
@@ -53,7 +56,7 @@ Section aliases
   population mulliken, loewdin, mayer
   mos        orbital_energies, qro
   bonds      mayer, loewdin
-  nbo        nbo
+  nbo        nbo (NAO/NPA/NBO with repeated-block provenance)
   dipole     dipole
   solvation  solvation
   tddft      tddft
@@ -238,7 +241,9 @@ def parse_args() -> argparse.Namespace:
             "normalized final-state and "
             "job-metadata summaries for downstream output. TDDFT output keeps "
             "ORCA root numbering intact and adds explicit energy-rank "
-            "annotations when roots are not printed in ascending energy order; "
+            "annotations when roots are not printed in ascending energy order, "
+            "and TDDFT/CIS optimizations export cycle-by-cycle state/spectrum "
+            "trajectory diagnostics; "
             "TDDFT/CIS, EOM/STEOM, CASSCF, NEVPT2, QD-NEVPT2, and "
             "SOC-corrected QDPT UV/CD spectra share one ORCA spectrum-table "
             "parser."
@@ -280,7 +285,8 @@ def parse_args() -> argparse.Namespace:
                         "with symmetry, DeltaSCF / TDDFT excited-state "
                         "labeling, TDDFT root/energy-rank summaries, "
                         "significant CI (>=10%%) / NTO (n>=0.10) tables, "
-                        "root-follow summaries, GOAT ensemble summaries, "
+                        "root-follow and optimization-step trajectory summaries, "
+                        "GOAT ensemble summaries, "
                         "CASSCF/NEVPT2 active-space, spectra, and QDPT tensor "
                         "summaries, CCSD/CCSD(T)/F12 diagnostics, "
                         "density-specific SCF/MP2 relaxed/unrelaxed analyses, "
@@ -410,6 +416,20 @@ def _print_summary(data: dict, path: Path) -> None:
         if "followiroot" in excopt:
             follow = "yes" if excopt.get("followiroot") else "no"
             print(f"  Follow IRoot : {follow}")
+    tddft = data.get("tddft", {})
+    trajectory = (tddft.get("trajectory") or {}).get("final_summary") or {}
+    if trajectory:
+        print(
+            "  TDDFT traj   : "
+            f"{trajectory.get('step_count', 'N/A')} step(s), "
+            f"{trajectory.get('trajectory_class', 'N/A')}"
+        )
+        if trajectory.get("final_S1_wavelength_nm") not in (None, ""):
+            print(
+                "  Final S1     : "
+                f"{trajectory['final_S1_wavelength_nm']:.1f} nm "
+                f"(root {trajectory.get('final_S1_orca_root', 'N/A')})"
+            )
 
     scf = data.get("scf", {})
     if scf:

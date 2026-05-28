@@ -863,13 +863,13 @@ def test_parser_section_registry_allows_plugin_style_section_extensions(
     )
     section_registry.register_parser_section_alias(
         ParserSectionAlias(
-            name="registry_demo",
+            name="Registry_Demo",
             section_keys=("registry_sentinel",),
         )
     )
 
     parser = ORCAParser(TDDFT_OUT)
-    data = parser.parse(sections=["registry_demo"])
+    data = parser.parse(sections=["rEgIsTrY_DeMo"])
 
     assert data["registry_sentinel"]["source"] == "registry"
     assert data["registry_sentinel"]["terminated_normally"] is True

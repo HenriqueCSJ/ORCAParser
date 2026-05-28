@@ -65,10 +65,22 @@ def write_nbo_npa_section(
         if not atoms:
             return
         has_spin = any("spin_density" in atom for atom in atoms[:5])
+        provenance_fieldnames = [
+            "nbo_block_index",
+            "nbo_block_count",
+            "optimization_cycle",
+            "is_final_cycle",
+            "density_context",
+            "density_kind",
+            "excited_state_specific",
+            "root",
+            "input_electron_density_file",
+            "stage",
+        ]
         fieldnames = [
             "index", "symbol", "natural_charge", "core_pop",
             "valence_pop", "rydberg_pop", "total_pop",
-        ]
+        ] + provenance_fieldnames
         if has_spin:
             fieldnames.append("spin_density")
         rows = [{
@@ -79,6 +91,16 @@ def write_nbo_npa_section(
             "valence_pop": atom.get("valence_pop"),
             "rydberg_pop": atom.get("rydberg_pop"),
             "total_pop": atom.get("total_pop"),
+            "nbo_block_index": nbo.get("nbo_block_index", ""),
+            "nbo_block_count": nbo.get("nbo_block_count", ""),
+            "optimization_cycle": nbo.get("optimization_cycle", ""),
+            "is_final_cycle": nbo.get("is_final_cycle", ""),
+            "density_context": nbo.get("density_context", ""),
+            "density_kind": nbo.get("density_kind", ""),
+            "excited_state_specific": nbo.get("excited_state_specific", ""),
+            "root": nbo.get("root", ""),
+            "input_electron_density_file": nbo.get("input_electron_density_file", ""),
+            "stage": nbo.get("stage", ""),
             "spin_density": atom.get("spin_density", ""),
         } for atom in atoms]
         files.append(write_csv(directory, f"{stem}_nbo_npa{suffix}.csv", rows, fieldnames))

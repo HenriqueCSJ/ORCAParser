@@ -15,7 +15,7 @@ It is designed for real multistep ORCA outputs, not just ideal single-point jobs
 
 ## Highlights
 
-- Built-in parser modules covering SCF, orbitals, solvation, TDDFT/CIS, EOM/STEOM, coupled cluster, GOAT, density-specific analyses, population analyses, dipole moments, NBO, EPR, geometry optimization, and relaxed scans
+- Built-in parser modules covering SCF, orbitals, solvation, TDDFT/CIS, EOM/STEOM, coupled cluster, GOAT, density-specific analyses, population analyses, dipole moments, NBO/NPA, EPR, geometry optimization, and relaxed scans
 - 4 output formats: JSON, CSV, HDF5, and Markdown
 - RHF/RKS and UHF/UKS support, including spin-resolved data
 - GOAT ensemble parsing with populations, energy windows, global minimum, and ensemble thermochemistry
@@ -23,7 +23,8 @@ It is designed for real multistep ORCA outputs, not just ideal single-point jobs
 - CCSD / CCSD(T) / F12 parsing with MDCI wavefunction settings, CC convergence, T1/singles diagnostics, F12 corrections, perturbative triples, and natural occupations
 - EOM/STEOM-CCSD parsing with IP/EA active-root selection, EOM and STEOM root amplitudes, active/singles character, unrelaxed excited-state dipoles, spectra through the shared spectrum parser, and NTOs through the shared transition-orbital parser
 - Double-hybrid / MP2 optimization density tracking that keeps SCF, unrelaxed MP2, and relaxed MP2 population/NBO analyses separate for initial and final geometries
-- Excited-state geometry optimization support with target-root tracking and root-follow metadata
+- Excited-state geometry optimization support with target-root tracking, root-follow metadata, and cycle-by-cycle TDDFT/CIS state/spectrum trajectory diagnostics
+- Repeated NBO/NPA blocks are provenance-aware: optimization jobs select the final valid NBO block, record block/cycle/density/root metadata, and keep supplemental non-density NBO subsections when ORCA prints them only in another block
 - TDDFT/NTO handling that preserves ORCA root numbering while also exposing energy rank
 - Symmetry-aware parsing for UseSym jobs, with explicit no-symmetry normalization when ORCA defaults symmetry off
 - Recursive directory parsing for `*.out` and `*.log`, while skipping ORCA helper/ECP files such as `*_atom83.out`
@@ -38,7 +39,7 @@ It is designed for real multistep ORCA outputs, not just ideal single-point jobs
 | TDDFT / CIS vertical excitations | Excited states, CI contributions, NTOs, absorption/CD spectra, root-energy ranking |
 | EOM / STEOM-CCSD | CIS seed roots, IP/EA active-space selection, EOM roots, STEOM roots/amplitudes, shared-format spectra, NTOs, and unrelaxed excited-state dipoles |
 | CCSD / CCSD(T) / F12 | MDCI wavefunction setup, CC convergence history, F12 corrections, perturbative triples, T1/singles diagnostics, largest amplitudes, and natural orbital occupations |
-| Excited-state geometry optimization | Final converged geometry-dependent properties, target-state metadata, per-cycle history |
+| Excited-state geometry optimization | Final converged geometry-dependent properties, target-state metadata, per-cycle history, and TDDFT/CIS optimization-step state tracking |
 | Ground-state geometry optimization | Per-cycle energies, convergence criteria, trust radii, RMSD, final geometry |
 | Double-hybrid / MP2 geometry optimization | Initial/final SCF density, unrelaxed MP2 density, relaxed MP2 density, MP2 density-formation metadata, density-specific population/NBO analyses, and density dipoles when printed |
 | Relaxed surface scan | Scan coordinates, mode, per-step energies, sidecar trajectories |
@@ -52,6 +53,7 @@ It is designed for real multistep ORCA outputs, not just ideal single-point jobs
 - Base JSON, CSV, and Markdown parsing uses the Python standard library
 - Optional: `numpy` for Kabsch-aligned RMSD during geometry optimization analysis
 - Optional: `numpy` and `h5py` for HDF5 export
+- Optional: `fastapi` and `uvicorn` for the ORCA Workbench local web app
 
 ## Installation
 
@@ -77,6 +79,12 @@ Editable development install with test dependencies:
 
 ```bash
 python -m pip install -e ".[test]"
+```
+
+Editable install with the ORCA Workbench backend dependencies:
+
+```bash
+python -m pip install -e ".[workbench]"
 ```
 
 ## Privacy guardrails
@@ -146,6 +154,104 @@ orca_parser ccsdt.out --sections ccsdt --markdown --csv
 
 # EOM/STEOM-CCSD report
 orca_parser steom.out --sections steom --markdown --csv
+```
+
+### ORCA Workbench local web UI
+
+The project also includes a modern local web workbench:
+
+```bash
+orca_workbench
+```
+
+This starts the FastAPI backend on `http://127.0.0.1:8765`. For frontend
+development, run the React/Vite interface in another terminal:
+
+```bash
+cd orca_workbench/web
+npm install
+npm run dev
+```
+
+Then open `http://127.0.0.1:5173`.
+
+To build the frontend so the Python server can serve it directly:
+
+```bash
+cd orca_workbench/web
+npm install
+npm run build
+cd ../..
+orca_workbench
+```
+
+After a build, open `http://127.0.0.1:8765`.
+
+ORCA Workbench is a parser-backed scientific workbench and data visualizer. It
+lets you open local ORCA `.out` / `.log` files or folders with native file
+dialogs, automatically parses the selected outputs, discovers the property
+blocks actually present, selects those parsed properties for viewing by default,
+and then builds the visible analysis panels from what was actually parsed.
+
+The interface is organized around detected scientific domains rather than a
+fixed list of generic parser tabs. For example, a TDDFT output exposes spectra,
+orbitals, geometry, populations, excited-state, table, provenance, raw-data, and
+export workspaces only when those surfaces are present. A CASSCF/NEVPT2 output
+adds the multireference workspace; a plain optimization does not pretend to have
+spectra. Utility views such as `Overview`, `Tables`, `Provenance`, `Raw data`,
+and `Exports` remain available when the parsed payload supports them.
+
+Plots are chosen by data type, not forced through one generic chart. UV/visible
+spectra use an interactive spectrum workbench with unit and range controls,
+normalization, Gaussian/Lorentzian broadening, FWHM, per-transition shifts,
+optional canonical/NTO transition annotations, comparison overlays, peak
+readouts, and SVG/PNG exports. Orbital data use frontier-level ladders with
+dense-label deconfliction and windows that can be narrowed to a single orbital.
+Geometry views show chemically meaningful structural summaries and bond-distance
+tables instead of arbitrary Cartesian projections. Population, density, and
+bond-order views use signed bars and provenance cards. Excited-state,
+multireference, and coupled-cluster states use energy ladders and method-aware
+state summaries. GOAT ensembles, relaxed scans, and optimization histories are
+drawn only when ordered conformer/cycle/scan data are present.
+
+CASSCF and NEVPT2 outputs get their own active-space view instead of being
+flattened into generic tables. The workbench displays active-orbital occupation
+patterns, dominant configurations, active-MO composition windows, convergence
+histories, NEVPT2/QD-NEVPT2 state corrections, QDPT relativistic properties, EPR
+tensors when present, and the same shared spectrum controls used for TDDFT/CIS
+spectra.
+
+Global JSON/CSV/Markdown/HDF5 exports remain available through the parser
+backend. The workbench also provides immediate client-side exports for the
+currently selected structured JSON, all visible tables, and filtered table rows.
+The default workflow is data-first: open outputs -> parse everything
+discoverable -> use the detected scientific panels -> hide irrelevant property
+blocks -> visualize and export the curated analysis surface.
+
+The workbench is intentionally a wrapper around the existing parser. It does
+not reimplement population, NBO, spectra, TDDFT, CASSCF, NEVPT2, or any other
+scientific parser logic. Parser options exposed by modules, such as the CASSCF
+orbital-window control, are discovered from the same plugin metadata used by
+the CLI.
+
+The browser-level smoke test exercises the real GUI, including automatic
+parsing, detected-domain navigation, spectra/orbital/table visualization,
+property filtering, screenshots, and JSON/CSV downloads. Start the backend
+first, then run:
+
+```bash
+cd orca_workbench/web
+npm run test:ui
+```
+
+By default the test uses a bundled TDDFT sample and `http://127.0.0.1:8765/`.
+Set `WORKBENCH_URL` and `WORKBENCH_SAMPLE` to smoke-test another running server
+or another ORCA output.
+
+The older standard-library Tk prototype remains available as a fallback:
+
+```bash
+orca_workbench_tk
 ```
 
 ### Python API
@@ -243,6 +349,9 @@ The TDDFT module keeps ORCA's printed root numbering and adds extra metadata ins
 - `state` = ORCA printed root number
 - `energy_rank` = where that root falls after sorting by excitation energy
 - NTO mapping uses an energy-matching tolerance of `+/-0.005 eV`
+- Optimization-step spectra are kept separate from final single-point TDDFT spectra with `source_context = optimization_step_spectrum` or `final_single_point_tddft`
+- Trajectory CSVs join each cycle's `STATE` block to the same-cycle electric-dipole spectrum, preserving ORCA roots, ranked `S1`/`S2` labels, oscillator strengths, transition dipoles, root-following overlaps, near-degeneracy flags, and possible root/state tracking changes
+- Singlet, triplet, and other manifolds are tracked separately; oscillator strengths from a singlet spectrum are not assigned to triplet roots that happen to share the same printed root number
 
 Fixed parser-level thresholds:
 
@@ -344,7 +453,7 @@ These are always included.
 | `orbital_energies` | HOMO/LUMO, orbital energies, irrep labels, occupied orbitals per irrep |
 | `qro` | Quasi-restricted orbitals for UHF calculations |
 | `solvation` | CPCM/SMD, ALPB, COSMO-RS, and `%cpcm` / `%cosmors` metadata |
-| `tddft` | Excited states, spectra, CI contributions, NTOs, energy-rank metadata, excited-state optimization metadata |
+| `tddft` | Excited states, spectra, CI contributions, NTOs, energy-rank metadata, excited-state optimization metadata, and TDDFT/CIS optimization-step trajectory diagnostics |
 | `coupled_cluster` | CCSD/CCSD(T)/F12 wavefunction settings, CC convergence, diagnostics, F12/triples corrections, largest amplitudes, and natural occupations |
 | `eom_steom` | EOM/STEOM active-root selection, EOM roots, STEOM amplitudes, spectra, NTOs, and unrelaxed excited-state dipoles |
 | `density_analysis` | Density-specific SCF, unrelaxed MP2, and relaxed MP2 population/NBO analyses, MP2 density formation metadata, sidecar density containers, and density dipoles |
@@ -358,7 +467,7 @@ These are always included.
 | `mbis` | Charges, populations, valence-shell data |
 | `chelpg` | Electrostatic potential charges |
 | `dipole` | Cartesian dipole components, total magnitude, rotational constants |
-| `nbo` | NAO, NPA, Wiberg indices, Lewis structure, E(2), NLMO |
+| `nbo` | NAO, NPA, Wiberg indices, Lewis structure, E(2), NLMO; repeated optimization blocks are selected by final-block provenance and NPA CSV/Markdown includes block/density/root metadata |
 | `epr` | ZFS, g-tensor, hyperfine coupling, EFG, quadrupole |
 | `geom_opt` | Per-cycle energies, convergence criteria, trust radii, RMSD, optimization settings |
 
@@ -534,7 +643,7 @@ guess it from raw payloads:
 - Passing a helper file directly raises a validation error
 - DeltaSCF jobs are labeled explicitly instead of being treated as ordinary single points
 - `%tddft` / `%cis` geometry optimizations are labeled as excited-state optimizations
-- Excited-state optimizations export target-state metadata and root-follow history when available
+- Excited-state optimizations export target-state metadata, root-follow history, and cycle-by-cycle state/spectrum trajectory tables when available
 - Geometry-dependent properties for multistep jobs come from the final converged block, not the first printed block
 - UseSym jobs report point-group and irrep-group information separately when ORCA prints both
 - If neither `UseSym` nor an explicit `%sym` request enables symmetry, the normalized input intent is treated as symmetry-off to match ORCA's default behavior

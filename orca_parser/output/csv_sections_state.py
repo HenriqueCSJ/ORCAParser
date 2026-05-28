@@ -289,6 +289,12 @@ def write_excited_state_optimization_section(
                 "delta_energy_eV": record.get("delta_energy_eV", ""),
                 "total_energy_Eh": record.get("total_energy_Eh", ""),
                 "followiroot_runtime": bool_to_label(record.get("followiroot_runtime")),
+                "root_following_overlap": record.get("root_following_overlap", ""),
+                "transition_density_overlap": record.get("transition_density_overlap", ""),
+                "root_following_second_largest_ratio": record.get(
+                    "root_following_second_largest_ratio", ""
+                ),
+                "updated_iroot": record.get("updated_iroot", ""),
                 "input_electron_density": record.get("input_electron_density", ""),
             })
         files.append(write_csv(
@@ -305,6 +311,10 @@ def write_excited_state_optimization_section(
                 "delta_energy_eV",
                 "total_energy_Eh",
                 "followiroot_runtime",
+                "root_following_overlap",
+                "transition_density_overlap",
+                "root_following_second_largest_ratio",
+                "updated_iroot",
                 "input_electron_density",
             ],
         ))

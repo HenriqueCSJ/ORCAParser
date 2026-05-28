@@ -53,7 +53,11 @@ _AUXILIARY_ATOM_FILE_RE = re.compile(
     r"_atom\d+\.(?:out|log)$",
     re.IGNORECASE,
 )
-_INPUT_NAME_RE = re.compile(r"^NAME\s*=\s*(\S+)")
+_AUXILIARY_DIAGNOSTIC_FILE_RE = re.compile(
+    r"(?:^|[_-])diag(?:nostic)?\.(?:out|log)$",
+    re.IGNORECASE,
+)
+_INPUT_NAME_RE = re.compile(r"^NAME\s*=\s*(\S+)", re.IGNORECASE)
 _INPUT_END_RE = re.compile(r"\*{4}END OF INPUT\*{4}", re.IGNORECASE)
 _INPUT_ECHO_LINE_RE = re.compile(r"^\|\s*(\d+)>\s*(.*)$")
 _INPUT_BANG_RE = re.compile(r"^\|\s*\d+>\s*!\s*(.+)$")
@@ -205,8 +209,12 @@ def _parse_input_echo(lines: List[str]) -> Dict[str, Any]:
 
 
 def is_auxiliary_orca_file(path: str | Path) -> bool:
-    """Return True for ORCA helper atom/ECP files such as ``*_atom83.out``."""
-    return bool(_AUXILIARY_ATOM_FILE_RE.search(Path(path).name))
+    """Return True for ORCA helper files, not primary parse targets."""
+    name = Path(path).name
+    return bool(
+        _AUXILIARY_ATOM_FILE_RE.search(name)
+        or _AUXILIARY_DIAGNOSTIC_FILE_RE.search(name)
+    )
 
 
 def _resolve_sections(sections) -> Optional[set]:
@@ -279,7 +287,7 @@ class ORCAParser:
 
         if is_auxiliary_orca_file(self.filepath):
             raise ValueError(
-                "Auxiliary ORCA atom/ECP files are not included in parsing: "
+                "Auxiliary ORCA helper/diagnostic files are not included in parsing: "
                 f"{self.filepath.name}"
             )
 

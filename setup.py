@@ -11,6 +11,11 @@ TEST_DEPS = [
     *HDF5_DEPS,
 ]
 
+WORKBENCH_DEPS = [
+    "fastapi>=0.100",
+    "uvicorn>=0.20",
+]
+
 setup(
     name="orca_parser",
     version="1.0.0",
@@ -20,13 +25,16 @@ setup(
     python_requires=">=3.10",
     extras_require={
         "hdf5": HDF5_DEPS,
+        "workbench": WORKBENCH_DEPS,
         "rmsd": ["numpy>=1.23"],
         "test": TEST_DEPS,
-        "dev": TEST_DEPS,
+        "dev": [*TEST_DEPS, *WORKBENCH_DEPS],
     },
     entry_points={
         "console_scripts": [
             "orca_parser=orca_parser.__main__:main",
+            "orca_workbench=orca_workbench.__main__:main",
+            "orca_workbench_tk=orca_workbench.app:main",
         ],
     },
     classifiers=[

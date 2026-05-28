@@ -25,6 +25,12 @@ _PARSER_SECTION_PLUGINS: list[ParserSectionPlugin] = []
 _PARSER_SECTION_ALIASES: list[ParserSectionAlias] = []
 
 
+def _normalize_section_token(value: object) -> str:
+    """Normalize parser section and alias names for case-insensitive lookup."""
+
+    return str(value).strip().lower()
+
+
 def register_parser_section_plugin(
     plugin: ParserSectionPlugin,
     *,
@@ -38,14 +44,18 @@ def register_parser_section_plugin(
     """
 
     global _PARSER_SECTION_PLUGINS
+    normalized_key = _normalize_section_token(plugin.key)
 
     if replace:
         _PARSER_SECTION_PLUGINS = [
             existing
             for existing in _PARSER_SECTION_PLUGINS
-            if existing.key != plugin.key
+            if _normalize_section_token(existing.key) != normalized_key
         ]
-    elif any(existing.key == plugin.key for existing in _PARSER_SECTION_PLUGINS):
+    elif any(
+        _normalize_section_token(existing.key) == normalized_key
+        for existing in _PARSER_SECTION_PLUGINS
+    ):
         raise ValueError(f"Parser section already registered: {plugin.key}")
 
     _PARSER_SECTION_PLUGINS.append(plugin)
@@ -59,14 +69,18 @@ def register_parser_section_alias(
     """Register a parser-section alias."""
 
     global _PARSER_SECTION_ALIASES
+    normalized_name = _normalize_section_token(alias.name)
 
     if replace:
         _PARSER_SECTION_ALIASES = [
             existing
             for existing in _PARSER_SECTION_ALIASES
-            if existing.name != alias.name
+            if _normalize_section_token(existing.name) != normalized_name
         ]
-    elif any(existing.name == alias.name for existing in _PARSER_SECTION_ALIASES):
+    elif any(
+        _normalize_section_token(existing.name) == normalized_name
+        for existing in _PARSER_SECTION_ALIASES
+    ):
         raise ValueError(f"Parser section alias already registered: {alias.name}")
 
     _PARSER_SECTION_ALIASES.append(alias)
@@ -88,7 +102,7 @@ def get_core_parser_section_keys() -> set[str]:
     """Return section keys that are always included."""
 
     return {
-        plugin.key
+        _normalize_section_token(plugin.key)
         for plugin in get_registered_parser_section_plugins()
         if plugin.always_include
     }
@@ -102,10 +116,16 @@ def get_parser_section_alias_map() -> dict[str, list[str]]:
     """
 
     alias_map = {
-        alias.name: list(alias.section_keys)
+        _normalize_section_token(alias.name): [
+            _normalize_section_token(section_key)
+            for section_key in alias.section_keys
+        ]
         for alias in get_registered_parser_section_aliases()
     }
-    alias_map["all"] = [plugin.key for plugin in get_registered_parser_section_plugins()]
+    alias_map["all"] = [
+        _normalize_section_token(plugin.key)
+        for plugin in get_registered_parser_section_plugins()
+    ]
     return alias_map
 
 
@@ -124,7 +144,7 @@ def resolve_requested_parser_sections(sections) -> Optional[set[str]]:
     alias_map = get_parser_section_alias_map()
     requested: set[str] = set()
     for token in sections:
-        normalized = token.lower().strip()
+        normalized = _normalize_section_token(token)
         if normalized == "all":
             return None
         if normalized in alias_map:
@@ -144,9 +164,13 @@ def iter_active_parser_section_plugins(
     plugins = get_registered_parser_section_plugins()
     if active_sections is None:
         return plugins
+    normalized_active_sections = {
+        _normalize_section_token(section)
+        for section in active_sections
+    }
     return tuple(
         plugin
         for plugin in plugins
-        if plugin.key in active_sections
+        if _normalize_section_token(plugin.key) in normalized_active_sections
     )
 
