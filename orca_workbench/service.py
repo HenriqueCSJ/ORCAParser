@@ -1,14 +1,17 @@
-"""Service layer for ORCA Workbench.
+"""Parser-backed service layer for ORCA Workbench.
 
-This module owns the non-UI behavior used by the desktop app:
+This module owns the non-UI behavior used by the FastAPI backend and fallback
+desktop launcher:
 
 * discover ORCA output files
-* expose parser sections and plugin options to the UI
-* run the existing parser and writers
-* build compact scientific summaries and provenance notes
+* expose parser sections and plugin options as declarative UI controls
+* run the existing parser and output writers
+* build compact scientific summaries, provenance notes, and preview payloads
 
-It deliberately does not parse ORCA text itself.  All scientific extraction is
-delegated to :class:`orca_parser.ORCAParser` and the existing output writers.
+It deliberately does not parse ORCA text itself.  All scientific extraction,
+including spectra, populations, NBO/NPA, TDDFT, CASSCF, NEVPT2, GOAT, and
+coupled-cluster sections, is delegated to :class:`orca_parser.ORCAParser` and
+the existing output writers.
 """
 
 from __future__ import annotations
@@ -90,7 +93,7 @@ class ExportOptions:
 
 @dataclass
 class WorkbenchSummary:
-    """Compact, UI-friendly view of a parsed job."""
+    """Small normalized summary used for cards, lists, and quick previews."""
 
     source_file: str
     file_name: str
@@ -280,7 +283,12 @@ def parse_orca_file(
     plugin_options: Mapping[str, Any] | None = None,
     export_options: ExportOptions | None = None,
 ) -> WorkbenchResult:
-    """Parse one ORCA file and optionally export requested artifacts."""
+    """Parse one ORCA file through :class:`ORCAParser`.
+
+    The workbench passes selected sections and plugin options through unchanged,
+    then wraps the parsed payload with warnings, exports, a compact summary, and
+    provenance-friendly state for the GUI.
+    """
 
     file_path = Path(path)
     try:
@@ -396,7 +404,12 @@ def build_workbench_summary(
     *,
     warning_count: int = 0,
 ) -> WorkbenchSummary:
-    """Build a compact scientific summary for a parsed data dictionary."""
+    """Build the cross-module summary shown in Workbench job lists.
+
+    Values are read from normalized parser views where possible, so repeated
+    optimization-step data, final snapshots, and excited-state trajectory
+    summaries remain separated from one another.
+    """
 
     file_path = Path(path)
     context = data.get("context") if isinstance(data.get("context"), dict) else {}
@@ -450,7 +463,12 @@ def build_workbench_summary(
 
 
 def build_provenance_text(data: Mapping[str, Any]) -> str:
-    """Return a provenance-focused plain text view for the GUI."""
+    """Return a provenance-focused plain text view for the GUI.
+
+    The view highlights source file, job/final snapshot selection,
+    excited-state root-following metadata, density-analysis context, and parser
+    notes without relabeling reference-density data as excited-state data.
+    """
 
     lines: list[str] = []
     source_file = data.get("source_file")
@@ -515,7 +533,7 @@ def build_provenance_text(data: Mapping[str, Any]) -> str:
 
 
 def preview_json_views(data: Mapping[str, Any]) -> str:
-    """Return a compact JSON preview of normalized parser views."""
+    """Return a compact JSON preview of the normalized parser views."""
 
     preview = {
         key: data.get(key)

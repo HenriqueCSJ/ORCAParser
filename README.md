@@ -201,11 +201,25 @@ adds the multireference workspace; a plain optimization does not pretend to have
 spectra. Utility views such as `Overview`, `Tables`, `Provenance`, `Raw data`,
 and `Exports` remain available when the parsed payload supports them.
 
-Plots are chosen by data type, not forced through one generic chart. Spectra are
-shown as oscillator-strength stick plots, orbital energies as level ladders,
-geometries as coordinate projections, populations as signed charge/spin/bond
-bars, excited and multireference states as energy ladders, and optimization
-lines are drawn only for ordered cycle/iteration series.
+Plots are chosen by data type, not forced through one generic chart. UV/visible
+spectra use an interactive spectrum workbench with unit and range controls,
+normalization, Gaussian/Lorentzian broadening, FWHM, per-transition shifts,
+optional canonical/NTO transition annotations, comparison overlays, peak
+readouts, and SVG/PNG exports. Orbital data use frontier-level ladders with
+dense-label deconfliction and windows that can be narrowed to a single orbital.
+Geometry views show chemically meaningful structural summaries and bond-distance
+tables instead of arbitrary Cartesian projections. Population, density, and
+bond-order views use signed bars and provenance cards. Excited-state,
+multireference, and coupled-cluster states use energy ladders and method-aware
+state summaries. GOAT ensembles, relaxed scans, and optimization histories are
+drawn only when ordered conformer/cycle/scan data are present.
+
+CASSCF and NEVPT2 outputs get their own active-space view instead of being
+flattened into generic tables. The workbench displays active-orbital occupation
+patterns, dominant configurations, active-MO composition windows, convergence
+histories, NEVPT2/QD-NEVPT2 state corrections, QDPT relativistic properties, EPR
+tensors when present, and the same shared spectrum controls used for TDDFT/CIS
+spectra.
 
 Global JSON/CSV/Markdown/HDF5 exports remain available through the parser
 backend. The workbench also provides immediate client-side exports for the
@@ -222,12 +236,17 @@ the CLI.
 
 The browser-level smoke test exercises the real GUI, including automatic
 parsing, detected-domain navigation, spectra/orbital/table visualization,
-property filtering, screenshots, and JSON/CSV downloads:
+property filtering, screenshots, and JSON/CSV downloads. Start the backend
+first, then run:
 
 ```bash
 cd orca_workbench/web
 npm run test:ui
 ```
+
+By default the test uses a bundled TDDFT sample and `http://127.0.0.1:8765/`.
+Set `WORKBENCH_URL` and `WORKBENCH_SAMPLE` to smoke-test another running server
+or another ORCA output.
 
 The older standard-library Tk prototype remains available as a fallback:
 
